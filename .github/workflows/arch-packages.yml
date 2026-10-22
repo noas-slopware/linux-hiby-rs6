@@ -1,0 +1,534 @@
+# Builds the Arch Linux Ports packages of the arch branch (one directory per pkgbase, PKGBUILD plus
+# local sources; the build settings in its tools/) natively on GitHub's arm64 runners, in containers
+# made from Arch Linux Ports' own AArch64 bootstrap with arch.bens.haus as the only repositories
+# (ARMv8.0; the RS6 is ARMv8.0, so never drzee.net), with tools/makepkg-rs6.conf's flags and
+# tools/check-armv8.0.py on every package. Publishes the unsigned pacman repository [rs6] on GitHub
+# Pages next to the Nura repository, and on YuruMirror:
+#   https://noas-slopware.github.io/linux-hiby-rs6/arch/aarch64/rs6.db
+#   https://mirror.funami.tech/linux-hiby-rs6/arch/aarch64/rs6.db
+#
+# Package checking works like nura-packages.yml: each pkgbase's hash (.github/common/pkgid.py) is
+# compared with built.json next to rs6.db; a build that exists is skipped, one an earlier run left
+# in the actions cache is restored, and every build is saved in the cache as soon as it is done.
+# Unlike the Nura workflow it publishes whatever succeeded: a failed pkgbase keeps its last
+# published build until a later run gets it built.
+#
+# Seeding: .github/arch/seed-from-local.sh uploads locally built packages as the release arch-seed
+# and dispatches this workflow with seed=arch-seed; pkgbases whose hash matches are imported
+# (checked like a build) instead of built.
+#
+# Like the Nura workflow, a push to the arch branch does not run this file by itself; the schedule
+# and a dispatch (gh workflow run arch-packages.yml --ref ci) do.
+name: Arch packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild every package, even if the published build is current
+        type: boolean
+        default: false
+      arch_ref:
+        description: Commit or branch of the arch branch to build
+        type: string
+        default: arch
+      seed:
+        description: Tag of a seed release (seed-from-local.sh) to import locally built packages from
+        type: string
+        default: ""
+  schedule:
+    - cron: "47 3 * * *"
+  push:
+    branches: [ci]
+
+concurrency:
+  group: arch-packages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  ARCH_SITE: https://noas-slopware.github.io/linux-hiby-rs6
+  ARCH_WORK: /home/runner/rs6
+  ARCH_SRC: /home/runner/rs6-arch
+  ARCH_PKGCACHE: /home/runner/arch-pkgcache
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      actions: read # the actions cache list: which packages an earlier run already built
+    outputs:
+      arch_sha: ${{ steps.arch.outputs.sha }}
+      any: ${{ steps.plan.outputs.any || 'false' }}
+      restore: ${{ steps.plan.outputs.restore || '[]' }}
+      seed: ${{ steps.plan.outputs.seed || '[]' }}
+      level0: ${{ steps.plan.outputs.level0 || '[]' }}
+      level1: ${{ steps.plan.outputs.level1 || '[]' }}
+      level2: ${{ steps.plan.outputs.level2 || '[]' }}
+      level3: ${{ steps.plan.outputs.level3 || '[]' }}
+      level4: ${{ steps.plan.outputs.level4 || '[]' }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: branch
+        env:
+          REF: ${{ inputs.arch_ref || 'arch' }}
+          SEED: ${{ inputs.seed }}
+        run: |
+          if [ "$REF" = arch ] && ! git ls-remote --exit-code --heads origin arch >/dev/null; then
+            echo "::notice::There is no arch branch yet: nothing to build"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            [ -z "$SEED" ] || { echo "::error::A seed needs the arch branch"; exit 1; }
+          else
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.branch.outputs.exists == 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.arch_ref || 'arch' }}
+          path: arch
+      - id: arch
+        if: steps.branch.outputs.exists == 'true'
+        run: |
+          echo "sha=$(git -C arch rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          mkdir -p "$(dirname "$ARCH_SRC")" && mv arch "$ARCH_SRC"
+      - if: steps.branch.outputs.exists == 'true'
+        run: .github/arch/images.sh "$ARCH_SRC" base
+      - name: .SRCINFO of every pkgbase (CARCH=aarch64)
+        if: steps.branch.outputs.exists == 'true'
+        run: |
+          mkdir -p "$ARCH_WORK/srcinfo"
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$ARCH_SRC:/src:ro" \
+            -v "$ARCH_WORK/srcinfo:/out" localhost/rs6-arch-base bash -euc '
+            for d in /src/*/; do
+              [ -f "$d/PKGBUILD" ] || continue
+              n=$(basename "$d")
+              cp -r "$d" "/tmp/$n" && (cd "/tmp/$n" && makepkg --printsrcinfo > "/out/$n.SRCINFO")
+            done'
+      - name: Seed release
+        if: steps.branch.outputs.exists == 'true' && inputs.seed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SEED: ${{ inputs.seed }}
+        run: gh release download "$SEED" -p seed.json -D "$ARCH_WORK"
+      - id: plan
+        if: steps.branch.outputs.exists == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          FORCE: ${{ inputs.force || false }}
+          SEED: ${{ inputs.seed }}
+        run: |
+          args=()
+          [ "$FORCE" != true ] || args+=(--force)
+          [ -z "$SEED" ] || args+=(--seed "$ARCH_WORK/seed.json")
+          python3 -I .github/arch/plan.py --arch "$ARCH_SRC" --srcinfo "$ARCH_WORK/srcinfo" \
+            --site "$ARCH_SITE" --out "$ARCH_WORK/plan.json" "${args[@]}"
+          [ ! -e "$ARCH_WORK/seed.json" ] || cp "$ARCH_WORK/seed.json" "$ARCH_WORK/plan-seed.json"
+      - if: steps.branch.outputs.exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-plan
+          path: ${{ env.ARCH_WORK }}/plan*.json
+          retention-days: 7
+
+  # Packages an earlier run built (or imported) and cached but did not publish.
+  restore:
+    needs: plan
+    if: needs.plan.outputs.restore != '[]'
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg: ${{ fromJSON(needs.plan.outputs.restore) }}
+    steps:
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.ARCH_PKGCACHE }}/${{ matrix.pkg.name }}
+          key: ${{ matrix.pkg.key }}
+          fail-on-cache-miss: true
+      - run: ls -l "$ARCH_PKGCACHE/${{ matrix.pkg.name }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkgs-${{ matrix.pkg.name }}
+          path: ${{ env.ARCH_PKGCACHE }}/${{ matrix.pkg.name }}/*.pkg.tar.zst
+          if-no-files-found: error
+          retention-days: 7
+
+  # Locally built packages from the seed release: checked, then cached and handed on like a build.
+  seed:
+    needs: plan
+    if: needs.plan.outputs.seed != '[]'
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg: ${{ fromJSON(needs.plan.outputs.seed) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with: { ref: "${{ needs.plan.outputs.arch_sha }}", path: arch }
+      - run: mkdir -p "$(dirname "$ARCH_SRC")" && mv arch "$ARCH_SRC"
+      - uses: actions/download-artifact@v4
+        with:
+          name: arch-plan
+          path: ${{ runner.temp }}/plan
+      - name: Images
+        run: |
+          .github/arch/images.sh "$ARCH_SRC" base
+          .github/arch/local-repo.sh
+          .github/arch/images.sh "$ARCH_SRC" checker
+      - name: Import ${{ matrix.pkg.name }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SEED: ${{ inputs.seed }}
+          PKG: ${{ matrix.pkg.name }}
+        run: >-
+          .github/arch/import-seed.sh "$ARCH_SRC" "$SEED" "$RUNNER_TEMP/plan/plan-seed.json"
+          "$PKG" "$ARCH_PKGCACHE/$PKG"
+      - uses: actions/cache/save@v4
+        with:
+          path: ${{ env.ARCH_PKGCACHE }}/${{ matrix.pkg.name }}
+          key: ${{ matrix.pkg.key }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkgs-${{ matrix.pkg.name }}
+          path: ${{ env.ARCH_PKGCACHE }}/${{ matrix.pkg.name }}/*.pkg.tar.zst
+          if-no-files-found: error
+          retention-days: 7
+
+  # One job per pkgbase and dependency level (level1..4 are copies of level0 but for needs/if/
+  # matrix). A job builds once the earlier levels are done (failed ones included); it fails right
+  # away when a pkgbase it needs ("after") did not come out of this run.
+  level0:
+    needs: [plan, restore, seed]
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.level0 != '[]' && !cancelled()
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg: ${{ fromJSON(needs.plan.outputs.level0) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with: { ref: "${{ needs.plan.outputs.arch_sha }}", path: arch }
+      - run: mkdir -p "$(dirname "$ARCH_SRC")" && mv arch "$ARCH_SRC" && nproc && free -g && df -h /
+      - name: This run's packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pkgs-*
+          path: ${{ runner.temp }}/run-pkgs
+      - name: Packages it needs from this run
+        env:
+          AFTER: ${{ join(matrix.pkg.after, ' ') }}
+        run: |
+          missing=
+          for b in $AFTER; do
+            compgen -G "$RUNNER_TEMP/run-pkgs/pkgs-$b/*.pkg.tar.zst" >/dev/null || missing="$missing $b"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Not built in this run:$missing"
+            exit 1
+          fi
+      - name: Images and the local [rs6]
+        run: |
+          .github/arch/images.sh "$ARCH_SRC" base
+          .github/arch/local-repo.sh "$RUNNER_TEMP/run-pkgs"
+          .github/arch/images.sh "$ARCH_SRC" builder checker
+      - name: Build ${{ matrix.pkg.name }}
+        run: .github/arch/build.sh "$ARCH_SRC" "${{ matrix.pkg.name }}" "$ARCH_PKGCACHE/${{ matrix.pkg.name }}"
+      - uses: actions/cache/save@v4
+        with:
+          path: ${{ env.ARCH_PKGCACHE }}/${{ matrix.pkg.name }}
+          key: ${{ matrix.pkg.key }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkgs-${{ matrix.pkg.name }}
+          path: ${{ env.ARCH_PKGCACHE }}/${{ matrix.pkg.name }}/*.pkg.tar.zst
+          if-no-files-found: error
+          retention-days: 7
+
+  level1:
+    needs: [plan, restore, seed, level0]
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.level1 != '[]' && !cancelled()
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg: ${{ fromJSON(needs.plan.outputs.level1) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with: { ref: "${{ needs.plan.outputs.arch_sha }}", path: arch }
+      - run: mkdir -p "$(dirname "$ARCH_SRC")" && mv arch "$ARCH_SRC" && nproc && free -g && df -h /
+      - name: This run's packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pkgs-*
+          path: ${{ runner.temp }}/run-pkgs
+      - name: Packages it needs from this run
+        env:
+          AFTER: ${{ join(matrix.pkg.after, ' ') }}
+        run: |
+          missing=
+          for b in $AFTER; do
+            compgen -G "$RUNNER_TEMP/run-pkgs/pkgs-$b/*.pkg.tar.zst" >/dev/null || missing="$missing $b"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Not built in this run:$missing"
+            exit 1
+          fi
+      - name: Images and the local [rs6]
+        run: |
+          .github/arch/images.sh "$ARCH_SRC" base
+          .github/arch/local-repo.sh "$RUNNER_TEMP/run-pkgs"
+          .github/arch/images.sh "$ARCH_SRC" builder checker
+      - name: Build ${{ matrix.pkg.name }}
+        run: .github/arch/build.sh "$ARCH_SRC" "${{ matrix.pkg.name }}" "$ARCH_PKGCACHE/${{ matrix.pkg.name }}"
+      - uses: actions/cache/save@v4
+        with:
+          path: ${{ env.ARCH_PKGCACHE }}/${{ matrix.pkg.name }}
+          key: ${{ matrix.pkg.key }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkgs-${{ matrix.pkg.name }}
+          path: ${{ env.ARCH_PKGCACHE }}/${{ matrix.pkg.name }}/*.pkg.tar.zst
+          if-no-files-found: error
+          retention-days: 7
+
+  level2:
+    needs: [plan, restore, seed, level0, level1]
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.level2 != '[]' && !cancelled()
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg: ${{ fromJSON(needs.plan.outputs.level2) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with: { ref: "${{ needs.plan.outputs.arch_sha }}", path: arch }
+      - run: mkdir -p "$(dirname "$ARCH_SRC")" && mv arch "$ARCH_SRC" && nproc && free -g && df -h /
+      - name: This run's packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pkgs-*
+          path: ${{ runner.temp }}/run-pkgs
+      - name: Packages it needs from this run
+        env:
+          AFTER: ${{ join(matrix.pkg.after, ' ') }}
+        run: |
+          missing=
+          for b in $AFTER; do
+            compgen -G "$RUNNER_TEMP/run-pkgs/pkgs-$b/*.pkg.tar.zst" >/dev/null || missing="$missing $b"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Not built in this run:$missing"
+            exit 1
+          fi
+      - name: Images and the local [rs6]
+        run: |
+          .github/arch/images.sh "$ARCH_SRC" base
+          .github/arch/local-repo.sh "$RUNNER_TEMP/run-pkgs"
+          .github/arch/images.sh "$ARCH_SRC" builder checker
+      - name: Build ${{ matrix.pkg.name }}
+        run: .github/arch/build.sh "$ARCH_SRC" "${{ matrix.pkg.name }}" "$ARCH_PKGCACHE/${{ matrix.pkg.name }}"
+      - uses: actions/cache/save@v4
+        with:
+          path: ${{ env.ARCH_PKGCACHE }}/${{ matrix.pkg.name }}
+          key: ${{ matrix.pkg.key }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkgs-${{ matrix.pkg.name }}
+          path: ${{ env.ARCH_PKGCACHE }}/${{ matrix.pkg.name }}/*.pkg.tar.zst
+          if-no-files-found: error
+          retention-days: 7
+
+  level3:
+    needs: [plan, restore, seed, level0, level1, level2]
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.level3 != '[]' && !cancelled()
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg: ${{ fromJSON(needs.plan.outputs.level3) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with: { ref: "${{ needs.plan.outputs.arch_sha }}", path: arch }
+      - run: mkdir -p "$(dirname "$ARCH_SRC")" && mv arch "$ARCH_SRC" && nproc && free -g && df -h /
+      - name: This run's packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pkgs-*
+          path: ${{ runner.temp }}/run-pkgs
+      - name: Packages it needs from this run
+        env:
+          AFTER: ${{ join(matrix.pkg.after, ' ') }}
+        run: |
+          missing=
+          for b in $AFTER; do
+            compgen -G "$RUNNER_TEMP/run-pkgs/pkgs-$b/*.pkg.tar.zst" >/dev/null || missing="$missing $b"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Not built in this run:$missing"
+            exit 1
+          fi
+      - name: Images and the local [rs6]
+        run: |
+          .github/arch/images.sh "$ARCH_SRC" base
+          .github/arch/local-repo.sh "$RUNNER_TEMP/run-pkgs"
+          .github/arch/images.sh "$ARCH_SRC" builder checker
+      - name: Build ${{ matrix.pkg.name }}
+        run: .github/arch/build.sh "$ARCH_SRC" "${{ matrix.pkg.name }}" "$ARCH_PKGCACHE/${{ matrix.pkg.name }}"
+      - uses: actions/cache/save@v4
+        with:
+          path: ${{ env.ARCH_PKGCACHE }}/${{ matrix.pkg.name }}
+          key: ${{ matrix.pkg.key }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkgs-${{ matrix.pkg.name }}
+          path: ${{ env.ARCH_PKGCACHE }}/${{ matrix.pkg.name }}/*.pkg.tar.zst
+          if-no-files-found: error
+          retention-days: 7
+
+  level4:
+    needs: [plan, restore, seed, level0, level1, level2, level3]
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.level4 != '[]' && !cancelled()
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg: ${{ fromJSON(needs.plan.outputs.level4) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with: { ref: "${{ needs.plan.outputs.arch_sha }}", path: arch }
+      - run: mkdir -p "$(dirname "$ARCH_SRC")" && mv arch "$ARCH_SRC" && nproc && free -g && df -h /
+      - name: This run's packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pkgs-*
+          path: ${{ runner.temp }}/run-pkgs
+      - name: Packages it needs from this run
+        env:
+          AFTER: ${{ join(matrix.pkg.after, ' ') }}
+        run: |
+          missing=
+          for b in $AFTER; do
+            compgen -G "$RUNNER_TEMP/run-pkgs/pkgs-$b/*.pkg.tar.zst" >/dev/null || missing="$missing $b"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Not built in this run:$missing"
+            exit 1
+          fi
+      - name: Images and the local [rs6]
+        run: |
+          .github/arch/images.sh "$ARCH_SRC" base
+          .github/arch/local-repo.sh "$RUNNER_TEMP/run-pkgs"
+          .github/arch/images.sh "$ARCH_SRC" builder checker
+      - name: Build ${{ matrix.pkg.name }}
+        run: .github/arch/build.sh "$ARCH_SRC" "${{ matrix.pkg.name }}" "$ARCH_PKGCACHE/${{ matrix.pkg.name }}"
+      - uses: actions/cache/save@v4
+        with:
+          path: ${{ env.ARCH_PKGCACHE }}/${{ matrix.pkg.name }}
+          key: ${{ matrix.pkg.key }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkgs-${{ matrix.pkg.name }}
+          path: ${{ env.ARCH_PKGCACHE }}/${{ matrix.pkg.name }}/*.pkg.tar.zst
+          if-no-files-found: error
+          retention-days: 7
+
+  # Pages replaces the whole site on every deployment: this run's packages plus the published ones
+  # of every other pkgbase, a fresh rs6.db, built.json, and the Nura part of the live site carried
+  # over (../common/site.py). Same concurrency group as the Nura workflow's publish job.
+  publish:
+    needs: [plan, restore, seed, level0, level1, level2, level3, level4]
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.any == 'true' && !cancelled()
+    runs-on: ubuntu-24.04-arm
+    concurrency:
+      group: pages-site
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with: { ref: "${{ needs.plan.outputs.arch_sha }}", path: arch }
+      - run: mkdir -p "$(dirname "$ARCH_SRC")" && mv arch "$ARCH_SRC"
+      - uses: actions/download-artifact@v4
+        with:
+          name: arch-plan
+          path: ${{ runner.temp }}/plan
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pkgs-*
+          path: ${{ runner.temp }}/run-pkgs
+      - name: Repository, built.json and the site
+        env:
+          ARCH_SHA: ${{ needs.plan.outputs.arch_sha }}
+        run: |
+          site=$RUNNER_TEMP/site
+          repo=$site/arch/aarch64
+          python3 -I .github/arch/publish.py --plan "$RUNNER_TEMP/plan/plan.json" --site "$ARCH_SITE" \
+            --run-pkgs "$RUNNER_TEMP/run-pkgs" --out "$repo" --arch-sha "$ARCH_SHA"
+          .github/arch/images.sh "$ARCH_SRC" base
+          (cd "$repo" && find . -maxdepth 1 -name '*.pkg.tar.zst' -printf '%f\0' | sort -z) |
+            xargs -0 .github/arch/repo-db.sh "$repo"
+          # real files, no symlinks: Pages and the mirror serve them as they are
+          for db in rs6.db rs6.files; do
+            cp --remove-destination "$repo/$db.tar.zst" "$repo/$db"
+          done
+          (cd "$repo" && ls -1 -- *.pkg.tar.zst > packages.txt) || : > "$repo/packages.txt"
+          sed -e "s|@ARCH_SHA@|$ARCH_SHA|g" -e "s|@SITE_URL@|$ARCH_SITE|g" .github/arch/index.html \
+            > "$site/arch/index.html"
+          python3 -I .github/common/site.py list "$site" arch
+          python3 -I .github/common/site.py fetch "$ARCH_SITE" nura "$site"
+          du -sh "$site" "$site/arch"
+          {
+            echo
+            echo "$(wc -l < "$repo/packages.txt") packages in [rs6], $(du -sh "$site/arch" | cut -f1); whole site $(du -sh "$site" | cut -f1); arch $ARCH_SHA"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: ${{ runner.temp }}/site
+      - id: deploy
+        uses: actions/deploy-pages@v5
+
+  # YuruMirror gets the same files: what publish deployed, or the live site when this run deployed
+  # nothing (skips without the mirror secrets).
+  mirror:
+    needs: [plan, publish]
+    if: >-
+      always() && needs.plan.result == 'success' && needs.plan.outputs.arch_sha != ''
+      && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Tailscale workload identity federation
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/mirror
+        with:
+          part: arch
+          deployed: ${{ needs.publish.result == 'success' }}
+          site-url: ${{ env.ARCH_SITE }}
+          ts-oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          ts-audience: ${{ secrets.TS_AUDIENCE }}
+          ssh-host: ${{ secrets.SSH_HOST }}
+          ssh-user: ${{ secrets.SSH_USER }}
+          ssh-key: ${{ secrets.SSH_KEY }}
+          remote-dir: ${{ secrets.REMOTE_DIR }}

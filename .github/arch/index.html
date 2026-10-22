@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>linux-hiby-rs6 pacman repository</title>
+<style>
+  :root { color-scheme: light dark; --bg: #fff; --fg: #1d1d1f; --code: #f2f2f4; --link: #0b57d0; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #161618; --fg: #e8e8ea; --code: #26262a; --link: #8ab4f8; } }
+  body { background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; max-width: 46rem; margin: 2rem auto; padding: 0 16px; }
+  pre { background: var(--code); padding: 0.75rem 1rem; overflow-x: auto; border-radius: 6px; }
+  code { font-family: ui-monospace, monospace; font-size: 0.9em; }
+  a { color: var(--link); }
+</style>
+</head>
+<body>
+<h1>linux-hiby-rs6 pacman repository</h1>
+<p>The <code>[rs6]</code> repository: Arch Linux Ports AArch64 packages for the HiBy RS6, built by
+GitHub Actions from the <a href="https://github.com/noas-slopware/linux-hiby-rs6/tree/arch"><code>arch</code>
+branch</a> of <a href="https://github.com/noas-slopware/linux-hiby-rs6">linux-hiby-rs6</a>
+(commit <code>@ARCH_SHA@</code>) in bens-only Arch Linux Ports containers (ARMv8.0), with
+<code>-march=armv8-a+crc+crypto -mtune=cortex-a73.cortex-a53</code>.</p>
+<p>The repository is unsigned. In <code>/etc/pacman.conf</code>, after <code>[core]</code> and before
+<code>[extra]</code> (the RS6 forks of extra packages keep their names and must win):</p>
+<pre><code>[rs6]
+SigLevel = Never
+Server = https://mirror.funami.tech/linux-hiby-rs6/arch/$arch
+Server = @SITE_URL@/arch/$arch</code></pre>
+<p>Files: <a href="aarch64/rs6.db">aarch64/rs6.db</a>, <a href="aarch64/packages.txt">package list</a>,
+<a href="aarch64/built.json">build hashes</a>. The Nura apk repository is <a href="../">one level up</a>.</p>
+</body>
+</html>
