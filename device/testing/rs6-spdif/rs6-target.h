@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * The hm100 codec's read-only "Output Target" enum (docs/spdif-dsd.md 9.4): where a stream
- * opened now plays. "Spdif" means the coax output, which needs BMC-encoded data.
+ * The hm100 codec's read-only "Output Target" enum (docs/audio.md, "Mainline: the Output
+ * Target control"): where a stream opened now plays. "Spdif" means the coax output, which needs
+ * BMC-encoded data.
  */
 #ifndef RS6_TARGET_H
 #define RS6_TARGET_H

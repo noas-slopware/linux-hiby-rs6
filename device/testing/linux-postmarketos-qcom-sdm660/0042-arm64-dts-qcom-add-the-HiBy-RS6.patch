@@ -79,7 +79,7 @@ index 000000000..45dff6bbf
 + *
 + * HiBy RS6 digital audio player. Based on sdm660-xiaomi-lavender-common.dtsi.
 + * Board facts come from the stock 1.80 device tree ("SDM 660 PM660 + PM660L +
-+ * RS6 MTP"); see docs/rs6-hardware-map.md in the porting repo.
++ * RS6 MTP"); see docs/hardware.md in the porting repo.
 + */
 +
 +/dts-v1/;

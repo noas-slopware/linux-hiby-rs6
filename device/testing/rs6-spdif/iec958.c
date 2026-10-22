@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 /*
- * IEC 60958 biphase-mark encoder for the HiBy RS6 coax output. Contract: docs/spdif-dsd.md 9.1
- * (stock HAL spdif_core_process_data 0x65aac, nibble table of spdif_core_init 0x65e74,
- * preambles at 0xb6eb8).
+ * IEC 60958 biphase-mark encoder for the HiBy RS6 coax output. Contract: docs/audio.md,
+ * "The coax stream format" (stock HAL spdif_core_process_data 0x65aac, nibble table of
+ * spdif_core_init 0x65e74, preambles at 0xb6eb8).
  */
 #include <errno.h>
 #include <string.h>

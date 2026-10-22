@@ -53,7 +53,7 @@ index 9f969ff2c..6d0dcaa2c 100644
 + * Not stock: how long a native DSD stream stays muted after START, RESUME or PAUSE_RELEASE.
 + * Until the stream's own words get through ASM, ADM and the AFE, the AFE port sends 0x0000,
 + * which in DSD is every bit 0: the most negative level, a DC step at the output. 50 ms is a
-+ * margin over that start-up latency, which was never measured (docs/spdif-dsd.md 11).
++ * margin over that start-up latency, which was never measured (docs/audio.md, Review fixes).
 + */
 +static unsigned int dsd_unmute_ms = 50;
 +module_param(dsd_unmute_ms, uint, 0644);

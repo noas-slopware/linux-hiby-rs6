@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 /*
  * IEC 60958 (S/PDIF) biphase-mark encoder in the layout the HiBy RS6 DAC FPGA forwards to its
- * coaxial pin (docs/spdif-dsd.md 9.1). One stereo frame becomes four 32-bit words,
- * L.w0 L.w1 R.w0 R.w1, each holding 32 BMC cells, first cell in the MSB:
+ * coaxial pin (docs/audio.md, "The coax stream format"). One stereo frame becomes four 32-bit
+ * words, L.w0 L.w1 R.w0 R.w1, each holding 32 BMC cells, first cell in the MSB:
  *
  *   w0 = pre << 24 | bmc(a[3:0]) << 16 | bmc(a[7:4]) << 8 | bmc(a[11:8])
  *   w1 = bmc(a[15:12]) << 24 | bmc(a[19:16]) << 16 | bmc(a[23:20]) << 8 | bmc(V U C P)

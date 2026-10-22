@@ -41,7 +41,7 @@ index 5b0d83875..060afc01b 100644
 + * With nothing plugged in, Output Auto selects Spdif (4), as the stock HAL did by mapping the
 + * speaker device to its spdif path: the FPGA alone, the analog side down. The FPGA is the I2S
 + * clock provider, so this is also what keeps a stream with no jack moving. The stream itself
-+ * must be S/PDIF biphase-mark cells (a userspace encoder, see docs/spdif-dsd.md); a stream
++ * must be S/PDIF biphase-mark cells (a userspace encoder, see docs/audio.md); a stream
 + * opened on another target is plain PCM. hm100_startup latches which one it is, as stock
 + * hm100_set_spdif_mode, and a later output switch never sends one kind to the other output.
   * The DSP side stays at 384 kHz (FE media format, ADM, AFE), as stock hiby_fixed_samplerate.

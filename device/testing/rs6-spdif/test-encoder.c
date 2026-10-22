@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 /*
- * Encoder unit test: the stock HAL nibble table, the test vectors of docs/spdif-dsd.md 9.1,
- * and a bit-exact round trip through an independent decoder for every rate, input format,
- * channel status mode and layout (interleaved, separate buffers), in random chunk sizes
- * across block boundaries.
+ * Encoder unit test: the stock HAL nibble table, the test vectors of docs/audio.md, "The coax
+ * stream format", and a bit-exact round trip through an independent decoder for every rate,
+ * input format, channel status mode and layout (interleaved, separate buffers), in random chunk
+ * sizes across block boundaries.
  */
 #include <stdint.h>
 #include <stdio.h>

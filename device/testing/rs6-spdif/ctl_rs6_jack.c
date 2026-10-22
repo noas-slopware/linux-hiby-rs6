@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 /*
  * ALSA control plugin "rs6_jack": two read-only jack controls derived from the hm100 codec's
- * "Output Target" (docs/spdif-dsd.md 9.4), so that PipeWire/PulseAudio UCM support can switch
- * between the RS6's two sinks the way it does for any jack:
+ * "Output Target" (docs/audio.md, "Mainline: the Output Target control"), so that
+ * PipeWire/PulseAudio UCM support can switch between the RS6's two sinks the way it does for
+ * any jack:
  *
  *   "SPDIF Jack"  on while Output Target is Spdif (nothing plugged in, or Output forced to it)
  *   "DAC Jack"    on while it is anything else (3.5 mm, 4.4 mm, line out, balanced line out)
