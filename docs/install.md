@@ -24,7 +24,7 @@ Paths in this guide: `tools/` is on the `main` branch, `patches/` too; `docs/re-
   It is not in this repository. Point `RS6_LOADER` at it.
 - For U-Boot: an aarch64 cross compiler (`aarch64-linux-gnu-`), `mkbootimg`, `xxd`, `gzip`, `make`,
   a C toolchain for the host tools.
-- For the image: [pmbootstrap](https://wiki.postmarketos.org/wiki/Pmbootstrap) 3.x and the `pmos`
+- For the image: [pmbootstrap](https://wiki.nura.eco/wiki/Pmbootstrap) 3.x and the `pmos`
   branch of this repository.
 - A USB cable and a way into EDL (05c6:9008). From a running stock system: `adb reboot edl`. The
   scripts try that themselves and otherwise ask you to enter EDL by hand and rerun.
