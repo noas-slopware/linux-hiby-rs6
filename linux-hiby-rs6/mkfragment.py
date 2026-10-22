@@ -37,6 +37,10 @@ DRM_EFIDRM'''.split())
 # RS6 needs these outside drivers/ (Arch's value conflicts with the device)
 NONDRIVER_RS6 = {
     'CMA_SIZE_MBYTES': 'the SDM660 DTs define no default CMA pool; Nura ran with 32 MiB',
+    'PSTORE_RAM': 'ramoops built in, for the ramoops@a0000000 region in the RS6 DT, so a crash or reset keeps its log',
+    'PSTORE_CONSOLE': 'the console log goes into ramoops (the DT reserves console-size 128 KiB)',
+    'PSTORE_PMSG': 'userspace messages into ramoops (the DT reserves pmsg-size 128 KiB)',
+    'PANIC_TIMEOUT': 'reboot right after a panic (no console to read on a hung screen); ramoops keeps the panic log',
 }
 # RS6 overrides of Arch drivers it enables
 FORCE = {

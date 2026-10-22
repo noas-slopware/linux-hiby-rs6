@@ -27,7 +27,7 @@ pkgname=(
   hiby-rs6-plasma
 )
 pkgver=1
-pkgrel=6
+pkgrel=7
 pkgdesc='HiBy RS6'
 url='https://github.com/noas-slopware/linux-hiby-rs6'
 arch=(aarch64)
@@ -55,6 +55,7 @@ source=(
   hiby-rs6-swap.service
   NetworkManager-hiby-rs6-wifi.conf
   86-hiby-rs6-usbnet-nm.rules
+  logind-hiby-rs6-plasma.conf
   hiby-rs6-growroot.service
 )
 sha512sums=('b7ce99f8a91c928bc4d56850e4636d82d333b3a54f0e366ae6d4523cf902f639330773857543e8b56cbc5333351eb79fe4dffec3ba33655c2a24e8f7b1774e13'
@@ -76,6 +77,7 @@ sha512sums=('b7ce99f8a91c928bc4d56850e4636d82d333b3a54f0e366ae6d4523cf902f639330
             'f304c3554b54a7c09e078a58e014da3c9f7c777371aca53c9aa1dc073b31a4fc1513ac4bd4c1a82816a3a6774481996d48d3c37efef08917bcbad9ad326d06bb'
             'ea07405abdbcdfa94681d10e9821d96d759beef5380bb20d8341b2b7f574b869952083bb486cc48df04b70331803f6a52140018e2800167a58b7f02953058ac3'
             '33336caf63182636051a2a56c1078da5ece89d55f197394dac3d10ad2921643062a2ceac89cf87ba1a6cdbd01f7c57007a1339016b4f568833b8b200f02b8a31'
+            '4ba22390b85fbad9b3b3223dcc8bebe85e407550d944d2a1976b05286fd79fe54609f3dc7c31563c089063188902478576558dfda3a606e762e385a2ec1da981'
             '218de11e9c241bfa92d691f376951ed13123bbec20fdcf33da7fc13fa57487b27ddfaece2811fc0afcb2ed12bc84919e9b391db94cc6532323a485211308b02e')
 
 _us() { echo "$srcdir/linux-hiby-rs6-$_rs6commit/userspace"; }
@@ -275,6 +277,8 @@ package_hiby-rs6-plasma() {
   # the lock screen is the login (plasma-mobile.service starts the session without a display manager)
   install -Dm644 "$srcdir"/kscreenlockerrc "$pkgdir"/etc/xdg/kscreenlockerrc
   install -Dm644 "$us"/system/99-flashlight.rules -t "$pkgdir"/usr/lib/udev/rules.d/
+  # Plasma Mobile takes the power key, not logind (systemd would power off)
+  install -Dm644 "$srcdir"/logind-hiby-rs6-plasma.conf "$pkgdir"/usr/lib/systemd/logind.conf.d/60-hiby-rs6-plasma.conf
 
   # No X11 helpers: Plasma Mobile has no X11 tray or global menu to proxy, and these two X11
   # clients made KWin start Xwayland at every login (an X11 app still gets it on demand)

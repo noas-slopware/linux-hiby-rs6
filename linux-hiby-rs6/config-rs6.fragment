@@ -279,7 +279,21 @@ CONFIG_BACKLIGHT_PWM=y
 # Arch: m
 CONFIG_BACKLIGHT_QCOM_WLED=y
 
-# ---- RS6 needs outside drivers/ (1)
+# ---- RS6 needs outside drivers/ (5)
+# arch/powerpc/Kconfig
+# reboot right after a panic (no console to read on a hung screen); ramoops keeps the panic log
+# Arch: 0
+CONFIG_PANIC_TIMEOUT=-1
+# fs/pstore/Kconfig
+# the console log goes into ramoops (the DT reserves console-size 128 KiB)
+# Arch: off
+CONFIG_PSTORE_CONSOLE=y
+# userspace messages into ramoops (the DT reserves pmsg-size 128 KiB)
+# Arch: off
+CONFIG_PSTORE_PMSG=y
+# ramoops built in, for the ramoops@a0000000 region in the RS6 DT, so a crash or reset keeps its log
+# Arch: m
+CONFIG_PSTORE_RAM=y
 # kernel/dma/Kconfig
 # the SDM660 DTs define no default CMA pool; Nura ran with 32 MiB
 # Arch: 0

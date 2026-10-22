@@ -14,7 +14,7 @@
 
 pkgbase=linux-hiby-rs6
 pkgver=7.2.3
-pkgrel=2
+pkgrel=3
 pkgdesc='Linux for the HiBy RS6 (sdm660-mainline + RS6 series)'
 url='https://github.com/noas-slopware/linux-hiby-rs6'
 arch=(aarch64)
@@ -60,7 +60,7 @@ source=(
 sha512sums=('b56636f4d7429e971a70c1b7237fda4d5795fbe422c01f6fc6038220c2e831bf4479bd411b5e04e4db45de4fb8ec15a9e0e312b6479e2067709062af3dfd6997'
             'b7ce99f8a91c928bc4d56850e4636d82d333b3a54f0e366ae6d4523cf902f639330773857543e8b56cbc5333351eb79fe4dffec3ba33655c2a24e8f7b1774e13'
             '2488702652cc0c0bc5a75b8668c4ff143d64724cf661a65b1e8171901687db8d78b51d02b540b30fa6ae96334516bc550d60100254e5ef8175e8bab53e0ac8b7'
-            '700cc7896d5fe82a210136207c70e22631fb3c617d7bd16dbaa812ce7df7b0e8220798d5c2a5007da3a5ff2f1b052fd47ac1ee0450a386bdeed92febdb7e99de'
+            'b358465aa691a3155dcbfbd1cf48c9477d96417ff5fb7c7737ab3494d0be587ddbe058f6fb86face0cb3e5362afcb04d1ddde10957558078cc0333e28bf27562'
             '64e12f60d00f80912aa92a91ff1081a5703efd3ab0df2f539c1d505329844caa8b0180c34b4c9e1fa1bc59e632605cf44c7fd5a87b433803f9b42a4f9f9a0e43')
 
 export KBUILD_BUILD_HOST=archlinux
