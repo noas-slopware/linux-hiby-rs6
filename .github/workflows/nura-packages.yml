@@ -1,10 +1,15 @@
 # Builds the Nura packages of the pmos branch for aarch64 with pmbootstrap, natively
-# on GitHub's arm64 runners, and publishes them as an apk repository on GitHub Pages:
+# on GitHub's arm64 runners, and publishes them as an apk repository on GitHub Pages and on
+# YuruMirror:
 #   https://noas-slopware.github.io/linux-hiby-rs6/edge
-# Only packages whose APKBUILD version is not published yet are built (or all of them with
-# force). A push to pmos does not run this file by itself (push events use the workflow files of
-# the pushed commit); the pmos branch dispatches it with .github/workflows/nura-trigger.yml, and
-# the schedule catches anything missed.
+#   https://mirror.funami.tech/linux-hiby-rs6/nura/edge
+# Only packages whose build is not published yet are built (or all of them with force): plan.py
+# gives every package a hash of its pmos directory plus the pmbootstrap and pmaports pins and
+# compares it with built.json next to the published APKINDEX. Each package is saved in the actions
+# cache as soon as it is built, so a failed or cancelled run keeps what it finished and the next
+# run restores it from there instead of building it again. A push to pmos does not run this file by
+# itself (push events use the workflow files of the pushed commit); the pmos branch dispatches it
+# with .github/workflows/nura-trigger.yml, and the schedule catches anything missed.
 name: Nura packages
 
 on:
@@ -38,15 +43,21 @@ env:
   NURA_WORK: /home/runner/nura/work
   NURA_TOOLS: /home/runner/nura/tools
   NURA_PMOS: /home/runner/nura/pmos
+  NURA_PKGCACHE: /home/runner/nura-pkgcache
   NURA_FORCE: ${{ inputs.force || false }}
 
 jobs:
   plan:
     runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      actions: read # the actions cache list: which packages an earlier run already built
     outputs:
       pmos_sha: ${{ steps.pmos.outputs.sha }}
       any: ${{ steps.plan.outputs.any }}
       versions: ${{ steps.plan.outputs.versions }}
+      manifest: ${{ steps.plan.outputs.manifest }}
+      restore: ${{ steps.plan.outputs.restore }}
       build_linux: ${{ steps.plan.outputs.build_linux }}
       pkgs_linux: ${{ steps.plan.outputs.pkgs_linux }}
       build_mesa: ${{ steps.plan.outputs.build_mesa }}
@@ -74,18 +85,46 @@ jobs:
       - name: Set up pmbootstrap (no chroots)
         run: .github/nura/setup.sh
       - id: plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           force=()
           [ "$NURA_FORCE" = true ] && force=(--force)
-          python3 -I .github/nura/plan.py --pmos "$NURA_PMOS" \
-            --index "$NURA_REPO_URL/edge/aarch64/APKINDEX.tar.gz" "${force[@]}"
+          python3 -I .github/nura/plan.py --pmos "$NURA_PMOS" --site "$NURA_REPO_URL" "${force[@]}"
+
+  # Packages an earlier run built and cached but did not publish: one job each takes it from the
+  # cache and hands it on as an artifact, like a build job would.
+  restore:
+    needs: plan
+    if: needs.plan.outputs.restore != '[]'
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      matrix:
+        pkg: ${{ fromJSON(needs.plan.outputs.restore) }}
+    steps:
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.NURA_PKGCACHE }}/${{ matrix.pkg.name }}
+          key: ${{ matrix.pkg.key }}
+          fail-on-cache-miss: true
+      - run: ls -l "$NURA_PKGCACHE/${{ matrix.pkg.name }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apks-cached-${{ matrix.pkg.name }}
+          path: ${{ env.NURA_PKGCACHE }}/${{ matrix.pkg.name }}/*.apk
+          if-no-files-found: error
+          retention-days: 7
 
   # Every build job: checkout of this repository (scripts, public key) plus the pmos commit the
   # plan looked at, then the nura-build action. A job runs when the plan has packages for it and
-  # none of the jobs it needs failed; "needs" lists every earlier group it builds against.
+  # none of the jobs it needs failed; "needs" lists every earlier group it builds against, and the
+  # restore job, whose packages it may build against too.
   linux:
-    needs: plan
-    if: needs.plan.outputs.build_linux == 'true'
+    needs: [plan, restore]
+    if: >-
+      always() && needs.plan.outputs.build_linux == 'true'
+      && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 350
     steps:
@@ -99,11 +138,13 @@ jobs:
           packages: ${{ needs.plan.outputs.pkgs_linux }}
           ccache-size: 3G
           privkey: ${{ secrets.NURA_REPO_PRIVKEY }}
-          after-builds: "false"
+          after-builds: ${{ needs.restore.result == 'success' }}
 
   mesa:
-    needs: plan
-    if: needs.plan.outputs.build_mesa == 'true'
+    needs: [plan, restore]
+    if: >-
+      always() && needs.plan.outputs.build_mesa == 'true'
+      && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 350
     steps:
@@ -117,11 +158,13 @@ jobs:
           packages: ${{ needs.plan.outputs.pkgs_mesa }}
           ccache-size: 1500M
           privkey: ${{ secrets.NURA_REPO_PRIVKEY }}
-          after-builds: "false"
+          after-builds: ${{ needs.restore.result == 'success' }}
 
   base:
-    needs: plan
-    if: needs.plan.outputs.build_base == 'true'
+    needs: [plan, restore]
+    if: >-
+      always() && needs.plan.outputs.build_base == 'true'
+      && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 350
     steps:
@@ -135,10 +178,10 @@ jobs:
           packages: ${{ needs.plan.outputs.pkgs_base }}
           ccache-size: 500M
           privkey: ${{ secrets.NURA_REPO_PRIVKEY }}
-          after-builds: "false"
+          after-builds: ${{ needs.restore.result == 'success' }}
 
   qtbase:
-    needs: [plan, mesa]
+    needs: [plan, restore, mesa]
     if: >-
       always() && needs.plan.outputs.build_qtbase == 'true'
       && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
@@ -157,7 +200,7 @@ jobs:
           privkey: ${{ secrets.NURA_REPO_PRIVKEY }}
 
   device:
-    needs: [plan, linux, base]
+    needs: [plan, restore, linux, base]
     if: >-
       always() && needs.plan.outputs.build_device == 'true'
       && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
@@ -176,7 +219,7 @@ jobs:
           privkey: ${{ secrets.NURA_REPO_PRIVKEY }}
 
   kde:
-    needs: [plan, mesa, base, qtbase]
+    needs: [plan, restore, mesa, base, qtbase]
     if: >-
       always() && needs.plan.outputs.build_kde == 'true'
       && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
@@ -195,7 +238,7 @@ jobs:
           privkey: ${{ secrets.NURA_REPO_PRIVKEY }}
 
   dac:
-    needs: [plan, linux, mesa, base, qtbase, device, kde]
+    needs: [plan, restore, linux, mesa, base, qtbase, device, kde]
     if: >-
       always() && needs.plan.outputs.build_dac == 'true'
       && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
@@ -214,13 +257,18 @@ jobs:
           privkey: ${{ secrets.NURA_REPO_PRIVKEY }}
 
   # Pages replaces the whole site on every deployment: start from what is published, add this
-  # run's packages, drop every version that is not the pmos branch's, index, sign, deploy.
+  # run's packages, drop every version that is not the pmos branch's, index, sign, write
+  # built.json, carry the arch part of the live site over (../common/site.py), deploy. Same
+  # concurrency group as the arch workflow's publish job.
   publish:
-    needs: [plan, linux, mesa, base, qtbase, device, kde, dac]
+    needs: [plan, restore, linux, mesa, base, qtbase, device, kde, dac]
     if: >-
       always() && needs.plan.outputs.any == 'true'
       && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-24.04-arm
+    concurrency:
+      group: pages-site
+      cancel-in-progress: false
     permissions:
       contents: read
       pages: write
@@ -245,6 +293,7 @@ jobs:
       - name: Merge, prune and index
         env:
           VERSIONS: ${{ needs.plan.outputs.versions }}
+          MANIFEST: ${{ needs.plan.outputs.manifest }}
         run: |
           .github/nura/seed.sh "$NURA_REPO_URL/edge" "$RUNNER_TEMP/run-apks"
           repo=$NURA_WORK/packages/edge/aarch64
@@ -264,6 +313,9 @@ jobs:
             -e "s|@PMOS_SHA@|${{ needs.plan.outputs.pmos_sha }}|g" \
             .github/nura/index.html > "$site/index.html"
           python3 -I .github/nura/apkindex.py files "$site/edge/aarch64/APKINDEX.tar.gz" | sort > "$site/edge/aarch64/packages.txt"
+          printf '%s\n' "$MANIFEST" | python3 -m json.tool --sort-keys > "$site/edge/aarch64/built.json"
+          python3 -I .github/common/site.py list "$site" nura
+          python3 -I .github/common/site.py fetch "$NURA_REPO_URL" arch "$site"
           du -sh "$site"
           {
             echo "## Published"
@@ -275,3 +327,28 @@ jobs:
           path: ${{ runner.temp }}/site
       - id: deploy
         uses: actions/deploy-pages@v5
+
+  # YuruMirror gets the same files: what publish deployed, or the live site when this run deployed
+  # nothing (skips without the mirror secrets).
+  mirror:
+    needs: [plan, publish]
+    if: >-
+      always() && needs.plan.result == 'success'
+      && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Tailscale workload identity federation
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/mirror
+        with:
+          part: nura
+          deployed: ${{ needs.publish.result == 'success' }}
+          site-url: ${{ env.NURA_REPO_URL }}
+          ts-oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          ts-audience: ${{ secrets.TS_AUDIENCE }}
+          ssh-host: ${{ secrets.SSH_HOST }}
+          ssh-user: ${{ secrets.SSH_USER }}
+          ssh-key: ${{ secrets.SSH_KEY }}
+          remote-dir: ${{ secrets.REMOTE_DIR }}

@@ -1,7 +1,8 @@
 name: Build a group of Nura packages
 description: >
   Set up pmbootstrap, fill its local repository with the published packages and this run's
-  earlier builds, build the given packages for aarch64 and upload them as the artifact
+  earlier builds and cache restores, build the given packages for aarch64 one by one, save each one
+  in the actions cache under its hash as soon as it is built, and upload them all as the artifact
   apks-<group>. Expects the workflow repository in the workspace root and the pmos branch in
   $NURA_PMOS.
 
@@ -10,7 +11,9 @@ inputs:
     description: job name, used for the cache keys and the artifact name
     required: true
   packages:
-    description: packages to build, in order
+    description: >
+      JSON list of {"name", "key"} to build, in order (plan.py pkgs_<group>); key is the actions
+      cache key the package is saved under. At most 6: one build and one save step per slot below.
     required: true
   ccache-size:
     description: ccache size limit
@@ -19,7 +22,7 @@ inputs:
     description: repository signing key (PEM)
     required: true
   after-builds:
-    description: whether earlier jobs of this run uploaded packages to seed from
+    description: whether earlier jobs of this run uploaded packages (apks-*) to seed from
     default: "true"
 
 runs:
@@ -64,13 +67,83 @@ runs:
       shell: bash
       run: .github/nura/seed.sh "$NURA_REPO_URL/edge" "$RUNNER_TEMP/run-apks"
 
-    - name: Build ${{ inputs.packages }}
-      id: build
+    # One build step and one cache step per package slot (GitHub has no loops over steps). A build
+    # step runs when its slot is filled and nothing before it failed; the cache step right after it
+    # saves the package, so a later failure or a cancelled run keeps it for the next run.
+    - name: Build ${{ fromJSON(inputs.packages)[0].name }}
+      id: b0
+      if: fromJSON(inputs.packages)[0] != null
       shell: bash
-      run: .github/nura/build.sh "$RUNNER_TEMP/out" ${{ inputs.packages }}
+      run: .github/nura/build.sh "$RUNNER_TEMP/out" "${{ fromJSON(inputs.packages)[0].name }}"
+    - name: Cache ${{ fromJSON(inputs.packages)[0].name }}
+      if: steps.b0.outcome == 'success'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ env.NURA_PKGCACHE }}/${{ fromJSON(inputs.packages)[0].name }}
+        key: ${{ fromJSON(inputs.packages)[0].key }}
 
-    - name: Prepare caches for saving
-      if: always() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure')
+    - name: Build ${{ fromJSON(inputs.packages)[1].name }}
+      id: b1
+      if: fromJSON(inputs.packages)[1] != null
+      shell: bash
+      run: .github/nura/build.sh "$RUNNER_TEMP/out" "${{ fromJSON(inputs.packages)[1].name }}"
+    - name: Cache ${{ fromJSON(inputs.packages)[1].name }}
+      if: steps.b1.outcome == 'success'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ env.NURA_PKGCACHE }}/${{ fromJSON(inputs.packages)[1].name }}
+        key: ${{ fromJSON(inputs.packages)[1].key }}
+
+    - name: Build ${{ fromJSON(inputs.packages)[2].name }}
+      id: b2
+      if: fromJSON(inputs.packages)[2] != null
+      shell: bash
+      run: .github/nura/build.sh "$RUNNER_TEMP/out" "${{ fromJSON(inputs.packages)[2].name }}"
+    - name: Cache ${{ fromJSON(inputs.packages)[2].name }}
+      if: steps.b2.outcome == 'success'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ env.NURA_PKGCACHE }}/${{ fromJSON(inputs.packages)[2].name }}
+        key: ${{ fromJSON(inputs.packages)[2].key }}
+
+    - name: Build ${{ fromJSON(inputs.packages)[3].name }}
+      id: b3
+      if: fromJSON(inputs.packages)[3] != null
+      shell: bash
+      run: .github/nura/build.sh "$RUNNER_TEMP/out" "${{ fromJSON(inputs.packages)[3].name }}"
+    - name: Cache ${{ fromJSON(inputs.packages)[3].name }}
+      if: steps.b3.outcome == 'success'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ env.NURA_PKGCACHE }}/${{ fromJSON(inputs.packages)[3].name }}
+        key: ${{ fromJSON(inputs.packages)[3].key }}
+
+    - name: Build ${{ fromJSON(inputs.packages)[4].name }}
+      id: b4
+      if: fromJSON(inputs.packages)[4] != null
+      shell: bash
+      run: .github/nura/build.sh "$RUNNER_TEMP/out" "${{ fromJSON(inputs.packages)[4].name }}"
+    - name: Cache ${{ fromJSON(inputs.packages)[4].name }}
+      if: steps.b4.outcome == 'success'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ env.NURA_PKGCACHE }}/${{ fromJSON(inputs.packages)[4].name }}
+        key: ${{ fromJSON(inputs.packages)[4].key }}
+
+    - name: Build ${{ fromJSON(inputs.packages)[5].name }}
+      id: b5
+      if: fromJSON(inputs.packages)[5] != null
+      shell: bash
+      run: .github/nura/build.sh "$RUNNER_TEMP/out" "${{ fromJSON(inputs.packages)[5].name }}"
+    - name: Cache ${{ fromJSON(inputs.packages)[5].name }}
+      if: steps.b5.outcome == 'success'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ env.NURA_PKGCACHE }}/${{ fromJSON(inputs.packages)[5].name }}
+        key: ${{ fromJSON(inputs.packages)[5].key }}
+
+    - name: Prepare ccache and distfiles for saving
+      if: always() && (steps.b0.outcome == 'success' || steps.b0.outcome == 'failure')
       shell: bash
       run: |
         pmbootstrap -y shutdown || true
@@ -79,7 +152,7 @@ runs:
         df -h
 
     - name: Save ccache and distfiles
-      if: always() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure')
+      if: always() && (steps.b0.outcome == 'success' || steps.b0.outcome == 'failure')
       uses: actions/cache/save@v4
       with:
         path: |

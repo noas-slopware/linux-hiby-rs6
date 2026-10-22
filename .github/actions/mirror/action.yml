@@ -1,0 +1,116 @@
+name: Mirror a part of the site to YuruMirror
+description: >
+  Copy one part of the Pages site to mirror.funami.tech: the github-pages artifact this run just
+  deployed, or, when this run deployed nothing, the live site (so a mirror that missed an update
+  catches up on the next run), over the tailnet, the way NoaHimesaka1873/koreader-nightly-vellum and
+  arch-mact2-PKGBUILDs do it: Tailscale with the TS_OAUTH_CLIENT_ID/TS_AUDIENCE federated identity
+  (tag:ci), then rsync over SSH with SSH_HOST, SSH_USER, SSH_KEY into REMOTE_DIR/<target>. The
+  target directory becomes an exact copy (rsync --delete). Without the secrets it does nothing but
+  say so.
+
+inputs:
+  part:
+    description: nura (the site minus arch/, to REMOTE_DIR/nura) or arch (arch/, to REMOTE_DIR/arch)
+    required: true
+  deployed:
+    description: whether this run deployed the site (then the github-pages artifact is used)
+    required: true
+  site-url:
+    description: the live Pages site, used when this run deployed nothing
+    required: true
+  ts-oauth-client-id: { description: secrets.TS_OAUTH_CLIENT_ID, default: "" }
+  ts-audience: { description: secrets.TS_AUDIENCE, default: "" }
+  ssh-host: { description: secrets.SSH_HOST, default: "" }
+  ssh-user: { description: secrets.SSH_USER, default: "" }
+  ssh-key: { description: secrets.SSH_KEY, default: "" }
+  remote-dir: { description: "secrets.REMOTE_DIR, e.g. /opt/mirrorwww/linux-hiby-rs6", default: "" }
+
+runs:
+  using: composite
+  steps:
+    - name: Mirror secrets
+      id: secrets
+      shell: bash
+      env:
+        TS_ID: ${{ inputs.ts-oauth-client-id }}
+        TS_AUD: ${{ inputs.ts-audience }}
+        SSH_HOST: ${{ inputs.ssh-host }}
+        SSH_USER: ${{ inputs.ssh-user }}
+        SSH_KEY: ${{ inputs.ssh-key }}
+        REMOTE_DIR: ${{ inputs.remote-dir }}
+      run: |
+        missing=
+        for v in TS_ID:TS_OAUTH_CLIENT_ID TS_AUD:TS_AUDIENCE SSH_HOST:SSH_HOST SSH_USER:SSH_USER \
+          SSH_KEY:SSH_KEY REMOTE_DIR:REMOTE_DIR; do
+          name=${v%%:*}
+          [ -n "${!name}" ] || missing="$missing ${v#*:}"
+        done
+        if [ -n "$missing" ]; then
+          echo "::notice::Not mirroring to mirror.funami.tech: secret(s)$missing not set"
+          echo "ok=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Download the deployed site
+      if: steps.secrets.outputs.ok == 'true' && inputs.deployed == 'true'
+      uses: actions/download-artifact@v4
+      with:
+        name: github-pages
+        path: ${{ runner.temp }}/pages
+
+    - name: Get the site
+      if: steps.secrets.outputs.ok == 'true'
+      shell: bash
+      env:
+        DEPLOYED: ${{ inputs.deployed }}
+        PART: ${{ inputs.part }}
+        SITE_URL: ${{ inputs.site-url }}
+      run: |
+        site=$RUNNER_TEMP/site
+        mkdir -p "$site"
+        if [ "$DEPLOYED" = true ]; then
+          tar -xf "$RUNNER_TEMP/pages/artifact.tar" -C "$site"
+        else
+          python3 -I "$GITHUB_ACTION_PATH/../../common/site.py" fetch "$SITE_URL" "$PART" "$site"
+        fi
+        find "$site" -type f | wc -l
+
+    - name: Tailscale
+      if: steps.secrets.outputs.ok == 'true'
+      uses: tailscale/github-action@v4
+      with:
+        oauth-client-id: ${{ inputs.ts-oauth-client-id }}
+        audience: ${{ inputs.ts-audience }}
+        tags: tag:ci
+        version: latest
+
+    - name: Upload to mirror.funami.tech
+      if: steps.secrets.outputs.ok == 'true'
+      shell: bash
+      env:
+        PART: ${{ inputs.part }}
+        SSH_HOST: ${{ inputs.ssh-host }}
+        SSH_USER: ${{ inputs.ssh-user }}
+        SSH_KEY: ${{ inputs.ssh-key }}
+        REMOTE_DIR: ${{ inputs.remote-dir }}
+      run: |
+        site=$RUNNER_TEMP/site
+        mkdir -p ~/.ssh
+        echo "$SSH_KEY" > ~/.ssh/id_ed25519
+        chmod 600 ~/.ssh/id_ed25519
+        ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts
+        remote=$SSH_USER@$SSH_HOST
+        case $PART in
+          nura) src=$site/ dest=$REMOTE_DIR/nura/ ;;
+          arch) src=$site/arch/ dest=$REMOTE_DIR/arch/ ;;
+          *) echo "part $PART?" >&2; exit 1 ;;
+        esac
+        if [ ! -d "$src" ] || [ -z "$(find "$src" -path "$site/arch" -prune -o -type f -print -quit)" ]; then
+          echo "::notice::Nothing of the $PART part is published yet, not mirroring"
+          exit 0
+        fi
+        ssh "$remote" "mkdir -p '$dest'"
+        # nura: the whole site except arch/ (which the arch workflow mirrors to its own directory)
+        rsync -rlt --checksum --delete --exclude=/arch/ --stats "$src" "$remote:$dest" | tail -n 16
+        echo "mirrored to https://mirror.funami.tech/${dest#/opt/mirrorwww/}" >> "$GITHUB_STEP_SUMMARY"
