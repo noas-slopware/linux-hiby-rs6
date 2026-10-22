@@ -1,6 +1,6 @@
 # firmware
 
-The firmware files the HiBy RS6 postmarketOS port needs: HiBy's stock firmware **2.10**
+The firmware files the HiBy RS6 Nura port needs: HiBy's stock firmware **2.10**
 (`2.10_20250826-1521`) plus a newer Qualcomm GPU microcode file taken from Xiaomi SDM660 firmware. The
 `firmware-hiby-rs6` package (`pmos` branch) fetches them from a GitHub archive of this branch.
 
@@ -16,7 +16,7 @@ nothing on Linux loads them.
 | `bt/` | WCN3990 Bluetooth firmware and NVM (`apbtfw*`, `apnv*`, `crbtfw*`, `crnv*`) | stock `bluetooth_b` partition, `image/` |
 | `gpu/a512_zap.mbn` | the Adreno 512 zap shader | stock `vendor_b` `/firmware/a512_zap.elf` |
 | `gpu/a530_pm4.fw`, `gpu/a530_pfp.fw` | the CP microcode the stock driver loads for the A512 (PM4 0x5ff066, PFP 0x5ff112; newer than linux-firmware's 0x5ff063 / 0x5ff08a) | stock `vendor_b` `/firmware/` |
-| `gpu/a530_pfp-0x5ff11a.fw` | Qualcomm PFP 0x5ff11a: stock 0x5ff112's code plus the CP_WHERE_AM_I/YIELD write-back, so mainline msm runs 4 rings with preemption; the package installs it as `a530_pfp.fw`, paired with the stock PM4 | Xiaomi tulip (SDM660) vendor firmware, `qcom/a530_pfp.fw` as packaged by postmarketOS `vendor-xiaomi-tulip` |
+| `gpu/a530_pfp-0x5ff11a.fw` | Qualcomm PFP 0x5ff11a: stock 0x5ff112's code plus the CP_WHERE_AM_I/YIELD write-back, so mainline msm runs 4 rings with preemption; the package installs it as `a530_pfp.fw`, paired with the stock PM4 | Xiaomi tulip (SDM660) vendor firmware, `qcom/a530_pfp.fw` as packaged by Nura `vendor-xiaomi-tulip` |
 | `hiby/` | hm100 FPGA bitstreams (PCM and DSD, GW1N-9 and GW1N-9C variants, data plus 8-byte checksum) and the default FIR table | stock 2.10 kernel symbols (`FS_data`, `FS_dsd_data`, `FS_gw1n9c_*`, `hm100_fir_coef_default`) |
 | `darwin/` | the 11 Darwin FIR filters (`.flt`, 1024 bytes) and `filter.json` as stock Settings lists them | stock `Settings.apk` `assets/` |
 | `sensors/` | `sns.reg`, the sensor registry the ADSP's Sensor Manager asks for | stock `persist` `/sensors/sns.reg` |
