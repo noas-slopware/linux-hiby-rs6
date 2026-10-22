@@ -1,4 +1,4 @@
-From 2a2288014dee9639d0d530d9242f023a36c50368 Mon Sep 17 00:00:00 2001
+From 78923808f1aded365db3df6e485472fa6c658dcb Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 13:02:37 +0900
 Subject: [PATCH 72/94] iio: common: qcom_smgr: undo the probe on every

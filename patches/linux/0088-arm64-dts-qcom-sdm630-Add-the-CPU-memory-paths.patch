@@ -1,4 +1,4 @@
-From c9ff04c7cfbe0005f5c389d29c77ec67422f9f15 Mon Sep 17 00:00:00 2001
+From 3c5a3e64f7495fc87f9c920321555dfb62570787 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 15:29:22 +0900
 Subject: [PATCH 88/94] arm64: dts: qcom: sdm630: Add the CPU memory paths

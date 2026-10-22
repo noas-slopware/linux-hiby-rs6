@@ -1,4 +1,4 @@
-From fedfb19221f51bad20f126e7e4a2f6ab3418b26e Mon Sep 17 00:00:00 2001
+From 153f995df71016f4c09bb11feb228ef4d43c5b42 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:02 +0900
 Subject: [PATCH 39/94] dt-bindings: pinctrl: qcom,sdm630: allow config-only

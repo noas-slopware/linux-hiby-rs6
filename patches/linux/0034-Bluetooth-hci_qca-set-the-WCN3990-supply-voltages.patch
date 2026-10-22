@@ -1,4 +1,4 @@
-From b16e3d0e645770381b9bca62f866084a4e8ac508 Mon Sep 17 00:00:00 2001
+From 94c64a61a42c0f38d1420ee21fd492d31d1492bb Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:02 +0900
 Subject: [PATCH 34/94] Bluetooth: hci_qca: set the WCN3990 supply voltages

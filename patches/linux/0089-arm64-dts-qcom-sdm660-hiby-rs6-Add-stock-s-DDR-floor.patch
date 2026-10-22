@@ -1,4 +1,4 @@
-From ea2bf0dcaf464a2be3366f117702f638b1de25b0 Mon Sep 17 00:00:00 2001
+From b0142450c7b23f4af3618465cef7719b7b0ee495 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 15:29:59 +0900
 Subject: [PATCH 89/94] arm64: dts: qcom: sdm660-hiby-rs6: Add stock's DDR

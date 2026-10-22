@@ -1,4 +1,4 @@
-From 9ff66bd6ad374501ade3e239ff97e40bdc9e5c0c Mon Sep 17 00:00:00 2001
+From 68fef7538433ad2628e20b0b5e9e245b92799edc Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 12:28:36 +0900
 Subject: [PATCH 68/94] ASoC: codecs: hiby-hm100: keep DSD muted across pauses
@@ -53,7 +53,7 @@ index 9f969ff2c..6d0dcaa2c 100644
 + * Not stock: how long a native DSD stream stays muted after START, RESUME or PAUSE_RELEASE.
 + * Until the stream's own words get through ASM, ADM and the AFE, the AFE port sends 0x0000,
 + * which in DSD is every bit 0: the most negative level, a DC step at the output. 50 ms is a
-+ * margin over that start-up latency, which was never measured (docs/audio.md, Review fixes).
++ * margin over that start-up latency, which was never measured (docs/spdif-dsd.md 11).
 + */
 +static unsigned int dsd_unmute_ms = 50;
 +module_param(dsd_unmute_ms, uint, 0644);

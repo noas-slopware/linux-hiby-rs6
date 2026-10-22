@@ -1,4 +1,4 @@
-From a78fff800d200b97c066e4702798362182078318 Mon Sep 17 00:00:00 2001
+From a970bac692ad5cfab79079bbe854d99931ffa2e6 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 12:28:21 +0900
 Subject: [PATCH 64/94] ASoC: codecs: hiby-hm100: play on S/PDIF with nothing
@@ -41,7 +41,7 @@ index 5b0d83875..060afc01b 100644
 + * With nothing plugged in, Output Auto selects Spdif (4), as the stock HAL did by mapping the
 + * speaker device to its spdif path: the FPGA alone, the analog side down. The FPGA is the I2S
 + * clock provider, so this is also what keeps a stream with no jack moving. The stream itself
-+ * must be S/PDIF biphase-mark cells (a userspace encoder, see docs/audio.md); a stream
++ * must be S/PDIF biphase-mark cells (a userspace encoder, see docs/spdif-dsd.md); a stream
 + * opened on another target is plain PCM. hm100_startup latches which one it is, as stock
 + * hm100_set_spdif_mode, and a later output switch never sends one kind to the other output.
   * The DSP side stays at 384 kHz (FE media format, ADM, AFE), as stock hiby_fixed_samplerate.

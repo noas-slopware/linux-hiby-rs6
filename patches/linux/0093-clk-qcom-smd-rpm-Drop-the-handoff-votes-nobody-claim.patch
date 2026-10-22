@@ -1,4 +1,4 @@
-From c477631aefc112a07bdc0db7a7faee89d0883a54 Mon Sep 17 00:00:00 2001
+From ac4255ae9b3c257dfcae8e184fb1004f83c03daa Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 17:49:12 +0900
 Subject: [PATCH 93/94] clk: qcom: smd-rpm: Drop the handoff votes nobody

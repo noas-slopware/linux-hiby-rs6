@@ -1,4 +1,4 @@
-From 8720f6da75874f705ee9da00c79ead5c0c9ed34e Mon Sep 17 00:00:00 2001
+From d39a5842f4025edb304c5f78d476d969c0fdc28e Mon Sep 17 00:00:00 2001
 From: Richard Acayan <mailingradian@gmail.com>
 Date: Sat, 3 Oct 2026 13:56:49 -0400
 Subject: [PATCH 51/94] dt-bindings: soc: qcom,smp2p: add sleepstate support

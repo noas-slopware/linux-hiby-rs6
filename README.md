@@ -1,7 +1,7 @@
 # linux-hiby-rs6
 
 Mainline-based Linux and U-Boot for the HiBy RS6 digital audio player, with the userspace
-pieces, install tools and notes needed to run Nura (formerly postmarketOS) on it. The port was done by Noa
+pieces, install tools and notes needed to run Nura on it. The port was done by Noa
 Himesaka. It is not affiliated with HiBy.
 
 ## The device

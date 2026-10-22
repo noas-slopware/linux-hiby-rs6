@@ -1,4 +1,4 @@
-From 321dba8bc81bb7d0826c8eb56d93e38ce36d6f6f Mon Sep 17 00:00:00 2001
+From 43199b4bcf1e1362388f53890ef3f85342117c15 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 13:03:27 +0900
 Subject: [PATCH 73/94] ASoC: codecs: hiby-hm100: say when a DSD unmute after a

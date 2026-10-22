@@ -1,4 +1,4 @@
-From b8df15577aecd63c8644a417ef2b9279c589920c Mon Sep 17 00:00:00 2001
+From 6db80f6ec5306a819203e3f9c099243d34b136ce Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 13:46:38 +0900
 Subject: [PATCH 77/94] arm64: dts: qcom: sdm660-hiby-rs6: give the hm100 SPI
