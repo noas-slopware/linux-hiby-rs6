@@ -1,0 +1,1518 @@
+From 045ab2183b0796f41edd6a1050396e523829715a Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 18:25:03 +0900
+Subject: [PATCH 42/94] arm64: dts: qcom: add the HiBy RS6
+
+HiBy RS6 digital audio player: SDM660, PM660/PM660L, Sharp LS050T1SX18
+panel, Goodix touch, WCN3990, hm100 FPGA DAC, KXTJ2 accelerometer on the
+ADSP. Based on sdm660-xiaomi-lavender-common.dtsi; board data from the
+stock 1.80 device tree.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ .../devicetree/bindings/arm/qcom.yaml         |    6 +
+ .../devicetree/bindings/vendor-prefixes.yaml  |    2 +
+ arch/arm64/boot/dts/qcom/Makefile             |    1 +
+ arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts  | 1443 +++++++++++++++++
+ 4 files changed, 1452 insertions(+)
+ create mode 100644 arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts
+
+diff --git a/Documentation/devicetree/bindings/arm/qcom.yaml b/Documentation/devicetree/bindings/arm/qcom.yaml
+index 62dd9f678..eaab76639 100644
+--- a/Documentation/devicetree/bindings/arm/qcom.yaml
++++ b/Documentation/devicetree/bindings/arm/qcom.yaml
+@@ -908,6 +908,11 @@ properties:
+               - vsmart,active1
+           - const: qcom,sdm660
+ 
++      - items:
++          - enum:
++              - hiby,rs6
++          - const: qcom,sdm660
++
+       - items:
+           - enum:
+               - google,sargo
+@@ -1316,6 +1321,7 @@ allOf:
+               - qcom,sdm630
+               - qcom,sdm632
+               - qcom,sdm636
++              - qcom,sdm660
+               - qcom,sdm845
+               - qcom,sdx55
+               - qcom,sdx65
+diff --git a/Documentation/devicetree/bindings/vendor-prefixes.yaml b/Documentation/devicetree/bindings/vendor-prefixes.yaml
+index 3277fd905..6f8db5bf7 100644
+--- a/Documentation/devicetree/bindings/vendor-prefixes.yaml
++++ b/Documentation/devicetree/bindings/vendor-prefixes.yaml
+@@ -708,6 +708,8 @@ patternProperties:
+     description: HEAD acoustics
+   "^hechuang,.*":
+     description: Shenzhen Hechuang Intelligent Co.
++  "^hiby,.*":
++    description: Dongguan HiBy Music Technology Co., Ltd.
+   "^hideep,.*":
+     description: HiDeep Inc.
+   "^himax,.*":
+diff --git a/arch/arm64/boot/dts/qcom/Makefile b/arch/arm64/boot/dts/qcom/Makefile
+index 4821b5681..4a9b304aa 100644
+--- a/arch/arm64/boot/dts/qcom/Makefile
++++ b/arch/arm64/boot/dts/qcom/Makefile
+@@ -318,6 +318,7 @@ dtb-$(CONFIG_ARCH_QCOM)	+= sdm636-xiaomi-tulip.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sdm636-xiaomi-whyred.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sdm660-bbry-athena-boe.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sdm660-bbry-athena-syna.dtb
++dtb-$(CONFIG_ARCH_QCOM)	+= sdm660-hiby-rs6.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sdm660-vsmart-zangyapro.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sdm660-xiaomi-clover.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sdm660-xiaomi-clover-plus.dtb
+diff --git a/arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts b/arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts
+new file mode 100644
+index 000000000..45dff6bbf
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts
+@@ -0,0 +1,1443 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Copyright (c) 2026, Noa Himesaka <himesaka@noa.codes>
++ *
++ * HiBy RS6 digital audio player. Based on sdm660-xiaomi-lavender-common.dtsi.
++ * Board facts come from the stock 1.80 device tree ("SDM 660 PM660 + PM660L +
++ * RS6 MTP"); see docs/rs6-hardware-map.md in the porting repo.
++ */
++
++/dts-v1/;
++
++#include "sdm660.dtsi"
++#include "pm660.dtsi"
++#include "pm660l.dtsi"
++#include <dt-bindings/input/input.h>
++#include <dt-bindings/input/gpio-keys.h>
++#include <dt-bindings/leds/common.h>
++#include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
++#include <dt-bindings/sound/qcom,q6afe.h>
++#include <dt-bindings/sound/qcom,q6asm.h>
++
++/delete-node/ &zap_shader_region;
++
++/ {
++	model = "HiBy RS6";
++	compatible = "hiby,rs6", "qcom,sdm660";
++	chassis-type = "handset";
++
++	/* Stock ABL picks the appended DTB by these, copied from the stock DT. */
++	qcom,msm-id = <0x13d 0x0>;
++	qcom,board-id = <0x8 0x0>;
++	qcom,pmic-id = <0x1001b 0x101011a 0x0 0x0 0x1001b 0x201011a 0x0 0x0 0x1001b 0x102001a 0x0 0x0>;
++
++	chosen {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		framebuffer0: framebuffer@9d400000 {
++			compatible = "simple-framebuffer";
++			reg = <0 0x9d400000 0 (1080 * 1920 * 4)>;
++			width = <1080>;
++			height = <1920>;
++			stride = <(1080 * 4)>;
++			format = "a8r8g8b8";
++
++			/*
++			 * Keep the scan-out path of the bootloader's splash alive until msm takes over
++			 * (~10 s, module); otherwise "clk: Disabling unused clocks" at ~1.2 s starves
++			 * the panel while the backlight is still on, and it drifts into colour bands.
++			 */
++			clocks = <&mmcc MDSS_AHB_CLK>,
++				 <&mmcc MDSS_AXI_CLK>,
++				 <&mmcc MDSS_VSYNC_CLK>,
++				 <&mmcc MDSS_MDP_CLK>,
++				 <&mmcc MDSS_BYTE0_CLK>,
++				 <&mmcc MDSS_BYTE0_INTF_CLK>,
++				 <&mmcc MNOC_AHB_CLK>,
++				 <&mmcc MISC_AHB_CLK>,
++				 <&mmcc MDSS_PCLK0_CLK>,
++				 <&mmcc MDSS_ESC0_CLK>;
++			power-domains = <&mmcc MDSS_GDSC>,
++					<&rpmpd RPMPD_VDDCX>;
++		};
++	};
++
++	battery: battery {
++		compatible = "simple-battery";
++
++		/* 4500 mAh per HiBy's spec sheet */
++		charge-full-design-microamp-hours = <4500000>;
++		voltage-min-design-microvolt = <3400000>;
++		/* Stock smb2 runs the cell at 4.35 V / 3 A (live power_supply dump) */
++		voltage-max-design-microvolt = <4350000>;
++		constant-charge-voltage-max-microvolt = <4350000>;
++		constant-charge-current-max-microamp = <3000000>;
++	};
++
++	vph_pwr: vph-pwr-regulator {
++		compatible = "regulator-fixed";
++		regulator-name = "vph_pwr";
++		regulator-min-microvolt = <3700000>;
++		regulator-max-microvolt = <3700000>;
++
++		regulator-always-on;
++		regulator-boot-on;
++	};
++
++	/*
++	 * Placeholder for the PM660L LCDB (stock: lab/ibb 4.6-6.0 V) until
++	 * there is a driver; the bootloader leaves it on.
++	 */
++	lcdb_fixed: lcdb-regulator {
++		compatible = "regulator-fixed";
++		regulator-name = "lcdb";
++		regulator-min-microvolt = <5400000>;
++		regulator-max-microvolt = <5400000>;
++		regulator-always-on;
++		regulator-boot-on;
++	};
++
++	/* Stock: bl_ctrl_pwm on PM660L LPG channel 4 (pwm@b400), 370 us period */
++	backlight: backlight {
++		compatible = "pwm-backlight";
++		/* stock: LPG4 (pwm@b400), 370 us, out through pm660l GPIO6 in func1 (src-sel 2) */
++		pwms = <&pm660l_lpg 3 370000>;
++		pinctrl-0 = <&bl_pwm_default>;
++		pinctrl-names = "default";
++		brightness-levels = <0 4095>;
++		num-interpolated-steps = <4095>;
++		default-brightness-level = <1600>;
++	};
++
++	/* volume wheel; directions and codes from the stock ring_keys node */
++	ring-keys {
++		compatible = "hiby,ring-keys";
++		clockwise-gpios = <&tlmm 42 GPIO_ACTIVE_HIGH>;
++		anticlockwise-gpios = <&tlmm 43 GPIO_ACTIVE_HIGH>;
++
++		pinctrl-0 = <&ring_keys_default>;
++		pinctrl-names = "default";
++
++		key-volume-down {
++			linux,code = <KEY_VOLUMEDOWN>;
++			hiby,direction = <1>;
++		};
++
++		key-volume-up {
++			linux,code = <KEY_VOLUMEUP>;
++			hiby,direction = <2>;
++		};
++	};
++
++	gpio-keys {
++		compatible = "gpio-keys";
++
++		pinctrl-0 = <&vol_up_default>, <&play_pause_default>;
++		pinctrl-names = "default";
++
++		/* stock gpio-keys.kl: key 115 -> MEDIA_PREVIOUS (the knob is the volume) */
++		key-previous {
++			label = "Previous";
++			gpios = <&pm660l_gpios 7 GPIO_ACTIVE_LOW>;
++			linux,code = <KEY_PREVIOUSSONG>;
++			debounce-interval = <15>;
++			wakeup-source;
++		};
++
++		key-playpause {
++			label = "Play Pause";
++			gpios = <&tlmm 56 GPIO_ACTIVE_LOW>;
++			linux,code = <KEY_PLAYPAUSE>;
++			debounce-interval = <15>;
++			wakeup-source;
++		};
++	};
++
++	reserved-memory {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		/* free in the stock map (dfps_data_mem ends at 0x9f800000); same spot as lavender */
++		ramoops@a0000000 {
++			compatible = "ramoops";
++			reg = <0x0 0xa0000000 0x0 0x400000>;
++			console-size = <0x20000>;
++			record-size = <0x20000>;
++			ftrace-size = <0x0>;
++			pmsg-size = <0x20000>;
++		};
++
++		framebuffer_mem: memory@9d400000 {
++			reg = <0x0 0x9d400000 0x0 0x23ff000>;
++			no-map;
++		};
++
++		/* same address as lavender; stock loads a512_zap via kgsl-hyp into a dynamic region */
++		zap_shader_region: gpu@fc400000 {
++			compatible = "shared-dma-pool";
++			reg = <0x0 0xfc400000 0x0 0x2000>;
++			no-map;
++		};
++	};
++
++	/*
++	 * CPU OPPs: the stock OSM LUT (qcom,clk-cpu-osm) for speed bin 1.
++	 * The bin is inferred, not fuse-read: stock cpufreq tops out at
++	 * pwrcl 1843.2 MHz and perfcl 2208 MHz, and 2208 MHz is the perfcl
++	 * top only in speed bin 1.  Virtual corner N -> cprh_oppN.
++	 */
++	/* qcom,pwrcl-speedbin1-v0 */
++	pwrcl_opp_table: opp-table-pwrcl {
++		compatible = "operating-points-v2-qcom-osm";
++		opp-shared;
++
++		opp-300000000 {
++			opp-hz = /bits/ 64 <300000000>;
++			required-opps = <&cprh_opp1>;
++			qcom,pll-override = <0x1200020>;
++			qcom,spare-data = <1>;
++		};
++
++		opp-633600000 {
++			opp-hz = /bits/ 64 <633600000>;
++			required-opps = <&cprh_opp2>;
++			qcom,pll-override = <0x3200020>;
++			qcom,spare-data = <1>;
++			qcom,pll-div = <1>;
++		};
++
++		opp-902400000 {
++			opp-hz = /bits/ 64 <902400000>;
++			required-opps = <&cprh_opp3>;
++			qcom,pll-override = <0x4260026>;
++			qcom,spare-data = <1>;
++		};
++
++		opp-1113600000 {
++			opp-hz = /bits/ 64 <1113600000>;
++			required-opps = <&cprh_opp4>;
++			qcom,pll-override = <0x52e002e>;
++			qcom,spare-data = <2>;
++		};
++
++		opp-1401600000 {
++			opp-hz = /bits/ 64 <1401600000>;
++			required-opps = <&cprh_opp5>;
++			qcom,pll-override = <0x73a003a>;
++			qcom,spare-data = <2>;
++		};
++
++		opp-1536000000 {
++			opp-hz = /bits/ 64 <1536000000>;
++			required-opps = <&cprh_opp6>;
++			qcom,pll-override = <0x8400040>;
++			qcom,spare-data = <2>;
++		};
++
++		opp-1747200000 {
++			opp-hz = /bits/ 64 <1747200000>;
++			required-opps = <&cprh_opp7>;
++			qcom,pll-override = <0x9480048>;
++			qcom,spare-data = <2>;
++		};
++
++		opp-1843200000 {
++			opp-hz = /bits/ 64 <1843200000>;
++			required-opps = <&cprh_opp8>;
++			qcom,pll-override = <0x94c004c>;
++			qcom,spare-data = <3>;
++		};
++	};
++
++	/* qcom,perfcl-speedbin1-v0 */
++	perfcl_opp_table: opp-table-perfcl {
++		compatible = "operating-points-v2-qcom-osm";
++		opp-shared;
++
++		opp-300000000 {
++			opp-hz = /bits/ 64 <300000000>;
++			required-opps = <&cprh_opp1>;
++			qcom,pll-override = <0x1200020>;
++			qcom,spare-data = <1>;
++		};
++
++		opp-1113600000 {
++			opp-hz = /bits/ 64 <1113600000>;
++			required-opps = <&cprh_opp2>;
++			qcom,pll-override = <0x52e002e>;
++			qcom,spare-data = <1>;
++		};
++
++		opp-1401600000 {
++			opp-hz = /bits/ 64 <1401600000>;
++			required-opps = <&cprh_opp3>;
++			qcom,pll-override = <0x73a003a>;
++			qcom,spare-data = <2>;
++		};
++
++		opp-1747200000 {
++			opp-hz = /bits/ 64 <1747200000>;
++			required-opps = <&cprh_opp4>;
++			qcom,pll-override = <0x9480048>;
++			qcom,spare-data = <2>;
++		};
++
++		opp-1958400000 {
++			opp-hz = /bits/ 64 <1958400000>;
++			required-opps = <&cprh_opp5>;
++			qcom,pll-override = <0xa510051>;
++			qcom,spare-data = <2>;
++		};
++
++		opp-2150400000 {
++			opp-hz = /bits/ 64 <2150400000>;
++			required-opps = <&cprh_opp6>;
++			qcom,pll-override = <0xb590059>;
++			qcom,spare-data = <2>;
++		};
++
++		opp-2208000000 {
++			opp-hz = /bits/ 64 <2208000000>;
++			required-opps = <&cprh_opp7>;
++			qcom,pll-override = <0xb5c005c>;
++			qcom,spare-data = <3>;
++		};
++	};
++};
++
++&adreno_gpu {
++	/*
++	 * Soak 2026-10-20: 60 kmscube render/idle cycles (1-45 s idle, runtime suspend each
++	 * time) without a reset. Two earlier resets after a bare first open on an older build
++	 * were not reproducible; a third came from reading debugfs dri/1/gpu (state dump).
++	 */
++	status = "okay";
++};
++
++&adreno_gpu_zap {
++	firmware-name = "a512_zap.mbn";
++	memory-region = <&zap_shader_region>;
++};
++
++&apc_cprh {
++	status = "okay";
++};
++
++&blsp2_uart1 {
++	status = "okay";
++
++	/*
++	 * Stock bt_wcn3990: core l9a, pa l6a, ldo l19a, chip-pwd bob. Its HS-UART is
++	 * uart@c1af000 (msm-hsuart-v14, gpio16-19), i.e. this blsp2_uart1.
++	 */
++	bluetooth {
++		compatible = "qcom,wcn3990-bt";
++		/*
++		 * Stock has no vddio (l13a is the LPDDR4 rail, left to the RPM). Voltages are
++		 * stock's qca,bt-vdd-{core,pa,ldo}-voltage-level, voted only while BT is on.
++		 * Stock's fourth supply, chip-pwd on bob pin1 (3.6 V), has no mainline equivalent.
++		 */
++		vddxo-supply = <&vreg_l9a_1p8>;
++		vddxo-microvolt = <1800000 1900000>;
++		vddrf-supply = <&vreg_l6a_1p3>;
++		vddrf-microvolt = <1304000 1370000>;
++		vddch0-supply = <&vreg_l19a_3p3>;
++		vddch0-microvolt = <3312000 3400000>;
++		max-speed = <3200000>;
++	};
++};
++
++/* stock blsp2_uart1_{tx,rxcts,rfr}_active: all four pins no pull, 2 mA */
++&blsp2_uart1_default {
++	rx-pins {
++		/delete-property/ bias-pull-up;
++		bias-disable;
++	};
++
++	cts-pins {
++		/delete-property/ bias-pull-down;
++		bias-disable;
++	};
++};
++
++&blsp_i2c1 {
++	status = "okay";
++
++	touchscreen@14 {
++		compatible = "goodix,gt1151";
++		reg = <0x14>;
++
++		interrupts-extended = <&tlmm 67 IRQ_TYPE_EDGE_FALLING>;
++		irq-gpios = <&tlmm 67 GPIO_ACTIVE_HIGH>;
++		reset-gpios = <&tlmm 66 GPIO_ACTIVE_HIGH>;
++
++		AVDD28-supply = <&vreg_l3b_3p3>;
++
++		pinctrl-0 = <&ts_int_default>, <&ts_reset_default>;
++		pinctrl-names = "default";
++
++		touchscreen-size-x = <1080>;
++		touchscreen-size-y = <1920>;
++		touchscreen-inverted-y;
++	};
++};
++
++&blsp_i2c6 {
++	status = "okay";
++
++	fuel-gauge@62 {
++		compatible = "cellwise,cw2015";
++		reg = <0x62>;
++
++		/* Stock "config-data", 16 u32 split into bytes */
++		cellwise,battery-profile = /bits/ 8 <
++			0x17 0x67 0x71 0x67 0x67 0x64 0x63 0x59
++			0x66 0x6b 0x43 0x53 0x55 0x59 0x45 0x39
++			0x30 0x29 0x23 0x1b 0x1e 0x2b 0x3e 0x4c
++			0x38 0x18 0x0c 0xcd 0x36 0x56 0x64 0x80
++			0x89 0x8b 0x8e 0x8c 0x3c 0x19 0x79 0x30
++			0x0a 0x35 0x16 0x41 0x6d 0x9a 0xaa 0x0d
++			0x22 0x6a 0x9c 0xc6 0x80 0x64 0x69 0xcb
++			0x2f 0x00 0x64 0xa5 0xb5 0x08 0x40 0x49
++		>;
++		monitored-battery = <&battery>;
++		power-supplies = <&pm660_charger>;
++	};
++
++	led-controller@30 {
++		compatible = "ti,lp5562";
++		reg = <0x30>;
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		clock-mode = /bits/ 8 <1>;
++		enable-gpios = <&pm660l_gpios 8 GPIO_ACTIVE_HIGH>;
++
++		pinctrl-0 = <&lp5562_en_default>;
++		pinctrl-names = "default";
++
++		led@0 {
++			reg = <0>;
++			chan-name = "R";
++			color = <LED_COLOR_ID_RED>;
++			led-cur = /bits/ 8 <0x20>;
++			max-cur = /bits/ 8 <0x60>;
++		};
++
++		led@1 {
++			reg = <1>;
++			chan-name = "G";
++			color = <LED_COLOR_ID_GREEN>;
++			led-cur = /bits/ 8 <0x20>;
++			max-cur = /bits/ 8 <0x60>;
++		};
++
++		led@2 {
++			reg = <2>;
++			chan-name = "B";
++			color = <LED_COLOR_ID_BLUE>;
++			led-cur = /bits/ 8 <0x20>;
++			max-cur = /bits/ 8 <0x60>;
++		};
++
++		led@3 {
++			reg = <3>;
++			chan-name = "W";
++			color = <LED_COLOR_ID_WHITE>;
++			led-cur = /bits/ 8 <0x20>;
++			max-cur = /bits/ 8 <0x60>;
++		};
++	};
++};
++
++/*
++ * cpu@100-103 = gold (perfcl, apc1, OSM domain 1); cpu@0-3 = silver (pwrcl).
++ * The PSCI domain (idle hierarchy, sdm660.dtsi) must stay first: the cpuidle
++ * code takes domain idle states from power-domains[0]. The CPRh thread is
++ * found by its "cpr" name.
++ */
++&cpu0 {
++	operating-points-v2 = <&perfcl_opp_table>;
++	power-domains = <&cpu_pd0>, <&apc_cprh 1>;
++	power-domain-names = "psci", "cpr";
++	qcom,freq-domain = <&cpufreq_hw 1>;
++};
++
++&cpu1 {
++	operating-points-v2 = <&perfcl_opp_table>;
++	power-domains = <&cpu_pd1>, <&apc_cprh 1>;
++	power-domain-names = "psci", "cpr";
++	qcom,freq-domain = <&cpufreq_hw 1>;
++};
++
++&cpu2 {
++	operating-points-v2 = <&perfcl_opp_table>;
++	power-domains = <&cpu_pd2>, <&apc_cprh 1>;
++	power-domain-names = "psci", "cpr";
++	qcom,freq-domain = <&cpufreq_hw 1>;
++};
++
++&cpu3 {
++	operating-points-v2 = <&perfcl_opp_table>;
++	power-domains = <&cpu_pd3>, <&apc_cprh 1>;
++	power-domain-names = "psci", "cpr";
++	qcom,freq-domain = <&cpufreq_hw 1>;
++};
++
++&cpu4 {
++	operating-points-v2 = <&pwrcl_opp_table>;
++	power-domains = <&cpu_pd4>, <&apc_cprh 0>;
++	power-domain-names = "psci", "cpr";
++	qcom,freq-domain = <&cpufreq_hw 0>;
++};
++
++&cpu5 {
++	operating-points-v2 = <&pwrcl_opp_table>;
++	power-domains = <&cpu_pd5>, <&apc_cprh 0>;
++	power-domain-names = "psci", "cpr";
++	qcom,freq-domain = <&cpufreq_hw 0>;
++};
++
++&cpu6 {
++	operating-points-v2 = <&pwrcl_opp_table>;
++	power-domains = <&cpu_pd6>, <&apc_cprh 0>;
++	power-domain-names = "psci", "cpr";
++	qcom,freq-domain = <&cpufreq_hw 0>;
++};
++
++&cpu7 {
++	operating-points-v2 = <&pwrcl_opp_table>;
++	power-domains = <&cpu_pd7>, <&apc_cprh 0>;
++	power-domain-names = "psci", "cpr";
++	qcom,freq-domain = <&cpufreq_hw 0>;
++};
++
++&cpufreq_hw {
++	status = "okay";
++};
++
++&mdss {
++	status = "okay";
++};
++
++&mdss_dsi0 {
++	status = "okay";
++
++	#address-cells = <1>;
++	#size-cells = <0>;
++
++	vdd-supply = <&vreg_l1b_0p925>;
++	vdda-supply = <&vreg_l1a_1p225>;
++
++	panel: panel@0 {
++		compatible = "sharp,ls050t1sx18";
++		reg = <0>;
++
++		reset-gpios = <&tlmm 53 GPIO_ACTIVE_LOW>;
++
++		vddio-supply = <&vreg_l11a_1p8>;
++		vdd-supply = <&vreg_l3b_3p3>;
++		lab-supply = <&lcdb_fixed>;
++		ibb-supply = <&lcdb_fixed>;
++
++		backlight = <&backlight>;
++
++		pinctrl-names = "default";
++		pinctrl-0 = <&mdss_dsi_active &mdss_te_active>;
++
++		port {
++			panel_in: endpoint {
++				remote-endpoint = <&mdss_dsi0_out>;
++			};
++		};
++	};
++};
++
++&mdss_dsi0_out {
++	data-lanes = <0 1 2 3>;
++	remote-endpoint = <&panel_in>;
++};
++
++&mdss_dsi0_phy {
++	vcca-supply = <&vreg_l1b_0p925>;
++	status = "okay";
++};
++
++&mmss_smmu {
++	status = "okay";
++};
++
++&pm660_charger {
++	monitored-battery = <&battery>;
++
++	/* + stock's type-c-change (usb-chgpth 0x13 irq 7, rising): host mode for sinks */
++	interrupts = <0x0 0x13 0x4 IRQ_TYPE_EDGE_BOTH>,
++		     <0x0 0x12 0x2 IRQ_TYPE_EDGE_BOTH>,
++		     <0x0 0x16 0x1 IRQ_TYPE_EDGE_RISING>,
++		     <0x0 0x13 0x6 IRQ_TYPE_EDGE_RISING>,
++		     <0x0 0x13 0x7 IRQ_TYPE_EDGE_RISING>;
++	interrupt-names = "usb-plugin", "bat-ov", "wdog-bark", "usbin-icl-change",
++			  "type-c-change";
++	usb-role-switch = <&usb3_dwc3>;
++
++	status = "okay";
++};
++
++&pm660_rradc {
++	status = "okay";
++};
++
++/*
++ * PMIC GPIOs as the stock qpnp-pin nodes set them up at probe (mode, pull, vin-sel, src-sel,
++ * out-strength; whatever stock leaves unset stays as the hardware has it). qpnp-pin
++ * out-strength 1 is PMIC_GPIO_STRENGTH_LOW here, pull 5 is no pull, pull 0 is 30 uA up; an
++ * output with src-sel 0 and invert 0 drives low. Pins nothing in mainline requests are hogged.
++ */
++&pm660_gpios {
++	/*
++	 * Keep gpio4 last: power-source 1 needs a 2-VIN pad subtype; if this one has only one
++	 * VIN the state fails with -EINVAL (dev_err only) and the pins before it are already set.
++	 */
++	pinctrl-0 = <&pm660_gpio2_default>, <&pm660_gpio3_default>,
++		    <&pm660_gpio11_default>, <&po_pwr_en_default>,
++		    <&pm660_gpio4_default>;
++	pinctrl-names = "default";
++
++	/* stock gpio@c100: master-en 0 */
++	pm660_gpio2_default: gpio2-default-state {
++		pins = "gpio2";
++		function = PMIC_GPIO_FUNC_NORMAL;
++		bias-high-impedance;
++	};
++
++	/* stock gpio@c200: output, pull-down, vin 0, src-sel 2, out-strength 2, master-en 0 */
++	pm660_gpio3_default: gpio3-default-state {
++		pins = "gpio3";
++		function = PMIC_GPIO_FUNC_FUNC1;
++		output-enable;
++		input-disable;
++		power-source = <0>;
++		qcom,drive-strength = <PMIC_GPIO_STRENGTH_MED>;
++		/*
++		 * master-en 0 is high-Z here. Stock also writes pull-down, which does
++		 * nothing on a disabled pad, and generic pinconf allows one bias.
++		 */
++		bias-high-impedance;
++	};
++
++	/* stock gpio@ca00: input, 30 uA pull-up (qcom,pull 0), vin 0, src-sel 0, out-strength 1 */
++	pm660_gpio11_default: gpio11-default-state {
++		pins = "gpio11";
++		function = PMIC_GPIO_FUNC_NORMAL;
++		input-enable;
++		output-disable;
++		bias-pull-up;
++		power-source = <0>;
++		qcom,drive-strength = <PMIC_GPIO_STRENGTH_LOW>;
++	};
++
++	/*
++	 * stock gpio@cc00 (hiby,po_pwr_en, the hm100 po-power-gpios): output low, no pull,
++	 * vin 0, src-sel 0. Hogged like qpnp-pin does it, not put on the hm100 node: that one
++	 * has only the driver-switched "jtag"/"spi" states, which would re-apply it each swap.
++	 */
++	po_pwr_en_default: po-pwr-en-default-state {
++		pins = "gpio13";
++		function = PMIC_GPIO_FUNC_NORMAL;
++		output-low;
++		input-disable;
++		bias-disable;
++		power-source = <0>;
++	};
++
++	/* stock gpio@c300: input, vin-sel 1, src-sel 0, master-en 1 (no pull given) */
++	pm660_gpio4_default: gpio4-default-state {
++		pins = "gpio4";
++		function = PMIC_GPIO_FUNC_NORMAL;
++		input-enable;
++		output-disable;
++		power-source = <1>;
++	};
++};
++
++&pm660l_gpios {
++	pinctrl-0 = <&pm660l_gpio3_default>, <&pm660l_gpio4_default>;
++	pinctrl-names = "default";
++
++	/* stock gpio@c200: output low, no pull, vin 0, src-sel 0 */
++	pm660l_gpio3_default: gpio3-default-state {
++		pins = "gpio3";
++		function = PMIC_GPIO_FUNC_NORMAL;
++		output-low;
++		input-disable;
++		bias-disable;
++		power-source = <0>;
++	};
++
++	/* stock gpio@c300: input, 30 uA pull-up, vin 0, src-sel 0, out-strength 1 */
++	pm660l_gpio4_default: gpio4-default-state {
++		pins = "gpio4";
++		function = PMIC_GPIO_FUNC_NORMAL;
++		input-enable;
++		output-disable;
++		bias-pull-up;
++		power-source = <0>;
++		qcom,drive-strength = <PMIC_GPIO_STRENGTH_LOW>;
++	};
++
++	/* stock gpio@c500: output CMOS, src-sel 2 (LPG), no pull, vin 0, out-strength 1; the bootloader leaves it high */
++	bl_pwm_default: bl-pwm-default-state {
++		pins = "gpio6";
++		function = PMIC_GPIO_FUNC_FUNC1;
++		output-low;
++		input-disable;
++		drive-push-pull;
++		bias-disable;
++		power-source = <0>;
++		qcom,drive-strength = <PMIC_GPIO_STRENGTH_LOW>;
++	};
++
++	/* stock gpio@c600: input, 30 uA pull-up, vin 0, src-sel 0, out-strength 1 */
++	vol_up_default: vol-up-default-state {
++		pins = "gpio7";
++		function = PMIC_GPIO_FUNC_NORMAL;
++		bias-pull-up;
++		input-enable;
++		output-disable;
++		power-source = <0>;
++		qcom,drive-strength = <PMIC_GPIO_STRENGTH_LOW>;
++	};
++
++	/* stock gpio@c700 (lp5562 enable): output low, no pull, vin 0, src-sel 0 */
++	lp5562_en_default: lp5562-en-default-state {
++		pins = "gpio8";
++		function = PMIC_GPIO_FUNC_NORMAL;
++		output-low;
++		input-disable;
++		bias-disable;
++		power-source = <0>;
++	};
++};
++
++&pm660l_lpg {
++	#pwm-cells = <2>;
++	/* TRILED source; the driver refuses to probe without it (VPH_PWR, as on lavender/whyred) */
++	qcom,power-source = <1>;
++
++	status = "okay";
++};
++
++&pon_pwrkey {
++	status = "okay";
++};
++
++&pon_resin {
++	/* stock qpnp_pon.kl: key 114 -> MEDIA_NEXT */
++	linux,code = <KEY_NEXTSONG>;
++
++	status = "okay";
++};
++
++&qusb2phy0 {
++	vdd-supply = <&vreg_l1b_0p925>;
++	vdda-pll-supply = <&vreg_l10a_1p8>;
++	vdda-phy-dpdm-supply = <&vreg_l7b_3p125>;
++
++	status = "okay";
++};
++
++&remoteproc_mss {
++	/* No cellular on the RS6, but Wi-Fi needs the modem subsystem up */
++	firmware-name = "mba.mbn", "modem.mdt";
++
++	status = "okay";
++};
++
++&rpm_requests {
++	regulators-0 {
++		compatible = "qcom,rpm-pm660l-regulators";
++
++		vdd_s1-supply = <&vph_pwr>;
++		vdd_s2-supply = <&vph_pwr>;
++		vdd_s3_s4-supply = <&vph_pwr>;
++		vdd_s5-supply = <&vph_pwr>;
++		vdd_s6-supply = <&vph_pwr>;
++
++		/*
++		 * No LDO parent supplies (bob, s2b): stock never votes them (use count 0,
++		 * 0 mV); the RPM powers parents itself.
++		 */
++		vdd_bob-supply = <&vph_pwr>;
++
++		vreg_bob: bob {
++			regulator-min-microvolt = <3300000>;
++			regulator-max-microvolt = <3600000>;
++			regulator-enable-ramp-delay = <500>;
++		};
++
++		vreg_s1b_1p125: s1 {
++			regulator-min-microvolt = <1125000>;
++			regulator-max-microvolt = <1125000>;
++			regulator-enable-ramp-delay = <200>;
++		};
++
++		vreg_s2b_1p05: s2 {
++			regulator-min-microvolt = <1050000>;
++			regulator-max-microvolt = <1050000>;
++			regulator-enable-ramp-delay = <200>;
++		};
++
++		/* LDOs */
++		/* stock pm660l_l1: 925 mV (qusb, ssphy), sent as is like stock */
++		vreg_l1b_0p925: l1 {
++			regulator-min-microvolt = <925000>;
++			regulator-max-microvolt = <925000>;
++			qcom,rpm-exact-voltage;
++			regulator-enable-ramp-delay = <250>;
++			regulator-allow-set-load;
++		};
++
++		/* microSD I/O (stock sdhc2 qcom,vdd-io-voltage-level: 1.8-2.95 V) */
++		vreg_l2b_2p95: l2 {
++			regulator-min-microvolt = <1800000>;
++			regulator-max-microvolt = <2952000>;
++			regulator-enable-ramp-delay = <250>;
++			regulator-allow-set-load;
++		};
++
++		/* Panel vdd and touch avdd: stock panel entry pins 2.8 V */
++		vreg_l3b_3p3: l3 {
++			regulator-min-microvolt = <2800000>;
++			regulator-max-microvolt = <2800000>;
++			regulator-enable-ramp-delay = <250>;
++			regulator-allow-set-load;
++			regulator-always-on;
++		};
++
++		vreg_l4b_2p95: l4 {
++			regulator-min-microvolt = <2944000>;
++			regulator-max-microvolt = <2952000>;
++			regulator-enable-ramp-delay = <250>;
++
++			regulator-min-microamp = <200>;
++			regulator-max-microamp = <600000>;
++			regulator-system-load = <570000>;
++			regulator-allow-set-load;
++		};
++
++		/*
++		 * microSD card supply. Stock sdhc2 pins it at 2.95 V
++		 * (qcom,vdd-voltage-level = <2950000 2950000>); 2.952 V is
++		 * that on this LDO's 8 mV table. It stays on the table (no
++		 * qcom,rpm-exact-voltage): the mmc core builds the card's OCR
++		 * mask from it, here 2.9-3.0 V.
++		 */
++		vreg_l5b_2p95: l5 {
++			regulator-min-microvolt = <2952000>;
++			regulator-max-microvolt = <2952000>;
++			regulator-enable-ramp-delay = <250>;
++			regulator-allow-set-load;
++		};
++
++		/* stock pm660l_l7: 3075 mV (qusb), sent as is like stock */
++		vreg_l7b_3p125: l7 {
++			regulator-min-microvolt = <3075000>;
++			qcom,rpm-exact-voltage;
++			regulator-max-microvolt = <3125000>;
++			regulator-enable-ramp-delay = <250>;
++		};
++
++		vreg_l8b_3p3: l8 {
++			regulator-min-microvolt = <3200000>;
++			regulator-max-microvolt = <3400000>;
++			regulator-enable-ramp-delay = <250>;
++		};
++	};
++
++	regulators-1 {
++		compatible = "qcom,rpm-pm660-regulators";
++
++		vdd_s1-supply = <&vph_pwr>;
++		vdd_s2-supply = <&vph_pwr>;
++		vdd_s3-supply = <&vph_pwr>;
++		vdd_s4-supply = <&vph_pwr>;
++		vdd_s5-supply = <&vph_pwr>;
++		vdd_s6-supply = <&vph_pwr>;
++
++		/*
++		 * No LDO parent supplies (s5a, s2b, s4a, bob): stock never votes s5a/s2b/bob
++		 * (use count 0, 0 mV) and votes s4a only for its analog codec (kept below).
++		 */
++
++		/*
++		 * No mainline consumer of these RPM regulators sets a voltage, so the
++		 * only vote is the boot one: regulator-min-microvolt, rounded up to
++		 * the 8 mV table of qcom_smd-regulator. Mins below are the voltages
++		 * stock votes (live regulator_summary).
++		 */
++
++		/*
++		 * S1A (FTAPC0), S2A (FTAPC1), S3A (HFAPC1) are managed
++		 * by the Core Power Reduction hardened (CPRh) and the
++		 * Operating State Manager (OSM) HW automatically.
++		 */
++
++		/* stock pm660_s4: 2040 mV (analog codec) */
++		vreg_s4a_2p04: s4 {
++			regulator-min-microvolt = <2040000>;
++			regulator-max-microvolt = <2040000>;
++			regulator-enable-ramp-delay = <200>;
++			regulator-always-on;
++		};
++
++		vreg_s5a_1p35: s5 {
++			regulator-min-microvolt = <1224000>;
++			regulator-max-microvolt = <1350000>;
++			regulator-enable-ramp-delay = <200>;
++		};
++
++		vreg_s6a_0p87: s6 {
++			regulator-min-microvolt = <504000>;
++			regulator-max-microvolt = <992000>;
++			regulator-enable-ramp-delay = <150>;
++		};
++
++		/* LDOs */
++		/* stock pm660_l1: 1200 mV (mdss_dsi) */
++		vreg_l1a_1p225: l1 {
++			regulator-min-microvolt = <1200000>;
++			regulator-max-microvolt = <1250000>;
++			regulator-enable-ramp-delay = <250>;
++			regulator-allow-set-load;
++		};
++
++		vreg_l2a_1p0: l2 {
++			regulator-min-microvolt = <950000>;
++			regulator-max-microvolt = <1010000>;
++			regulator-enable-ramp-delay = <250>;
++		};
++
++		vreg_l3a_1p0: l3 {
++			regulator-min-microvolt = <950000>;
++			regulator-max-microvolt = <1010000>;
++			regulator-enable-ramp-delay = <250>;
++		};
++
++		/* stock pm660_l5: 848 mV (icnss) */
++		vreg_l5a_0p848: l5 {
++			regulator-min-microvolt = <848000>;
++			regulator-max-microvolt = <950000>;
++			regulator-enable-ramp-delay = <250>;
++		};
++
++		vreg_l6a_1p3: l6 {
++			regulator-min-microvolt = <1200000>;
++			regulator-max-microvolt = <1370000>;
++			regulator-allow-set-load;
++			regulator-enable-ramp-delay = <250>;
++		};
++
++		vreg_l7a_1p2: l7 {
++			regulator-min-microvolt = <1200000>;
++			regulator-max-microvolt = <1200000>;
++			regulator-enable-ramp-delay = <250>;
++		};
++
++		vreg_l8a_1p8: l8 {
++			regulator-min-microvolt = <1750000>;
++			regulator-max-microvolt = <1800000>;
++			regulator-enable-ramp-delay = <250>;
++			regulator-system-load = <325000>;
++			regulator-allow-set-load;
++		};
++
++		vreg_l9a_1p8: l9 {
++			regulator-min-microvolt = <1750000>;
++			regulator-max-microvolt = <1900000>;
++			regulator-enable-ramp-delay = <250>;
++			regulator-allow-set-load;
++		};
++
++		/* stock pm660_l10: 1800 mV (qusb, ssphy) */
++		vreg_l10a_1p8: l10 {
++			regulator-min-microvolt = <1800000>;
++			regulator-max-microvolt = <1950000>;
++			regulator-enable-ramp-delay = <250>;
++			regulator-allow-set-load;
++			regulator-system-load = <14000>;
++		};
++
++		/* stock pm660_l11: 1800 mV (mdss_dsi_ctrl0) */
++		vreg_l11a_1p8: l11 {
++			regulator-min-microvolt = <1800000>;
++			regulator-max-microvolt = <1950000>;
++			regulator-enable-ramp-delay = <250>;
++		};
++
++		vreg_l12a_1p8: l12 {
++			regulator-min-microvolt = <1780000>;
++			regulator-max-microvolt = <1950000>;
++			regulator-enable-ramp-delay = <250>;
++		};
++
++		/*
++		 * The LPDDR4 rail. Stock never votes it and the RPM keeps it on; with no
++		 * boot-on/always-on and no consumer we never send a vote either (an unused
++		 * boot-on regulator would get a disable vote at late cleanup).
++		 */
++		vreg_l13a_1p8: l13 {
++			regulator-min-microvolt = <1780000>;
++			regulator-max-microvolt = <1950000>;
++			regulator-enable-ramp-delay = <250>;
++		};
++
++		vreg_l14a_1p8: l14 {
++			regulator-min-microvolt = <1710000>;
++			regulator-max-microvolt = <1900000>;
++			regulator-enable-ramp-delay = <250>;
++		};
++
++		vreg_l15a_1p8: l15 {
++			regulator-min-microvolt = <1650000>;
++			regulator-max-microvolt = <2950000>;
++			regulator-enable-ramp-delay = <250>;
++		};
++
++		/* stock has no ldoa16 node: no consumer, never voted */
++		vreg_l16a_2p7: l16 {
++			regulator-min-microvolt = <2800000>;
++			regulator-max-microvolt = <2800000>;
++			regulator-enable-ramp-delay = <250>;
++		};
++
++		vreg_l17a_1p8: l17 {
++			regulator-min-microvolt = <1648000>;
++			regulator-max-microvolt = <2952000>;
++			regulator-enable-ramp-delay = <250>;
++		};
++
++		/*
++		 * stock pm660_l19(_pin_ctrl): 3200 mV (icnss) with Bluetooth off; stock
++		 * bt_wcn3990 asks 3312-3400 mV while it is on.
++		 */
++		vreg_l19a_3p3: l19 {
++			regulator-min-microvolt = <3200000>;
++			regulator-max-microvolt = <3400000>;
++			regulator-enable-ramp-delay = <250>;
++			regulator-allow-set-load;
++		};
++	};
++};
++
++&saw_gold_l2 {
++	status = "okay";
++};
++
++&saw_silver_l2 {
++	status = "okay";
++};
++
++&sdc2_state_on {
++	sd-cd-pins {
++		pins = "gpio54";
++		function = "gpio";
++		bias-pull-up;
++		drive-strength = <2>;
++	};
++};
++
++&sdc2_state_off {
++	sd-cd-pins {
++		pins = "gpio54";
++		function = "gpio";
++		bias-disable;
++		drive-strength = <2>;
++	};
++};
++
++&sdhc_1 {
++	status = "okay";
++	supports-cqe;
++
++	mmc-hs200-1_8v;
++	mmc-hs400-1_8v;
++	mmc-hs400-enhanced-strobe;
++
++	vmmc-supply = <&vreg_l4b_2p95>;
++	vqmmc-supply = <&vreg_l8a_1p8>;
++};
++
++&sdhc_2 {
++	status = "okay";
++
++	cd-gpios = <&tlmm 54 GPIO_ACTIVE_LOW>;
++
++	vmmc-supply = <&vreg_l5b_2p95>;
++	vqmmc-supply = <&vreg_l2b_2p95>;
++};
++
++&tlmm {
++	/*
++	 * No gpio-reserved-ranges: unlike the Xiaomi boards, the stock kernel
++	 * drives gpio2/3 (touch I2C) and gpio8-11 (hm100 FPGA JTAG/SPI).
++	 */
++
++	/* Pin config of every audio/hm100 line as stock 1.80 has it (debugfs gpio dump). */
++	pinctrl-0 = <&stock_2ma_nopull>, <&stock_6ma_nopull>, <&stock_2ma_pd>,
++		    <&stock_2ma_pu>, <&stock_gpio63>;
++	pinctrl-names = "default";
++
++	stock_2ma_nopull: stock-2ma-nopull-state {
++		pins = "gpio8", "gpio9", "gpio10", "gpio11", "gpio14", "gpio15",
++		       "gpio21", "gpio28", "gpio29", "gpio40", "gpio41", "gpio44",
++		       "gpio54", "gpio55", "gpio68", "gpio69", "gpio70", "gpio71",
++		       "gpio72", "gpio76";
++		drive-strength = <2>;
++		bias-disable;
++	};
++
++	stock_6ma_nopull: stock-6ma-nopull-state {
++		pins = "gpio34", "gpio61", "gpio77";
++		drive-strength = <6>;
++		bias-disable;
++	};
++
++	stock_2ma_pd: stock-2ma-pd-state {
++		pins = "gpio12", "gpio13";
++		drive-strength = <2>;
++		bias-pull-down;
++	};
++
++	stock_2ma_pu: stock-2ma-pu-state {
++		pins = "gpio42", "gpio43", "gpio64", "gpio113";
++		drive-strength = <2>;
++		bias-pull-up;
++	};
++
++	stock_gpio63: stock-gpio63-state {
++		pins = "gpio63";
++		drive-strength = <2>;
++		bias-pull-down;
++		output-low;
++	};
++
++	mdss_dsi_active: mdss-dsi-active-state {
++		function = "gpio";
++		pins = "gpio53";
++		drive-strength = <8>;
++		bias-disable;
++	};
++
++	mdss_te_active: mdss-te-active-state {
++		pins = "gpio59";
++		function = "mdp_vsync";
++		drive-strength = <2>;
++		bias-pull-down;
++	};
++
++	play_pause_default: play-pause-default-state {
++		pins = "gpio56";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-pull-up;
++	};
++
++	/* stock ring_key_active */
++	ring_keys_default: ring-keys-default-state {
++		pins = "gpio42", "gpio43";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-pull-up;
++	};
++
++	ts_int_default: ts-int-default-state {
++		pins = "gpio67";
++		function = "gpio";
++		drive-strength = <16>;
++		bias-pull-up;
++	};
++
++	ts_reset_default: ts-reset-default-state {
++		pins = "gpio66";
++		function = "gpio";
++		drive-strength = <16>;
++		bias-pull-up;
++	};
++};
++
++&usb3 {
++	qcom,select-utmi-as-pipe-clk;
++
++	status = "okay";
++};
++
++&usb3_dwc3 {
++	maximum-speed = "high-speed";
++	phys = <&qusb2phy0>;
++	phy-names = "usb2-phy";
++
++	/* Type-C lives in PM660 (smb2): the charger switches roles and drives VBUS */
++	dr_mode = "otg";
++	usb-role-switch;
++	role-switch-default-mode = "peripheral";
++};
++
++&venus {
++	status = "okay";
++};
++
++&wifi {
++	vdd-0.8-cx-mx-supply = <&vreg_l5a_0p848>;
++	vdd-1.8-xo-supply = <&vreg_l9a_1p8>;
++	vdd-1.3-rfa-supply = <&vreg_l6a_1p3>;
++	vdd-3.3-ch0-supply = <&vreg_l19a_3p3>;
++
++	status = "okay";
++};
++
++/*
++ * Audio: q6 MultiMedia1 -> SEC_MI2S_RX (gpio24 sck, gpio25 ws, gpio26 sd0) -> hm100 FPGA DAC.
++ * The FPGA is the bit/frame clock provider (stock zeroes msm_is_mi2s_master at probe; AFE
++ * ws_src external). The FE media format, the ADM and the AFE run at 384000 whatever the track
++ * rate (stock hiby_fixed_samplerate), so the DSP never resamples; the hm100 codec gets the track
++ * rate for reg0.
++ */
++
++/*
++ * Stock puts sec_mi2s_{,sd0_,sd1_}{active,sleep} on the CPU DAI (msm-dai-q6-mi2s-sec, "default" /
++ * "sleep") and idles in sleep. Here the CPU DAI component is q6afedai: ASoC selects "sleep" on
++ * component devices once the card is up and whenever they go idle, and "default" on PCM open.
++ */
++&q6afedai {
++	pinctrl-0 = <&sec_mi2s_active>, <&sec_mi2s_sd0_active>, <&sec_mi2s_sd1_active>;
++	pinctrl-1 = <&sec_mi2s_sleep>, <&sec_mi2s_sd0_sleep>, <&sec_mi2s_sd1_sleep>;
++	pinctrl-names = "default", "sleep";
++
++	dai@12 {
++		reg = <SECONDARY_MI2S_RX>;
++		qcom,sd-lines = <0>;
++	};
++};
++
++&q6asmdai {
++	dai@0 {
++		reg = <MSM_FRONTEND_DAI_MULTIMEDIA1>;
++		/* the DAC clocks the I2S at the track rate; ASM/ADM/AFE stay at 384000 */
++		qcom,fixed-rate = <384000>;
++		/* S32 in, sent as hi/lo S16 word pairs like the stock HAL output callback */
++		qcom,s32-as-s16-pairs;
++	};
++};
++
++&sound {
++	compatible = "qcom,sdm660-sndcard";
++	model = "HiBy RS6";
++	qcom,sec-mi2s-clock-consumer;
++
++	mm1-dai-link {
++		link-name = "MultiMedia1";
++
++		cpu {
++			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
++		};
++	};
++
++	sec-mi2s-dai-link {
++		link-name = "SEC MI2S Playback";
++
++		cpu {
++			sound-dai = <&q6afedai SECONDARY_MI2S_RX>;
++		};
++
++		platform {
++			sound-dai = <&q6routing>;
++		};
++
++		codec {
++			sound-dai = <&hm100>;
++		};
++	};
++};
++
++&tlmm {
++	/* stock sec_mi2s_active, sec_mi2s_sd0_active, sec_mi2s_sd1_active */
++	sec_mi2s_active: sec-mi2s-active-state {
++		pins = "gpio24", "gpio25";
++		function = "sec_mi2s";
++		drive-strength = <8>;
++		bias-disable;
++		output-high;
++	};
++
++	sec_mi2s_sd0_active: sec-mi2s-sd0-active-state {
++		pins = "gpio26";
++		function = "sec_mi2s";
++		drive-strength = <8>;
++		bias-disable;
++	};
++
++	sec_mi2s_sd1_active: sec-mi2s-sd1-active-state {
++		pins = "gpio27";
++		function = "sec_mi2s";
++		drive-strength = <8>;
++		bias-disable;
++	};
++
++	/* stock sec_mi2s_sleep (its input-enable clears OE, i.e. output-disable here) */
++	sec_mi2s_sleep: sec-mi2s-sleep-state {
++		pins = "gpio24", "gpio25";
++		function = "sec_mi2s";
++		drive-strength = <2>;
++		bias-pull-down;
++		output-disable;
++	};
++
++	/* stock sec_mi2s_sd0_sleep */
++	sec_mi2s_sd0_sleep: sec-mi2s-sd0-sleep-state {
++		pins = "gpio26";
++		function = "sec_mi2s";
++		drive-strength = <2>;
++		bias-pull-down;
++	};
++
++	/* stock sec_mi2s_sd1_sleep */
++	sec_mi2s_sd1_sleep: sec-mi2s-sd1-sleep-state {
++		pins = "gpio27";
++		function = "sec_mi2s";
++		drive-strength = <2>;
++		bias-pull-down;
++	};
++};
++
++/*
++ * hm100 FPGA DAC + NJW1195A: the SRAM data phase goes over blsp_spi3 (stock hbc3000_ram, 10 MHz).
++ * The QUP has no pinctrl of its own, like stock; the driver muxes gpio8/11 to blsp_spi3 only for
++ * the data phase (stock hm100_jtag_as_spi) and back to GPIO (stock hm100_jtag_active) afterwards.
++ * gpio8-11 are then the bit-banged control bus shared with the NJW1195A (gpio13 selects it).
++ */
++&soc {
++	blsp_spi3: spi@c177000 {
++		compatible = "qcom,spi-qup-v2.2.1";
++		reg = <0x0c177000 0x600>;
++		interrupts = <GIC_SPI 97 IRQ_TYPE_LEVEL_HIGH>;
++		clocks = <&gcc GCC_BLSP1_QUP3_SPI_APPS_CLK>, <&gcc GCC_BLSP1_AHB_CLK>;
++		clock-names = "core", "iface";
++		dmas = <&blsp1_dma 8>, <&blsp1_dma 9>;
++		dma-names = "tx", "rx";
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		hm100: fpga@0 {
++			compatible = "hiby,hm100";
++			reg = <0>;
++			spi-max-frequency = <10000000>;
++			#sound-dai-cells = <0>;
++			sdo-gpios = <&tlmm 8 GPIO_ACTIVE_HIGH>;
++			tdo-gpios = <&tlmm 9 GPIO_ACTIVE_HIGH>;
++			cs-gpios = <&tlmm 10 GPIO_ACTIVE_HIGH>;
++			clk-gpios = <&tlmm 11 GPIO_ACTIVE_HIGH>;
++			run-gpios = <&tlmm 12 GPIO_ACTIVE_HIGH>;
++			share-select-gpios = <&tlmm 13 GPIO_ACTIVE_HIGH>;
++			vol-power-gpios = <&tlmm 15 GPIO_ACTIVE_HIGH>;
++			dac-power1-gpios = <&tlmm 28 GPIO_ACTIVE_HIGH>;
++			hp-bal-select-gpios = <&tlmm 29 GPIO_ACTIVE_HIGH>;
++			lpf-select-gpios = <&tlmm 34 GPIO_ACTIVE_HIGH>;
++			dac-power2-gpios = <&tlmm 40 GPIO_ACTIVE_HIGH>;
++			jtag-select-gpios = <&tlmm 44 GPIO_ACTIVE_HIGH>;
++			power-gpios = <&tlmm 55 GPIO_ACTIVE_HIGH>;
++			lpf-mute-gpios = <&tlmm 61 GPIO_ACTIVE_HIGH>;
++			line-mute-gpios = <&tlmm 76 GPIO_ACTIVE_HIGH>;
++			po-power-gpios = <&pm660_gpios 13 GPIO_ACTIVE_HIGH>;
++			/* stock hiby,sa_sound_switch jacks (high = plugged), report_only_one in this order */
++			balance-detect-gpios = <&tlmm 72 GPIO_ACTIVE_HIGH>;
++			balance-lo-detect-gpios = <&tlmm 21 GPIO_ACTIVE_HIGH>;
++			headset-detect-gpios = <&tlmm 41 GPIO_ACTIVE_HIGH>;
++			lineout-detect-gpios = <&tlmm 14 GPIO_ACTIVE_HIGH>;
++			pinctrl-names = "jtag", "spi";
++			pinctrl-0 = <&hm100_jtag>;
++			pinctrl-1 = <&hm100_jtag_as_spi>;
++		};
++	};
++};
++
++&tlmm {
++	/* stock hm100_jtag_active */
++	hm100_jtag: hm100-jtag-state {
++		pins = "gpio8", "gpio9", "gpio10", "gpio11", "gpio44";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++	};
++
++	/* stock hm100_jtag_as_spi */
++	hm100_jtag_as_spi: hm100-jtag-as-spi-state {
++		pins = "gpio8", "gpio11";
++		function = "blsp_spi3";
++		drive-strength = <6>;
++		bias-disable;
++	};
++};
++
++/* Passive CPU cooling on the existing 70 C trips of sdm630.dtsi */
++&{/thermal-zones/cpu0-thermal} {
++	cooling-maps {
++		map0 {
++			trip = <&cpu0_alert0>;
++			cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++					 <&cpu1 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++					 <&cpu2 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++					 <&cpu3 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++		};
++	};
++};
++
++&{/thermal-zones/cpu1-thermal} {
++	cooling-maps {
++		map0 {
++			trip = <&cpu1_alert0>;
++			cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++					 <&cpu1 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++					 <&cpu2 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++					 <&cpu3 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++		};
++	};
++};
++
++&{/thermal-zones/cpu2-thermal} {
++	cooling-maps {
++		map0 {
++			trip = <&cpu2_alert0>;
++			cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++					 <&cpu1 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++					 <&cpu2 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++					 <&cpu3 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++		};
++	};
++};
++
++&{/thermal-zones/cpu3-thermal} {
++	cooling-maps {
++		map0 {
++			trip = <&cpu3_alert0>;
++			cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++					 <&cpu1 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++					 <&cpu2 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++					 <&cpu3 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++		};
++	};
++};
++
++&{/thermal-zones/pwr-cluster-thermal} {
++	cooling-maps {
++		map0 {
++			trip = <&pwr_cluster_alert0>;
++			cooling-device = <&cpu4 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++					 <&cpu5 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++					 <&cpu6 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++					 <&cpu7 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++		};
++	};
++};

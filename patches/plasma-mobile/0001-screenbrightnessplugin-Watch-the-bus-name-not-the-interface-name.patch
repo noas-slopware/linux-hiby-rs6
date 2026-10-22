@@ -1,0 +1,84 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 12:41:47 +0900
+Subject: [PATCH] screenbrightnessplugin: Watch the bus name, not the interface
+ name
+
+The service watcher watched "org.kde.Solid.PowerManagement.Actions.BrightnessControl",
+which is the D-Bus interface name. Nothing owns that as a bus name, so it never fired:
+when plasmashell came up before powerdevil, the first fetch failed with ServiceUnknown,
+brightnessAvailable stayed false and the action drawer had no brightness slider until the
+next login.
+
+Watch the interface's service (org.kde.Solid.PowerManagement). Powerdevil registers the
+BrightnessControl object before it claims that name, so fetching on serviceRegistered
+works. Track availability from the watcher so brightnessAvailable does not depend on the
+order in which QDBusAbstractInterface and the watcher see NameOwnerChanged.
+---
+ .../screenbrightnessutil.cpp                  | 20 +++++++++++++------
+ .../screenbrightnessutil.h                    |  1 +
+ 2 files changed, 15 insertions(+), 6 deletions(-)
+
+diff --git a/components/screenbrightnessplugin/screenbrightnessutil.cpp b/components/screenbrightnessplugin/screenbrightnessutil.cpp
+index 2f79a7b..4c394b6 100644
+--- a/components/screenbrightnessplugin/screenbrightnessutil.cpp
++++ b/components/screenbrightnessplugin/screenbrightnessutil.cpp
+@@ -24,24 +24,32 @@ ScreenBrightnessUtil::ScreenBrightnessUtil(QObject *parent)
+             this,
+             &ScreenBrightnessUtil::fetchMaxBrightness);
+ 
+-    fetchBrightness();
+-    fetchMaxBrightness();
+-
+-    // watch for brightness interface
+-    m_brightnessInterfaceWatcher = new QDBusServiceWatcher(QStringLiteral("org.kde.Solid.PowerManagement.Actions.BrightnessControl"),
++    // Watch the bus name the interface talks to (powerdevil registers it only after the
++    // BrightnessControl object exists). org.kde.Solid.PowerManagement.Actions.BrightnessControl
++    // is the interface name, nobody owns it as a service, so watching that never fired and a
++    // shell that started before powerdevil had no brightness slider for the whole session.
++    m_brightnessInterfaceWatcher = new QDBusServiceWatcher(m_brightnessInterface->service(),
+                                                            QDBusConnection::sessionBus(),
+                                                            QDBusServiceWatcher::WatchForOwnerChange,
+                                                            this);
+ 
+     connect(m_brightnessInterfaceWatcher, &QDBusServiceWatcher::serviceRegistered, this, [this]() -> void {
++        m_available = true;
+         fetchBrightness();
+         fetchMaxBrightness();
+         Q_EMIT brightnessAvailableChanged();
+     });
+ 
+     connect(m_brightnessInterfaceWatcher, &QDBusServiceWatcher::serviceUnregistered, this, [this]() -> void {
++        m_available = false;
+         Q_EMIT brightnessAvailableChanged();
+     });
++
++    m_available = m_brightnessInterface->isValid();
++    if (m_available) {
++        fetchBrightness();
++        fetchMaxBrightness();
++    }
+ }
+ 
+ int ScreenBrightnessUtil::brightness() const
+@@ -61,7 +69,7 @@ int ScreenBrightnessUtil::maxBrightness() const
+ 
+ bool ScreenBrightnessUtil::brightnessAvailable() const
+ {
+-    return m_brightnessInterface->isValid();
++    return m_available;
+ }
+ 
+ void ScreenBrightnessUtil::fetchBrightness()
+diff --git a/components/screenbrightnessplugin/screenbrightnessutil.h b/components/screenbrightnessplugin/screenbrightnessutil.h
+index c83920e..a410cb5 100644
+--- a/components/screenbrightnessplugin/screenbrightnessutil.h
++++ b/components/screenbrightnessplugin/screenbrightnessutil.h
+@@ -44,6 +44,7 @@ private Q_SLOTS:
+ private:
+     int m_brightness{0};
+     int m_maxBrightness{0};
++    bool m_available{false};
+ 
+     org::kde::Solid::PowerManagement::Actions::BrightnessControl *m_brightnessInterface;
+     QDBusServiceWatcher *m_brightnessInterfaceWatcher;

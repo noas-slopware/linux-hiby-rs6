@@ -1,0 +1,33 @@
+From 282cd771f05880a66c7a30ac00cd41fa7f8e1e03 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 17:43:22 +0900
+Subject: [PATCH 1/6] clk: qcom: replace the RCG divider instead of ORing it in
+
+clk_rcg_set_rate() ORs the new divider into CFG_RCGR, so divider bits
+already in the register (left by an earlier stage or a previous
+set_rate) are kept and the clock runs at the wrong rate. Clear the
+field first.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ drivers/clk/qcom/clock-qcom.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/clk/qcom/clock-qcom.c b/drivers/clk/qcom/clock-qcom.c
+index 0a29f413..4ec63983 100644
+--- a/drivers/clk/qcom/clock-qcom.c
++++ b/drivers/clk/qcom/clock-qcom.c
+@@ -184,8 +184,11 @@ void clk_rcg_set_rate(phys_addr_t base, uint32_t cmd_rcgr, int div,
+ 	 * Set the divider; HW permits fraction dividers (+0.5), but
+ 	 * for simplicity, we will support integers only
+ 	 */
+-	if (div)
++	if (div) {
++		/* replace, don't OR into, a divider an earlier stage left there */
++		cfg &= ~CFG_SRC_DIV_MASK;
+ 		cfg |= (2 * div - 1) & CFG_SRC_DIV_MASK;
++	}
+ 
+ 	writel(cfg, base + cmd_rcgr + RCG_CFG_REG); /* Write new clock configuration */
+ 

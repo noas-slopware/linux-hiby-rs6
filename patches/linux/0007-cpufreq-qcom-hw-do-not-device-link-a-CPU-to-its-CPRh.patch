@@ -1,0 +1,57 @@
+From 9422aa1d4553358688056f7804ab864157aaad43 Mon Sep 17 00:00:00 2001
+From: Giuseppe Maggio <jertlok@proton.me>
+Date: Sun, 9 Aug 2026 21:55:12 +0200
+Subject: [PATCH 07/94] cpufreq: qcom-hw: do not device-link a CPU to its CPRh
+ domain
+
+Attaching the CPRh power domain hangs MSM8998 before the driver has
+touched a single register: no fuse read, no CPR write, no OSM write.
+The whole hardware sequence is innocent, and the difference against the
+downstream tree this was ported from is that the newer
+dev_pm_domain_attach_list() adds a device link, while the OPP helper it
+replaces did not - devm_pm_opp_attach_genpd() attached the domain,
+stored the virtual device and stopped.
+
+The link buys nothing here.  Its consumer is a CPU device, which never
+probes and never runtime suspends, so there is no probe order and no
+suspend order for the link to enforce, and its supplier is a domain
+already marked always-on, which DL_FLAG_RPM_ACTIVE then asks to runtime
+resume from a device that has no runtime PM of its own.
+
+Ask for no link at all, which is what the old helper did.
+
+Note for whoever assembles the series: once CPU frequency scaling works,
+commit 92d769a1dc1e ("arm64: dts: qcom: msm8998-google-wahoo: describe
+the measured CPU capacity") has to be reverted in the same series.  It
+describes a gold cluster stuck near its lowest frequency, and stops
+being true the moment this driver can raise it.
+
+Assisted-by: LLM
+Signed-off-by: Giuseppe Maggio <jertlok@proton.me>
+---
+ drivers/cpufreq/qcom-cpufreq-hw.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/cpufreq/qcom-cpufreq-hw.c b/drivers/cpufreq/qcom-cpufreq-hw.c
+index 7912dfc40..951f271ac 100644
+--- a/drivers/cpufreq/qcom-cpufreq-hw.c
++++ b/drivers/cpufreq/qcom-cpufreq-hw.c
+@@ -545,11 +545,17 @@ static int qcom_cpufreq_gen_params(struct device *cpu_dev,
+ 	 * It must run while that table is still empty, which is why the CPRh
+ 	 * corner setup is deferred to qcom_cpr3_cprh_init() below instead of
+ 	 * happening in the domain's attach_dev callback.
++	 *
++	 * PD_FLAG_NO_DEV_LINK because the consumer here is a CPU device, which
++	 * never probes and never runtime suspends, so a device link to the
++	 * domain orders nothing.  The default link would runtime resume a
++	 * domain that is already always-on, from a device that has no runtime
++	 * PM of its own.
+ 	 */
+ 	struct dev_pm_domain_attach_data attach_data = {
+ 		.pd_names = cprh_genpd_names,
+ 		.num_pd_names = 1,
+-		.pd_flags = PD_FLAG_DEV_LINK_ON | PD_FLAG_REQUIRED_OPP,
++		.pd_flags = PD_FLAG_NO_DEV_LINK | PD_FLAG_REQUIRED_OPP,
+ 	};
+ 	struct platform_device *pdev = cpufreq_get_driver_data();
+ 	const struct qcom_cpufreq_soc_data *soc_data = qcom_cpufreq.soc_data;

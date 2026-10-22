@@ -1,0 +1,66 @@
+From 77dfd9cc3071aa3d194ca02b9ba02034329f922d Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 12:30:06 +0900
+Subject: [PATCH] Do not scale cover sourceSize by the device pixel ratio twice
+
+Qt Quick already multiplies an Image's sourceSize by the device pixel ratio
+before asking an image provider (QQuickImageBase::load, HandleDPR), so
+"imageSourceSize * Screen.devicePixelRatio" requested DPR^2 times the pixels.
+With the default album icon as the fallback, KQuickIconProvider then hands
+that size to QIcon::pixmap(), which scales it once more: at a scale of 3 the
+player requested a 13824x13824 pixmap (about 760 MB) per icon and Elisa was
+OOM-killed on start on a 4 GB phone. Use logical pixels, as Qt expects.
+---
+ src/qml/HeaderBar.qml                           | 4 ++--
+ src/qml/mobile/MobileMinimizedPlayerControl.qml | 4 ++--
+ src/qml/mobile/MobileTrackPlayer.qml            | 4 ++--
+ 3 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/src/qml/HeaderBar.qml b/src/qml/HeaderBar.qml
+index 77c40a9..b188e90 100644
+--- a/src/qml/HeaderBar.qml
++++ b/src/qml/HeaderBar.qml
+@@ -401,8 +401,8 @@ FocusScope {
+                     fallback: Qt.resolvedUrl(Theme.defaultAlbumImage)
+ 
+                     sourceSize {
+-                        width: headerBar.imageSourceSize * Screen.devicePixelRatio
+-                        height: headerBar.imageSourceSize * Screen.devicePixelRatio
++                        width: headerBar.imageSourceSize
++                        height: headerBar.imageSourceSize
+                     }
+ 
+                     fillMode: Image.PreserveAspectFit
+diff --git a/src/qml/mobile/MobileMinimizedPlayerControl.qml b/src/qml/mobile/MobileMinimizedPlayerControl.qml
+index 3c1f4b8..64bb31a 100644
+--- a/src/qml/mobile/MobileMinimizedPlayerControl.qml
++++ b/src/qml/mobile/MobileMinimizedPlayerControl.qml
+@@ -129,8 +129,8 @@ BasePlayerControl {
+                         fallback: Qt.resolvedUrl(Theme.defaultAlbumImage)
+ 
+                         sourceSize {
+-                            width: musicWidget.imageSourceSize * Screen.devicePixelRatio
+-                            height: musicWidget.imageSourceSize * Screen.devicePixelRatio
++                            width: musicWidget.imageSourceSize
++                            height: musicWidget.imageSourceSize
+                         }
+ 
+                         fillMode: Image.PreserveAspectFit
+diff --git a/src/qml/mobile/MobileTrackPlayer.qml b/src/qml/mobile/MobileTrackPlayer.qml
+index a68c994..ab43b3a 100644
+--- a/src/qml/mobile/MobileTrackPlayer.qml
++++ b/src/qml/mobile/MobileTrackPlayer.qml
+@@ -76,8 +76,8 @@ BasePlayerControl {
+             fallback: Qt.resolvedUrl(Theme.defaultAlbumImage)
+ 
+             sourceSize {
+-                width: trackPlayer.imageSourceSize * Screen.devicePixelRatio
+-                height: trackPlayer.imageSourceSize * Screen.devicePixelRatio
++                width: trackPlayer.imageSourceSize
++                height: trackPlayer.imageSourceSize
+             }
+ 
+             fillMode: Image.PreserveAspectFit
+-- 
+2.56.0
+

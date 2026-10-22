@@ -1,0 +1,32 @@
+From 8720f6da75874f705ee9da00c79ead5c0c9ed34e Mon Sep 17 00:00:00 2001
+From: Richard Acayan <mailingradian@gmail.com>
+Date: Sat, 3 Oct 2026 13:56:49 -0400
+Subject: [PATCH 51/94] dt-bindings: soc: qcom,smp2p: add sleepstate support
+
+The sleepstate entry is used by Qualcomm sensor DSPs to control
+suspend/resume operations. Even though there is no full support for
+sleep states, initialization of the entry is still necessary for some
+DSPs, notably the sensors-bearing ADSP on the Pixel 3a (SDM670 SoC).
+Allow sleepstates to be declared in the device tree so they can be
+initialized.
+
+Link: https://android.googlesource.com/kernel/msm/+/91edfe5385f2640a338e2ad230d0fc03c73b77f8/drivers/soc/qcom/smp2p_sleepstate.c
+Signed-off-by: Richard Acayan <mailingradian@gmail.com>
+Acked-by: Krzysztof Kozlowski <krzysztof.kozlowski@oss.qualcomm.com>
+---
+ Documentation/devicetree/bindings/soc/qcom/qcom,smp2p.yaml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/soc/qcom/qcom,smp2p.yaml b/Documentation/devicetree/bindings/soc/qcom/qcom,smp2p.yaml
+index f91276822..7862d68c9 100644
+--- a/Documentation/devicetree/bindings/soc/qcom/qcom,smp2p.yaml
++++ b/Documentation/devicetree/bindings/soc/qcom/qcom,smp2p.yaml
+@@ -60,7 +60,7 @@ properties:
+       Two identifiers of the inbound and outbound smem items used for this edge.
+ 
+ patternProperties:
+-  "^master-kernel|slave-kernel|ipa-ap-to-modem|ipa-modem-to-ap|wlan-ap-to-wpss|wlan-wpss-to-ap$":
++  "^master-kernel|slave-kernel|ipa-ap-to-modem|ipa-modem-to-ap|sleepstate|wlan-ap-to-wpss|wlan-wpss-to-ap$":
+     type: object
+     description:
+       Each SMP2P pair contain a set of inbound and outbound entries, these are

@@ -1,0 +1,59 @@
+From 0ba2b37af37960c5ab27c7c3ef29ff7f626e4ebd Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 12:14:51 +0900
+Subject: [PATCH 43/94] drm/msm/mdss: vote the MMSS NoC AHB clock on SDM660
+
+The SDM660 downstream kernel keeps the MMSS NoC AHB clock running
+whenever the MDSS AHB branch is switched: mdss_mdp_clk_ctrl() enables
+mnoc_clk before iface_clk and disables it after, and the DSI clock
+start and stop paths nest their iface vote inside an mnoc vote the same
+way. Without it nothing holds MNOC AHB when the last MDSS AHB disable
+runs in system suspend (the MMSS SMMU may be suspended already), and
+that disable timed out waiting for CLK_OFF ("status stuck at 'on'").
+
+Take the "mnoc" clock first in the MDP5 MDSS clock list, so that the
+bulk enable brackets "iface" with it.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ drivers/gpu/drm/msm/msm_mdss.c | 18 ++++++++++++++++--
+ 1 file changed, 16 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/msm_mdss.c b/drivers/gpu/drm/msm/msm_mdss.c
+index 9087c4b29..0660186cf 100644
+--- a/drivers/gpu/drm/msm/msm_mdss.c
++++ b/drivers/gpu/drm/msm/msm_mdss.c
+@@ -333,9 +333,9 @@ static int msm_mdss_reset(struct device *dev)
+ }
+ 
+ /*
+- * MDP5 MDSS uses at most three specified clocks.
++ * MDP5 MDSS uses at most four specified clocks.
+  */
+-#define MDP5_MDSS_NUM_CLOCKS 3
++#define MDP5_MDSS_NUM_CLOCKS 4
+ static int mdp5_mdss_parse_clock(struct platform_device *pdev, struct clk_bulk_data **clocks)
+ {
+ 	struct clk_bulk_data *bulk;
+@@ -349,6 +349,20 @@ static int mdp5_mdss_parse_clock(struct platform_device *pdev, struct clk_bulk_d
+ 	if (!bulk)
+ 		return -ENOMEM;
+ 
++	/*
++	 * Keep the MMSS NoC AHB clock running whenever the MDSS AHB branch is
++	 * switched, as the SDM660 downstream kernel does: mdss_mdp_clk_ctrl()
++	 * enables mnoc_clk before iface_clk and disables it after (HiBy RS6
++	 * 1.80 kernel, mdss_mdp_clk_ctrl @ ffffff800840a620; clock slots 5
++	 * and 0 per mdss_mdp_probe @ ffffff800840cce8), and dsi_core_clk_start
++	 * and dsi_core_clk_stop (@ ffffff8008472cac, ffffff8008472f14) nest
++	 * the DSI's iface vote inside its mnoc vote the same way. Without it
++	 * nothing holds MNOC AHB when the last MDSS AHB disable runs in system
++	 * suspend (the MMSS SMMU may be suspended already), and that disable timed out waiting for CLK_OFF
++	 * ("status stuck at 'on'"). clk_bulk enables in array order and
++	 * disables in reverse, so listing it first brackets "iface".
++	 */
++	bulk[num_clocks++].id = "mnoc";
+ 	bulk[num_clocks++].id = "iface";
+ 	bulk[num_clocks++].id = "bus";
+ 	bulk[num_clocks++].id = "vsync";

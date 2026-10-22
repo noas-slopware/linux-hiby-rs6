@@ -1,0 +1,391 @@
+From e1d301b4035cab538d6e406db48d53875b8e9215 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 17:43:22 +0900
+Subject: [PATCH 6/6] mach-snapdragon: add HiBy RS6 off-mode charging
+
+Plugging a charger into a powered-off RS6 makes the PMIC power it on.
+Stock Android handles that with a charger mode; without it the board
+would boot the OS. When the pm660 PON reason is USB charger only (and
+there is no warm reset reason), stay in U-Boot: keep the panel dark,
+show the battery level from the cw2015 for a few seconds on any button
+press, boot on a long power-key press and power off when the charger is
+removed.
+
+Enabled with CONFIG_QCOM_HIBY_RS6_CHARGER (board/qualcomm/hiby-rs6.config)
+and gated at runtime on the "hiby,rs6" compatible.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ arch/arm/mach-snapdragon/Kconfig       |  10 +
+ arch/arm/mach-snapdragon/Makefile      |   1 +
+ arch/arm/mach-snapdragon/rs6_charger.c | 322 +++++++++++++++++++++++++
+ board/qualcomm/hiby-rs6.config         |   2 +
+ 4 files changed, 335 insertions(+)
+ create mode 100644 arch/arm/mach-snapdragon/rs6_charger.c
+ create mode 100644 board/qualcomm/hiby-rs6.config
+
+diff --git a/arch/arm/mach-snapdragon/Kconfig b/arch/arm/mach-snapdragon/Kconfig
+index 38a69aa3..1689a337 100644
+--- a/arch/arm/mach-snapdragon/Kconfig
++++ b/arch/arm/mach-snapdragon/Kconfig
+@@ -49,4 +49,14 @@ config CMD_QCOM_DEBUG
+ 	  Enable Qualcomm specific U-Boot commands for debugging, such as dumping
+ 	  various regulator settings or efuses.
+ 
++config QCOM_HIBY_RS6_CHARGER
++	bool "HiBy RS6 off-mode charging screen"
++	depends on DM_I2C && DM_PMIC && VIDEO && BUTTON && EVENT
++	default n
++	help
++	  On the HiBy RS6 (compatible "hiby,rs6"), stay in U-Boot when the PMIC
++	  powered the board on only because a charger was plugged in: show the
++	  battery level on a button press, boot on a long power-key press and
++	  power off when the charger is removed. Does nothing on other boards.
++
+ endif
+diff --git a/arch/arm/mach-snapdragon/Makefile b/arch/arm/mach-snapdragon/Makefile
+index 343e825c..e05e10fa 100644
+--- a/arch/arm/mach-snapdragon/Makefile
++++ b/arch/arm/mach-snapdragon/Makefile
+@@ -5,3 +5,4 @@
+ obj-y += board.o
+ obj-$(CONFIG_EFI_HAVE_CAPSULE_SUPPORT) += capsule_update.o
+ obj-$(CONFIG_OF_LIVE) += of_fixup.o
++obj-$(CONFIG_QCOM_HIBY_RS6_CHARGER) += rs6_charger.o
+diff --git a/arch/arm/mach-snapdragon/rs6_charger.c b/arch/arm/mach-snapdragon/rs6_charger.c
+new file mode 100644
+index 00000000..29be4c32
+--- /dev/null
++++ b/arch/arm/mach-snapdragon/rs6_charger.c
+@@ -0,0 +1,322 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * HiBy RS6 off-mode charging, in place of stock Android's charger mode.
++ *
++ * Plugging a charger into a powered-off RS6 makes the PMIC power the board on. When that
++ * is the only reason we are running, stay here instead of booting the OS: keep the panel
++ * dark, light it with the battery level for a few seconds when any button is pressed,
++ * boot normally on a long power-key press and power off when the charger goes away.
++ *
++ * Register facts:
++ *  - pm660 PON is a gen2 block (PON_SUBTYPE 0x805 = 0x04, PON_SUBTYPE_GEN2_PRIMARY), so
++ *    its reason registers sit at base + 0xc0: PON_REASON1 0x8c0, bit order from the stock
++ *    kernel's qpnp-power-on reason table: 0 hard reset, 1 SMPL, 2 RTC, 3 DC, 4 USB
++ *    charger, 5 PON1, 6 CBL, 7 power key (read 0x10 after a cable power-on). The warm
++ *    reset reason 0x8c2 is non-zero after an OS reboot, which must not land back here.
++ *  - pm660 charger POWER_PATH_STATUS (0x1000 + 0x60b): USE_USBIN (bit 4) and
++ *    VALID_INPUT_POWER_SOURCE (bit 0), as Linux qcom_smbx.c reads "online".
++ *  - cw2015 fuel gauge at 0x62 on blsp_i2c6, SOC register 0x04 (MSB = percent).
++ *  - Backlight enable: pm660l GPIO6, which ABL leaves driven high; low turns the panel dark.
++ */
++
++#include <button.h>
++#include <dm.h>
++#include <event.h>
++#include <i2c.h>
++#include <sysreset.h>
++#include <time.h>
++#include <video.h>
++#include <asm-generic/gpio.h>
++#include <dm/ofnode.h>
++#include <dm/device-internal.h>
++#include <dm/uclass.h>
++#include <linux/delay.h>
++#include <power/pmic.h>
++#include <asm/io.h>
++#include <asm/global_data.h>
++#include <stdio.h>
++
++#define PON_REASON1		0x8c0
++#define  PON_HARD_RESET		BIT(0)
++#define  PON_USB_CHG		BIT(4)
++#define  PON_KPD		BIT(7)
++#define PON_WARM_RESET_REASON1	0x8c2
++#define POWER_PATH_STATUS	0x160b
++#define  P_PATH_USE_USBIN	BIT(4)
++#define  P_PATH_VALID_INPUT	BIT(0)
++#define CW2015_REG_SOC		0x04
++/* PS_HOLD reset type (Linux pm8941-pwrkey): type in 0x85a, enable bit 7 in 0x85b */
++#define PON_PS_HOLD_RST_CTL	0x85a
++#define PON_PS_HOLD_RST_CTL2	0x85b
++#define  PON_PS_HOLD_ENABLE	BIT(7)
++#define  PON_PS_HOLD_SHUTDOWN	4
++#define MPM_PS_HOLD		0x010ac000
++/* pm660l GPIO6 (backlight enable), LV/MV GPIO block at 0xc500 */
++#define BL_GPIO			0xc500
++#define  GPIO_MODE_CTL		0x40
++#define  GPIO_DIG_VIN_CTL	0x41
++#define  GPIO_DIG_PULL_CTL	0x42
++#define  GPIO_OUT_CTL		0x44	/* bit 7 invert, bits 3:0 source (0 = GPIO level 0) */
++#define  GPIO_DIG_OUT_CTL	0x45
++#define  GPIO_EN_CTL		0x46
++
++#define PON_RT_STS		0x810
++#define  PON_KPDPWR_N_SET	BIT(0)
++#define  PON_RESIN_N_SET	BIT(1)
++
++DECLARE_GLOBAL_DATA_PTR;
++
++#define LIT_MS			10000
++#define BOOT_HOLD_MS		1000
++#define POLL_MS			50
++#define SOC_REFRESH_MS		5000
++
++struct rs6_chg {
++	struct udevice *pmic;
++	struct udevice *gauge;
++	struct udevice *video;
++	struct udevice *pmic_l;	/* pm660l: backlight enable GPIO */
++};
++
++static struct udevice *find_pmic(const char *name)
++{
++	struct udevice *dev;
++	struct uclass *uc;
++
++	if (uclass_get(UCLASS_PMIC, &uc))
++		return NULL;
++	uclass_foreach_dev(dev, uc) {
++		if (!strcmp(ofnode_get_name(dev_ofnode(dev)), name) && !device_probe(dev))
++			return dev;
++	}
++	return NULL;
++}
++
++static bool charger_online(struct rs6_chg *c)
++{
++	int v = pmic_reg_read(c->pmic, POWER_PATH_STATUS);
++
++	return v >= 0 && (v & P_PATH_USE_USBIN) && (v & P_PATH_VALID_INPUT);
++}
++
++static int battery_soc(struct rs6_chg *c)
++{
++	u8 buf[2];
++
++	if (!c->gauge || dm_i2c_read(c->gauge, CW2015_REG_SOC, buf, 2))
++		return -1;
++	return buf[0] > 100 ? 100 : buf[0];
++}
++
++/* keys straight from the PON real-time status: power key and the RESIN (next) key */
++static bool any_button(struct rs6_chg *c, bool *power)
++{
++	int v = pmic_reg_read(c->pmic, PON_RT_STS);
++
++	*power = v >= 0 && (v & PON_KPDPWR_N_SET);
++	return v >= 0 && (v & (PON_KPDPWR_N_SET | PON_RESIN_N_SET));
++}
++
++/* ---- drawing straight into the 32 bpp framebuffer ---- */
++
++static void fill(struct video_priv *v, int x, int y, int w, int h, u32 rgb)
++{
++	int i, j;
++
++	for (j = max(y, 0); j < min(y + h, (int)v->ysize); j++) {
++		u32 *row = v->fb + j * v->line_length;
++
++		for (i = max(x, 0); i < min(x + w, (int)v->xsize); i++)
++			row[i] = rgb;
++	}
++}
++
++/* seven-segment digit, segments a..g */
++static void digit(struct video_priv *v, int x, int y, int w, int h, int t, int d, u32 rgb)
++{
++	static const u8 seg[10] = { 0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x6f };
++	u8 s = seg[d];
++	int hh = (h - t) / 2;
++
++	if (s & 0x01) fill(v, x, y, w, t, rgb);			/* a */
++	if (s & 0x02) fill(v, x + w - t, y, t, hh + t, rgb);	/* b */
++	if (s & 0x04) fill(v, x + w - t, y + hh, t, hh + t, rgb);	/* c */
++	if (s & 0x08) fill(v, x, y + h - t, w, t, rgb);		/* d */
++	if (s & 0x10) fill(v, x, y + hh, t, hh + t, rgb);		/* e */
++	if (s & 0x20) fill(v, x, y, t, hh + t, rgb);		/* f */
++	if (s & 0x40) fill(v, x, y + hh, w, t, rgb);		/* g */
++}
++
++static void draw(struct rs6_chg *c, int soc)
++{
++	struct video_priv *v = dev_get_uclass_priv(c->video);
++	const u32 fg = 0xffffff, dim = 0x505050;
++	u32 lvl = soc < 0 ? dim : soc <= 15 ? 0xe53935 : 0x43a047;
++	int W = v->xsize, H = v->ysize;
++	int bw = W * 2 / 5, bh = H * 2 / 5, bx = (W - bw) / 2, by = H / 6, t = 14;
++	int fillh, n, i, dw = 120, dh = 200, dt = 26, gap = 30, x;
++
++	fill(v, 0, 0, W, H, 0);
++	/* battery outline, terminal on top, level fill from the bottom */
++	fill(v, bx + bw / 3, by - 40, bw / 3, 40, fg);
++	fill(v, bx, by, bw, t, fg);
++	fill(v, bx, by + bh - t, bw, t, fg);
++	fill(v, bx, by, t, bh, fg);
++	fill(v, bx + bw - t, by, t, bh, fg);
++	fillh = soc < 0 ? 0 : (bh - 4 * t) * soc / 100;
++	fill(v, bx + 2 * t, by + bh - 2 * t - fillh, bw - 4 * t, fillh, lvl);
++
++	/* percentage under it */
++	if (soc >= 0) {
++		n = soc >= 100 ? 3 : soc >= 10 ? 2 : 1;
++		x = (W - (n * dw + (n - 1) * gap + gap + dw)) / 2;
++		for (i = n - 1; i >= 0; i--) {
++			int p = 1;
++
++			for (int k = 0; k < i; k++)
++				p *= 10;
++			digit(v, x, by + bh + 120, dw, dh, dt, (soc / p) % 10, fg);
++			x += dw + gap;
++		}
++		/* percent sign: two dots and a slash of squares */
++		fill(v, x, by + bh + 120, dt * 2, dt * 2, fg);
++		for (i = 0; i < 8; i++)
++			fill(v, x + dw - dt - i * (dw - dt) / 8, by + bh + 120 + i * dh / 8, dt, dh / 8, fg);
++		fill(v, x + dw - dt * 2, by + bh + 120 + dh - dt * 2, dt * 2, dt * 2, fg);
++	}
++	video_damage(c->video, 0, 0, W, H);
++	video_sync(c->video, true);
++}
++
++static void blank(struct rs6_chg *c)
++{
++	struct video_priv *v = dev_get_uclass_priv(c->video);
++
++	fill(v, 0, 0, v->xsize, v->ysize, 0);
++	video_damage(c->video, 0, 0, v->xsize, v->ysize);
++	video_sync(c->video, true);
++}
++
++static void backlight(struct rs6_chg *c, bool on)
++{
++	int r = 0;
++
++	if (!c->pmic_l)
++		return;
++	/* plain output driven from the GPIO level, not the LPG ABL may have routed in */
++	r |= pmic_reg_write(c->pmic_l, BL_GPIO + GPIO_EN_CTL, 0x00);
++	r |= pmic_reg_write(c->pmic_l, BL_GPIO + GPIO_MODE_CTL, 0x01);
++	r |= pmic_reg_write(c->pmic_l, BL_GPIO + GPIO_DIG_VIN_CTL, 0x00);
++	r |= pmic_reg_write(c->pmic_l, BL_GPIO + GPIO_DIG_PULL_CTL, 0x05);
++	r |= pmic_reg_write(c->pmic_l, BL_GPIO + GPIO_OUT_CTL, on ? 0x80 : 0x00);
++	r |= pmic_reg_write(c->pmic_l, BL_GPIO + GPIO_DIG_OUT_CTL, 0x01);
++	r |= pmic_reg_write(c->pmic_l, BL_GPIO + GPIO_EN_CTL, 0x80);
++	if (r)
++		printf("rs6chg: backlight write failed\n");
++}
++
++static void power_off(struct rs6_chg *c)
++{
++	/* as Linux does for SYS_POWER_OFF: PS_HOLD reset type = shutdown, then drop PS_HOLD */
++	pmic_clrsetbits(c->pmic, PON_PS_HOLD_RST_CTL2, PON_PS_HOLD_ENABLE, 0);
++	udelay(1000);
++	pmic_clrsetbits(c->pmic, PON_PS_HOLD_RST_CTL, 0x0f, PON_PS_HOLD_SHUTDOWN);
++	pmic_clrsetbits(c->pmic, PON_PS_HOLD_RST_CTL2, 0, PON_PS_HOLD_ENABLE);
++	udelay(1000);
++	writel(0, MPM_PS_HOLD);
++	mdelay(500);
++	sysreset_walk(SYSRESET_POWER_OFF);
++	for (;;)
++		mdelay(1000);
++}
++
++static int rs6_charger(void)
++{
++	struct rs6_chg c = { };
++	int reason, warm, soc = -1;
++	ulong lit_until, soc_at = 0, hold_from = 0;
++	bool power, pressed, was_pressed = false;
++	ofnode node, bus_node;
++	struct udevice *bus;
++
++	if (!ofnode_device_is_compatible(ofnode_root(), "hiby,rs6"))
++		return 0;
++
++	c.pmic = find_pmic("pmic@0");
++	if (!c.pmic)
++		return 0;
++	reason = pmic_reg_read(c.pmic, PON_REASON1);
++	warm = pmic_reg_read(c.pmic, PON_WARM_RESET_REASON1);
++	if (reason < 0 || warm < 0)
++		return 0;
++	if (!(reason & PON_USB_CHG) || (reason & (PON_KPD | PON_HARD_RESET)) || warm)
++		return 0;
++	if (!charger_online(&c))
++		return 0;
++	if (uclass_first_device_err(UCLASS_VIDEO, &c.video))
++		return 0;
++
++	c.pmic_l = find_pmic("pmic@2");
++	if (!c.pmic_l)
++		printf("rs6chg: no pm660l, backlight stays on\n");
++	node = ofnode_by_compatible(ofnode_null(), "cellwise,cw2015");
++	bus_node = ofnode_get_parent(node);
++	if (ofnode_valid(node) && !uclass_get_device_by_ofnode(UCLASS_I2C, bus_node, &bus))
++		i2c_get_chip(bus, ofnode_read_u32_default(node, "reg", 0x62), 1, &c.gauge);
++
++	/* keep the text console off the screen while charging */
++	gd->flags |= GD_FLG_SILENT | GD_FLG_DISABLE_CONSOLE;
++
++	/* show the level once on entry, then go dark */
++	soc = battery_soc(&c);
++	soc_at = get_timer(0);
++	draw(&c, soc);
++	backlight(&c, true);
++	lit_until = get_timer(0) + LIT_MS;
++
++	for (;;) {
++		if (!charger_online(&c)) {
++			blank(&c);
++			backlight(&c, false);
++			power_off(&c);
++		}
++
++		pressed = any_button(&c, &power);
++		if (pressed && !was_pressed) {
++			if (get_timer(soc_at) > SOC_REFRESH_MS || soc < 0) {
++				soc = battery_soc(&c);
++				soc_at = get_timer(0);
++			}
++			draw(&c, soc);
++			backlight(&c, true);
++			lit_until = get_timer(0) + LIT_MS;
++		}
++		if (power) {
++			if (!hold_from)
++				hold_from = get_timer(0);
++			if (get_timer(hold_from) >= BOOT_HOLD_MS)
++				break;
++		} else {
++			hold_from = 0;
++		}
++		was_pressed = pressed;
++
++		if (lit_until && get_timer(0) >= lit_until) {
++			backlight(&c, false);
++			blank(&c);
++			lit_until = 0;
++		} else if (lit_until && get_timer(soc_at) > SOC_REFRESH_MS) {
++			soc = battery_soc(&c);
++			soc_at = get_timer(0);
++			draw(&c, soc);
++		}
++		mdelay(POLL_MS);
++	}
++
++	/* long power press: boot as usual */
++	blank(&c);
++	backlight(&c, true);
++	gd->flags &= ~(GD_FLG_SILENT | GD_FLG_DISABLE_CONSOLE);
++	return 0;
++}
++EVENT_SPY_SIMPLE(EVT_LAST_STAGE_INIT, rs6_charger);
+diff --git a/board/qualcomm/hiby-rs6.config b/board/qualcomm/hiby-rs6.config
+new file mode 100644
+index 00000000..98c8c490
+--- /dev/null
++++ b/board/qualcomm/hiby-rs6.config
+@@ -0,0 +1,2 @@
++# HiBy RS6: on top of qcom_defconfig, qcom-sdm660-phone.config and qcom-downstream.config
++CONFIG_QCOM_HIBY_RS6_CHARGER=y

@@ -1,0 +1,15 @@
+[Unit]
+Description=Nura swap partitions (nura_swap1 + nura_swap2, 2x RAM)
+DefaultDependencies=no
+Before=swap.target
+Wants=dev-disk-by\x2dpartlabel-nura_swap1.device dev-disk-by\x2dpartlabel-nura_swap2.device
+After=dev-disk-by\x2dpartlabel-nura_swap1.device dev-disk-by\x2dpartlabel-nura_swap2.device
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/sbin/swapon /dev/disk/by-partlabel/nura_swap1 /dev/disk/by-partlabel/nura_swap2
+ExecStop=/sbin/swapoff /dev/disk/by-partlabel/nura_swap1 /dev/disk/by-partlabel/nura_swap2
+
+[Install]
+WantedBy=swap.target

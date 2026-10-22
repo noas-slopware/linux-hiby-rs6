@@ -1,0 +1,174 @@
+From c5839aa91a6ebf7b5df6750c84b3bd9bb4aa406f Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 12:28:51 +0900
+Subject: [PATCH 69/94] wifi: ath10k: use connected scan timing while a vdev is
+ up
+
+ath10k sends the same scan timing whether or not it is associated:
+idle_time 0, so the firmware leaves the home channel as soon as
+min_rest_time (50 ms) expires and max_rest_time is never used. 50 ms
+is shorter than a beacon interval, so about half of the returns catch
+no beacon and the AP keeps buffered frames for a later one. On WCN3990
+with wpa_supplicant's background scans that put the RTT during a scan
+at a 138 ms mean with a tail up to 900 ms, against 25 ms outside.
+
+While a vdev is up, use the connected ("Conc") scan defaults of
+Qualcomm's qcacld driver, which this firmware's stock driver sends:
+40 ms active and 110 ms passive dwell and a 25 ms idle time, so the
+firmware stays home while there is traffic, and moderate adaptive
+dwell (WMI-TLV only, scan_ctrl_flags bits 21-23). Rest at least one
+beacon interval (clamped to 50..150 ms) and at most two, so every
+return covers a TBTT and a busy link cannot stretch a scan past
+max_scan_time. Scans with no vdev up and an explicit scan duration
+keep the old values.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ drivers/net/wireless/ath/ath10k/mac.c     | 60 +++++++++++++++++++++++
+ drivers/net/wireless/ath/ath10k/wmi-tlv.c |  3 ++
+ drivers/net/wireless/ath/ath10k/wmi-tlv.h |  3 ++
+ drivers/net/wireless/ath/ath10k/wmi.h     | 10 ++++
+ 4 files changed, 76 insertions(+)
+
+diff --git a/drivers/net/wireless/ath/ath10k/mac.c b/drivers/net/wireless/ath/ath10k/mac.c
+index caddb12ab..59ec16397 100644
+--- a/drivers/net/wireless/ath/ath10k/mac.c
++++ b/drivers/net/wireless/ath/ath10k/mac.c
+@@ -6392,6 +6392,64 @@ static int ath10k_mac_tdls_vif_stations_count(struct ieee80211_hw *hw,
+ 	return data.num_tdls_stations;
+ }
+ 
++/* Scan timing used while at least one vdev is up, i.e. a station is
++ * associated or an AP/IBSS/mesh BSS is running. Dwell and idle times
++ * follow the connected ("Conc") scan defaults of Qualcomm's qcacld host
++ * driver: 40 ms active dwell, 110 ms passive dwell and a 25 ms data
++ * inactivity check on the home channel, with moderate adaptive dwell.
++ */
++#define ATH10K_SCAN_CONN_DWELL_ACTIVE	40 /* msec */
++#define ATH10K_SCAN_CONN_DWELL_PASSIVE	110 /* msec */
++#define ATH10K_SCAN_CONN_IDLE_TIME	25 /* msec */
++#define ATH10K_SCAN_CONN_REST_MIN	50 /* msec */
++#define ATH10K_SCAN_CONN_REST_MAX	150 /* msec */
++
++static void ath10k_mac_scan_set_conn_params(struct ath10k *ar,
++					    struct wmi_start_scan_arg *arg)
++{
++	struct ath10k_vif *arvif;
++	u32 bcn_int = 0;
++	u32 rest;
++
++	lockdep_assert_held(&ar->conf_mutex);
++
++	list_for_each_entry(arvif, &ar->arvifs, list) {
++		if (!arvif->is_up)
++			continue;
++
++		bcn_int = max(bcn_int, arvif->beacon_interval ?: 100);
++	}
++
++	if (!bcn_int)
++		return;
++
++	/* Stay on the home channel for at least one beacon interval
++	 * between foreign channels so that every return catches a beacon
++	 * (TIM) and the AP can release frames it buffered meanwhile. With
++	 * a nonzero idle_time the firmware keeps the radio home after that
++	 * while there is traffic, up to max_rest_time. With idle_time 0
++	 * the activity check is off and the firmware leaves as soon as
++	 * min_rest_time expires.
++	 */
++	rest = clamp_t(u32, DIV_ROUND_UP(bcn_int * 1024, 1000),
++		       ATH10K_SCAN_CONN_REST_MIN, ATH10K_SCAN_CONN_REST_MAX);
++
++	arg->dwell_time_active = ATH10K_SCAN_CONN_DWELL_ACTIVE;
++	arg->dwell_time_passive = ATH10K_SCAN_CONN_DWELL_PASSIVE;
++	arg->min_rest_time = rest;
++	arg->max_rest_time = 2 * rest;
++	arg->idle_time = ATH10K_SCAN_CONN_IDLE_TIME;
++	/* Lets the firmware cut a foreign channel short once it has heard
++	 * what it needs to. Only the WMI-TLV scan command carries it.
++	 */
++	arg->dwell_mode = WMI_SCAN_DWELL_MODE_MODERATE;
++
++	ath10k_dbg(ar, ATH10K_DBG_MAC,
++		   "mac scan connected dwell %u/%u rest %u-%u idle %u\n",
++		   arg->dwell_time_active, arg->dwell_time_passive,
++		   arg->min_rest_time, arg->max_rest_time, arg->idle_time);
++}
++
+ static int ath10k_hw_scan(struct ieee80211_hw *hw,
+ 			  struct ieee80211_vif *vif,
+ 			  struct ieee80211_scan_request *hw_req)
+@@ -6439,6 +6497,7 @@ static int ath10k_hw_scan(struct ieee80211_hw *hw,
+ 	}
+ 
+ 	ath10k_wmi_start_scan_init(ar, arg);
++	ath10k_mac_scan_set_conn_params(ar, arg);
+ 	arg->vdev_id = arvif->vdev_id;
+ 	arg->scan_id = ATH10K_SCAN_ID;
+ 
+@@ -6474,6 +6533,7 @@ static int ath10k_hw_scan(struct ieee80211_hw *hw,
+ 		arg->dwell_time_active = req->duration;
+ 		arg->dwell_time_passive = req->duration;
+ 		arg->burst_duration_ms = req->duration;
++		arg->dwell_mode = WMI_SCAN_DWELL_MODE_DEFAULT;
+ 
+ 		scan_timeout = min_t(u32, arg->max_rest_time *
+ 				(arg->n_channels - 1) + (req->duration +
+diff --git a/drivers/net/wireless/ath/ath10k/wmi-tlv.c b/drivers/net/wireless/ath/ath10k/wmi-tlv.c
+index 01f2d1fa9..6848661d2 100644
+--- a/drivers/net/wireless/ath/ath10k/wmi-tlv.c
++++ b/drivers/net/wireless/ath/ath10k/wmi-tlv.c
+@@ -2012,6 +2012,9 @@ ath10k_wmi_tlv_op_gen_start_scan(struct ath10k *ar,
+ 	cmd = (void *)tlv->value;
+ 
+ 	ath10k_wmi_put_start_scan_common(&cmd->common, arg);
++	cmd->common.scan_ctrl_flags |=
++		__cpu_to_le32(FIELD_PREP(WMI_TLV_SCAN_DWELL_MODE_MASK,
++					 arg->dwell_mode));
+ 	cmd->burst_duration_ms = __cpu_to_le32(arg->burst_duration_ms);
+ 	cmd->num_channels = __cpu_to_le32(arg->n_channels);
+ 	cmd->num_ssids = __cpu_to_le32(arg->n_ssids);
+diff --git a/drivers/net/wireless/ath/ath10k/wmi-tlv.h b/drivers/net/wireless/ath/ath10k/wmi-tlv.h
+index ea18ed893..94a810200 100644
+--- a/drivers/net/wireless/ath/ath10k/wmi-tlv.h
++++ b/drivers/net/wireless/ath/ath10k/wmi-tlv.h
+@@ -1847,6 +1847,9 @@ struct wmi_scan_prob_req_oui_cmd {
+ 	__le32 prob_req_oui;
+ }  __packed;
+ 
++/* scan_ctrl_flags bits 21-23 carry enum wmi_scan_dwell_mode */
++#define WMI_TLV_SCAN_DWELL_MODE_MASK GENMASK(23, 21)
++
+ struct wmi_tlv_start_scan_cmd {
+ 	struct wmi_start_scan_common common;
+ 	__le32 burst_duration_ms;
+diff --git a/drivers/net/wireless/ath/ath10k/wmi.h b/drivers/net/wireless/ath/ath10k/wmi.h
+index 7f50a1de6..ce67241e3 100644
+--- a/drivers/net/wireless/ath/ath10k/wmi.h
++++ b/drivers/net/wireless/ath/ath10k/wmi.h
+@@ -3277,6 +3277,15 @@ struct wmi_bssid_arg {
+ 	const u8 *bssid;
+ };
+ 
++/* Adaptive dwell modes, only understood by WMI-TLV firmware */
++enum wmi_scan_dwell_mode {
++	WMI_SCAN_DWELL_MODE_DEFAULT = 0,
++	WMI_SCAN_DWELL_MODE_CONSERVATIVE = 1,
++	WMI_SCAN_DWELL_MODE_MODERATE = 2,
++	WMI_SCAN_DWELL_MODE_AGGRESSIVE = 3,
++	WMI_SCAN_DWELL_MODE_STATIC = 4,
++};
++
+ struct wmi_start_scan_arg {
+ 	u32 scan_id;
+ 	u32 scan_req_id;
+@@ -3294,6 +3303,7 @@ struct wmi_start_scan_arg {
+ 	u32 probe_delay;
+ 	u32 scan_ctrl_flags;
+ 	u32 burst_duration_ms;
++	enum wmi_scan_dwell_mode dwell_mode;
+ 
+ 	u32 ie_len;
+ 	u32 n_channels;

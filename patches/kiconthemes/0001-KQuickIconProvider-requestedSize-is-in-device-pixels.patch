@@ -1,0 +1,26 @@
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 12:30:00 +0900
+Subject: [PATCH] KQuickIconProvider: requestedSize is in device pixels
+
+Qt Quick passes image providers a requestedSize that already includes the
+device pixel ratio (QQuickImageBase::load, HandleDPR). QIcon::pixmap(QSize)
+multiplies by the application's device pixel ratio again, so on a scale 3
+screen every theme icon was rendered at 9 times the pixels it needed; with
+a large sourceSize that became a multi-gigabyte pixmap. Ask for exactly the
+requested pixels.
+---
+ src/kquickiconprovider.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/kquickiconprovider.h b/src/kquickiconprovider.h
+--- a/src/kquickiconprovider.h
++++ b/src/kquickiconprovider.h
+@@ -44,7 +44,7 @@
+ 
+         QPixmap pixmap;
+         if (requestedSize.isValid()) {
+-            pixmap = QIcon::fromTheme(source.at(0)).pixmap(requestedSize);
++            pixmap = QIcon::fromTheme(source.at(0)).pixmap(requestedSize, 1.0);
+         } else if (size->isValid()) {
+             pixmap = QIcon::fromTheme(source.at(0)).pixmap(*size);
+         } else {

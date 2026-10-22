@@ -1,0 +1,65 @@
+From 83afb0a7905749a89bb0e37239510b4a155dad97 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 12:59:55 +0900
+Subject: [PATCH 70/94] iio: common: qcom_smgr: accept NAK_REPORT_ID on an ADD
+ as stock does
+
+The AckNak check took NAK_REPORT_ID (3) as success only for a DELETE
+and as a refusal for an ADD. The stock sensors HAL never counts it as
+an error, whatever the action and the result: in
+SMGRSensor::processBufferingResp an error is a non-zero result or an
+AckNak above ACK_MODIFIED, unless the AckNak is NAK_REPORT_ID. Should
+this firmware answer an ADD with it, say on a sampling_frequency write
+while streaming, the write failed and the fallback sent up to 34 more
+ADDs, each answered the same way and each logged as a refusal, while
+the report probably kept running.
+
+Accept it for an ADD too, at debug level, as for a DELETE.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ drivers/iio/common/qcom_smgr/qcom_smgr.c | 21 +++++++++++++--------
+ 1 file changed, 13 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/iio/common/qcom_smgr/qcom_smgr.c b/drivers/iio/common/qcom_smgr/qcom_smgr.c
+index 0f7f601b0..b79394dd4 100644
+--- a/drivers/iio/common/qcom_smgr/qcom_smgr.c
++++ b/drivers/iio/common/qcom_smgr/qcom_smgr.c
+@@ -288,10 +288,13 @@ static unsigned int qcom_smgr_samples_per_report(const struct qcom_smgr_sensor *
+ }
+ 
+ /*
+- * Turn the AckNak of a buffering response into an error code. ACK_MODIFIED
+- * means SMGR substituted a parameter and runs the report anyway; the stock
+- * HAL logs it only at debug level, so does this. NAK_REPORT_ID answers a
+- * DELETE of a report SMGR does not have, which is what the DELETE wanted.
++ * Turn the AckNak of a buffering response into an error code, as the stock
++ * HAL does (SMGRSensor::processBufferingResp): ACK_SUCCESS and ACK_MODIFIED
++ * are accepted unless the result says otherwise; ACK_MODIFIED means SMGR
++ * substituted a parameter and runs the report anyway, which stock logs only
++ * at debug level, so does this. NAK_REPORT_ID ("no such report") is never
++ * an error to stock, whatever the result, for an ADD as for a DELETE; for a
++ * DELETE it means the report is gone, which is what the DELETE wanted.
+  */
+ static int qcom_smgr_check_buffering_resp(struct qcom_smgr *smgr,
+ 					  struct qcom_smgr_sensor *sensor,
+@@ -309,12 +312,14 @@ static int qcom_smgr_check_buffering_resp(struct qcom_smgr *smgr,
+ 			sensor->id, sample_rate, reason);
+ 		break;
+ 	case SNS_SMGR_RESPONSE_NAK_REPORT_ID:
+-		if (!enable) {
++		if (enable)
++			dev_dbg(smgr->dev,
++				"0x%02x: %u Hz report: no such report, result 0x%x, accepted\n",
++				sensor->id, sample_rate, resp->result);
++		else
+ 			dev_dbg(smgr->dev, "0x%02x: no report to delete\n",
+ 				sensor->id);
+-			return 0;
+-		}
+-		fallthrough;
++		return 0;
+ 	default:
+ 		if (enable)
+ 			dev_warn(smgr->dev,

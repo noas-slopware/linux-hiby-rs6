@@ -1,0 +1,113 @@
+From c477631aefc112a07bdc0db7a7faee89d0883a54 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 17:49:12 +0900
+Subject: [PATCH 93/94] clk: qcom: smd-rpm: Drop the handoff votes nobody
+ claimed at sync_state
+
+clk_smd_rpm_handoff() votes every clock at its maximum in both the
+active and the sleep set. A clock and its active-only peer share one RPM
+resource, and every prepare or unprepare of either rewrites both sets,
+so the handoff vote goes away once a consumer has used the pair. A pair
+that no consumer ever prepares keeps it for good. Nothing marks these
+clocks as enabled either (there is no .is_prepared), so the unused clock
+cleanup never touches them.
+
+On SDM660 that leaves LN_BB_CLK1/2/3 and RF_CLK1 (software enable), the
+LN_BB_CLK1/2/3 pin control votes, DIV_CLK1 and CE1 on in the sleep set
+of the application processor forever. XO buffers voted on keep the XO
+on, so the SoC never reaches XO shutdown or VDD minimization, the same
+thing Imran Shaik reported for QCM2290 in "clk: qcom: smd-rpm: Skip
+proxy votes on clocks for QCM2290"
+(<20260910-clk-smd-rpm-skip-proxy-v1-1-1cb5694a99d9@oss.qualcomm.com>).
+
+Downstream (msm-4.4, as in the stock HiBy RS6 kernel) handles this
+through the clock framework's handoff: the probe prepares every RPM
+clock, they are registered with CLK_ENABLE_HAND_OFF, and
+clk_disable_unused() unprepares each one nobody claimed, which sends
+its vote back to zero.
+
+Do it the way Stephan Gerhold suggested in that thread: send a "disable"
+for every pair nobody holds once all consumers have probed, from the
+driver's sync_state. Waiting for sync_state instead of late_initcall
+keeps the handoff votes until modular consumers such as ath10k_snoc
+(RF_CLK1_PIN) have claimed their clocks. Pairs that are in use are not
+touched, and a consumer that prepares one of these clocks later votes
+it again.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ drivers/clk/qcom/clk-smd-rpm.c | 56 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 56 insertions(+)
+
+diff --git a/drivers/clk/qcom/clk-smd-rpm.c b/drivers/clk/qcom/clk-smd-rpm.c
+index 103db984a..1c4df19be 100644
+--- a/drivers/clk/qcom/clk-smd-rpm.c
++++ b/drivers/clk/qcom/clk-smd-rpm.c
+@@ -1421,10 +1421,66 @@ static int rpm_smd_clk_probe(struct platform_device *pdev)
+ 	return ret;
+ }
+ 
++static bool rpm_smd_clk_desc_has(const struct rpm_smd_clk_desc *desc,
++				  const struct clk_smd_rpm *r)
++{
++	size_t i;
++
++	for (i = 0; i < desc->num_clks; i++)
++		if (desc->clks[i] == r)
++			return true;
++
++	return false;
++}
++
++/*
++ * clk_smd_rpm_handoff() votes every clock on, in the active and in the sleep
++ * set, so that nothing the boot firmware left running is cut before its
++ * consumer probes. A clock and its active-only peer share one RPM resource,
++ * and every prepare or unprepare of either rewrites both sets of it. So a
++ * pair that a consumer has prepared at least once no longer carries the
++ * handoff vote, but a pair nobody ever prepared keeps it for good: unused XO
++ * buffers stay voted on in the sleep set, which keeps the XO itself on and
++ * the SoC out of XO shutdown and VDD minimization.
++ *
++ * Once every consumer has probed, drop the votes of the pairs nobody holds.
++ * A consumer that prepares one of these clocks later votes it again.
++ */
++static void rpm_smd_clk_sync_state(struct device *dev)
++{
++	const struct rpm_smd_clk_desc *desc = of_device_get_match_data(dev);
++	size_t i;
++	int ret;
++
++	if (!desc)
++		return;
++
++	guard(mutex)(&rpm_smd_clk_lock);
++
++	for (i = 0; i < desc->num_clks; i++) {
++		struct clk_smd_rpm *r = desc->clks[i];
++
++		if (!r || r->enabled || r->peer->enabled)
++			continue;
++
++		/* One request per resource: skip the peer of a listed clock. */
++		if (r->active_only && rpm_smd_clk_desc_has(desc, r->peer))
++			continue;
++
++		ret = clk_smd_rpm_set_rate_active(r, 0);
++		if (!ret)
++			ret = clk_smd_rpm_set_rate_sleep(r, 0);
++		if (ret)
++			dev_warn(dev, "failed to drop the handoff vote of %s: %d\n",
++				 clk_hw_get_name(&r->hw), ret);
++	}
++}
++
+ static struct platform_driver rpm_smd_clk_driver = {
+ 	.driver = {
+ 		.name = "qcom-clk-smd-rpm",
+ 		.of_match_table = rpm_smd_clk_match_table,
++		.sync_state = rpm_smd_clk_sync_state,
+ 	},
+ 	.probe = rpm_smd_clk_probe,
+ };

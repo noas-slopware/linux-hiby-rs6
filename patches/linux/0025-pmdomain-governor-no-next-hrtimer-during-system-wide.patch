@@ -1,0 +1,36 @@
+From 63ddfac2d4dcfe7de4a39a180582cea61de21cda Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 18:25:01 +0900
+Subject: [PATCH 25/94] pmdomain: governor: no next hrtimer during system-wide
+ suspend
+
+In s2idle the tick is frozen and timekeeping is suspended, so no hrtimer
+can wake the domain. Report KTIME_MAX in ->next_hrtimer instead of the
+value left from the last runtime idle period, which consumers such as
+the Qualcomm MPM would program as a wakeup.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ drivers/pmdomain/governor.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/pmdomain/governor.c b/drivers/pmdomain/governor.c
+index 96737abbb..b503ed4a0 100644
+--- a/drivers/pmdomain/governor.c
++++ b/drivers/pmdomain/governor.c
+@@ -436,6 +436,14 @@ static bool cpu_system_power_down_ok(struct dev_pm_domain *pd)
+ 		return true;
+ 	}
+ 
++	/*
++	 * No hrtimer can wake the domain during system-wide suspend: in
++	 * s2idle the tick is frozen and timekeeping is suspended. Do not leave
++	 * the value from the last runtime idle period for consumers of
++	 * ->next_hrtimer, which would program it as a wakeup.
++	 */
++	genpd->gd->next_hrtimer = KTIME_MAX;
++
+ 	/* Find the deepest state for the latency constraint. */
+ 	while (state_idx >= 0) {
+ 		s64 latency_ns = genpd->states[state_idx].power_off_latency_ns +

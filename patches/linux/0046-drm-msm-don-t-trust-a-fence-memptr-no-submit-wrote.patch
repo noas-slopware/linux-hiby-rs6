@@ -1,0 +1,171 @@
+From be47d844cfbca7ab80b39171e8ca8c313aaf6be8 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 12:19:43 +0900
+Subject: [PATCH 46/94] drm/msm: don't trust a fence memptr no submit wrote
+
+The fence memptr is GPU-written memory in a VM that, on targets without
+per-process pagetables (a5xx), every user cmdstream can write to, and a
+CP re-executing stale ring contents writes old seqnos into it. The GPU
+writes the fence of each submit in order and only after the CPU
+allocated it, so a memptr ahead of the last allocated fence was not
+written by our submits. msm_fence_completed() and msm_gpu_retire()
+trusted it anyway: every fence up to it signalled, and the BOs of
+submits that had not run were released and reused under the GPU.
+
+Answer from completed_fence alone while the memptr is ahead of
+last_fence, refuse such a value in msm_update_fence(), and log both
+cases, plus a memptr that went backwards behind completed_fence,
+ratelimited. The reads are ordered so that a legitimate concurrent
+update never looks like an anomaly. a5xx get_next_ring() applies the
+same rule: a memptr behind what already completed kept the CP on that
+ring forever.
+
+Assisted-by: Claude:claude-mythos-5-1
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ drivers/gpu/drm/msm/adreno/a5xx_preempt.c | 18 ++++++++--
+ drivers/gpu/drm/msm/msm_fence.c           | 34 ++++++++++++++++--
+ drivers/gpu/drm/msm/msm_gpu.c             | 44 +++++++++++++++++++++--
+ 3 files changed, 89 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a5xx_preempt.c b/drivers/gpu/drm/msm/adreno/a5xx_preempt.c
+index e4924b5e1..216fd3042 100644
+--- a/drivers/gpu/drm/msm/adreno/a5xx_preempt.c
++++ b/drivers/gpu/drm/msm/adreno/a5xx_preempt.c
+@@ -66,8 +66,22 @@ static struct msm_ringbuffer *get_next_ring(struct msm_gpu *gpu)
+ 
+ 		spin_lock_irqsave(&ring->preempt_lock, flags);
+ 		empty = (get_wptr(ring) == gpu->funcs->get_rptr(gpu, ring));
+-		if (!empty && ring == a5xx_gpu->cur_ring)
+-			empty = ring->memptrs->fence == a5xx_gpu->last_seqno[i];
++		if (!empty && ring == a5xx_gpu->cur_ring) {
++			uint32_t fence = ring->memptrs->fence;
++			uint32_t completed = READ_ONCE(ring->fctx->completed_fence);
++
++			/*
++			 * A memptr that went back behind what already
++			 * completed would keep the CP on this ring forever;
++			 * one ahead of the last fence completes nothing (see
++			 * msm_fence_completed()).
++			 */
++			if (fence_before(fence, completed) ||
++			    fence_after(fence, READ_ONCE(ring->fctx->last_fence)))
++				fence = completed;
++
++			empty = fence == a5xx_gpu->last_seqno[i];
++		}
+ 		spin_unlock_irqrestore(&ring->preempt_lock, flags);
+ 
+ 		if (!empty)
+diff --git a/drivers/gpu/drm/msm/msm_fence.c b/drivers/gpu/drm/msm/msm_fence.c
+index 3dca8e09c..8cd0558da 100644
+--- a/drivers/gpu/drm/msm/msm_fence.c
++++ b/drivers/gpu/drm/msm/msm_fence.c
+@@ -81,12 +81,35 @@ void msm_fence_context_free(struct msm_fence_context *fctx)
+ 
+ bool msm_fence_completed(struct msm_fence_context *fctx, uint32_t fence)
+ {
++	uint32_t memptr;
++
+ 	/*
+ 	 * Note: Check completed_fence first, as fenceptr is in a write-combine
+ 	 * mapping, so it will be more expensive to read.
+ 	 */
+-	return (int32_t)(fctx->completed_fence - fence) >= 0 ||
+-		(int32_t)(*fctx->fenceptr - fence) >= 0;
++	if ((int32_t)(fctx->completed_fence - fence) >= 0)
++		return true;
++
++	memptr = *fctx->fenceptr;
++
++	/*
++	 * The GPU writes a seqno only after it was allocated, so a fenceptr
++	 * ahead of the last allocated fence was not written by our submits
++	 * (a wild GPU write: on targets without per-process pagetables any
++	 * user cmdstream can reach the memptrs).  Trusting it would signal
++	 * fences of submits that have not run, and let their BOs be reused
++	 * under the GPU.  last_fence is bumped before the GPU can write the
++	 * new seqno, so read it after the fenceptr.
++	 */
++	smp_rmb();
++	if (fence_after(memptr, READ_ONCE(fctx->last_fence))) {
++		dev_err_ratelimited(fctx->dev->dev,
++				    "%s: fence memptr %u is ahead of the last fence %u, not trusting it\n",
++				    fctx->name, memptr, READ_ONCE(fctx->last_fence));
++		return false;
++	}
++
++	return (int32_t)(memptr - fence) >= 0;
+ }
+ 
+ /* called from irq handler and workqueue (in recover path) */
+@@ -95,7 +118,12 @@ void msm_update_fence(struct msm_fence_context *fctx, uint32_t fence)
+ 	unsigned long flags;
+ 
+ 	spin_lock_irqsave(&fctx->spinlock, flags);
+-	if (fence_after(fence, fctx->completed_fence))
++	/* Never complete past the last fence handed out, see above */
++	if (fence_after(fence, fctx->last_fence))
++		dev_err_ratelimited(fctx->dev->dev,
++				    "%s: completed fence %u is ahead of the last fence %u, ignoring it\n",
++				    fctx->name, fence, fctx->last_fence);
++	else if (fence_after(fence, fctx->completed_fence))
+ 		fctx->completed_fence = fence;
+ 	if (msm_fence_completed(fctx, fctx->next_deadline_fence))
+ 		hrtimer_cancel(&fctx->deadline_timer);
+diff --git a/drivers/gpu/drm/msm/msm_gpu.c b/drivers/gpu/drm/msm/msm_gpu.c
+index 18ed00e5f..dd5921f0a 100644
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -779,8 +779,48 @@ void msm_gpu_retire(struct msm_gpu *gpu)
+ {
+ 	int i;
+ 
+-	for (i = 0; i < gpu->nr_rings; i++)
+-		msm_update_fence(gpu->rb[i]->fctx, gpu->rb[i]->memptrs->fence);
++	for (i = 0; i < gpu->nr_rings; i++) {
++		struct msm_ringbuffer *ring = gpu->rb[i];
++		uint32_t completed, last, fence;
++
++		/*
++		 * The GPU writes the fence of each submit in order, after the
++		 * CPU allocated it, so a memptr ahead of the last allocated
++		 * fence or behind one it already wrote was not written by our
++		 * submits (a wild GPU write into the memptrs, which on targets
++		 * without per-process pagetables any user cmdstream can do, or
++		 * a CP re-executing stale ring contents).  Keep it out of
++		 * completed_fence, and say so: the hangcheck and recovery are
++		 * about to deal with that ring.  msm_fence_completed() applies
++		 * the same rule to the memptr it reads directly.
++		 *
++		 * Read completed_fence, then the memptr, then last_fence: each
++		 * is written before the next one can legitimately move past
++		 * it, so a concurrent, legitimate update never looks like
++		 * either anomaly.
++		 */
++		completed = READ_ONCE(ring->fctx->completed_fence);
++		/* pairs with the smp_wmb() in recover_worker() */
++		smp_rmb();
++		fence = ring->memptrs->fence;
++		/* last_fence is bumped before the GPU can write it */
++		smp_rmb();
++		last = READ_ONCE(ring->fctx->last_fence);
++
++		if (fence_after(fence, last)) {
++			dev_err_ratelimited(gpu->dev->dev,
++					    "%s: rb %d: fence memptr %u is ahead of the last submitted fence %u, ignoring it\n",
++					    gpu->name, ring->id, fence, last);
++			continue;
++		}
++
++		if (fence_before(fence, completed))
++			dev_err_ratelimited(gpu->dev->dev,
++					    "%s: rb %d: fence memptr %u went backwards, completed fence is %u\n",
++					    gpu->name, ring->id, fence, completed);
++
++		msm_update_fence(ring->fctx, fence);
++	}
+ 
+ 	kthread_queue_work(gpu->worker, &gpu->retire_work);
+ }

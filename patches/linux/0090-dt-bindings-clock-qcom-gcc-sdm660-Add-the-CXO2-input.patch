@@ -1,0 +1,67 @@
+From 8952a90e6997d09606dfad7326e1688046759cb5 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 17:48:36 +0900
+Subject: [PATCH 90/94] dt-bindings: clock: qcom,gcc-sdm660: Add the CXO2 input
+
+The CLKREF branches of the SDM630/SDM660 GCC (RX0/RX1 USB2, USB3, UFS)
+gate the reference clock that comes in on the CXO2 pad, which the PM660
+LN_BB_CLK1 buffer drives. Downstream describes it the same way: every
+PHY that uses a CLKREF clock (QUSB2, QMP USB3, UFS, DP PLL) also takes
+the RPM's ln_bb_clk1_ao as its "ref_clk_src".
+
+Add it as an optional third input, as on MSM8996, so the CLKREF clocks
+can vote for the buffer they need.
+
+Also fix the example to include the RPM SMD clock bindings it now uses
+instead of the RPMh ones.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ .../devicetree/bindings/clock/qcom,gcc-sdm660.yaml    | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/clock/qcom,gcc-sdm660.yaml b/Documentation/devicetree/bindings/clock/qcom,gcc-sdm660.yaml
+index 724ce0491..af4e8f091 100644
+--- a/Documentation/devicetree/bindings/clock/qcom,gcc-sdm660.yaml
++++ b/Documentation/devicetree/bindings/clock/qcom,gcc-sdm660.yaml
+@@ -26,14 +26,18 @@ properties:
+       - qcom,gcc-sdm660
+ 
+   clocks:
++    minItems: 2
+     items:
+       - description: XO source
+       - description: Sleep clock source
++      - description: Second XO source, on the CXO2 pad that feeds the CLKREF clocks
+ 
+   clock-names:
++    minItems: 2
+     items:
+       - const: xo
+       - const: sleep_clk
++      - const: cxo2
+ 
+   power-domains:
+     maxItems: 1
+@@ -47,7 +51,7 @@ unevaluatedProperties: false
+ examples:
+   # Example for GCC for SDM660:
+   - |
+-    #include <dt-bindings/clock/qcom,rpmh.h>
++    #include <dt-bindings/clock/qcom,rpmcc.h>
+     clock-controller@100000 {
+         compatible = "qcom,gcc-sdm660";
+         reg = <0x00100000 0x94000>;
+@@ -55,8 +59,9 @@ examples:
+         #reset-cells = <1>;
+         #power-domain-cells = <1>;
+ 
+-        clock-names = "xo", "sleep_clk";
++        clock-names = "xo", "sleep_clk", "cxo2";
+         clocks = <&xo_board>,
+-                 <&sleep_clk>;
++                 <&sleep_clk>,
++                 <&rpmcc RPM_SMD_LN_BB_A_CLK>;
+     };
+ ...

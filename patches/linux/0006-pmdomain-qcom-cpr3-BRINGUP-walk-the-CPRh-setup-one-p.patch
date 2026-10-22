@@ -1,0 +1,138 @@
+From 22d713369685e16704e46fa4bfe74e3909b82b1b Mon Sep 17 00:00:00 2001
+From: Giuseppe Maggio <jertlok@proton.me>
+Date: Sun, 9 Aug 2026 19:54:52 +0200
+Subject: [PATCH 06/94] pmdomain: qcom: cpr3: [BRINGUP] walk the CPRh setup one
+ phase at a time
+
+DO NOT MERGE.  Second half of the instrument, same rules as the cpufreq
+one: drop both once the hang is understood.
+
+Walking the OSM setup showed that MSM8998 dies in its very first step,
+before the OSM is touched at all, and that step covers a lot of ground:
+attaching the power domain, building the CPU operating point table,
+computing every corner from the fuses and then writing them.  Only the
+last part touches hardware, so the split has to be here rather than at
+the caller.
+
+cprh_init_stop stops qcom_cpr3_cprh_init() after phase N, selectable at
+boot as cpr3.cprh_init_stop=N since the driver is built in:
+
+  0  attach       power domain attached, nothing else.  No register of
+                  any kind is read or written by this driver
+  1  opp-table    + the attached CPU's operating point table
+  2  corner-calc  + every corner computed from the fuses, still without
+                  a single write
+  3  cpr-regs     + GCNT, ring oscillator mask and target quotients, and
+                  the OSM interface bit cleared
+  4  cpr-corners  + the corner table itself.  Full sequence
+
+A phase below 4 leaves the controller without a corner table, so the
+cpufreq driver finds no APM threshold and gives up cleanly, and
+qcom_cpr3_cprh_enable() refuses to arm a thread that was never set up.
+The default is zero, which touches no hardware at all.
+
+Assisted-by: LLM
+Signed-off-by: Giuseppe Maggio <jertlok@proton.me>
+---
+ drivers/pmdomain/qcom/cpr3.c | 53 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 53 insertions(+)
+
+diff --git a/drivers/pmdomain/qcom/cpr3.c b/drivers/pmdomain/qcom/cpr3.c
+index 7af986513..78d18456c 100644
+--- a/drivers/pmdomain/qcom/cpr3.c
++++ b/drivers/pmdomain/qcom/cpr3.c
+@@ -290,6 +290,35 @@ struct cpr_desc {
+ 	bool hw_closed_loop_en;
+ };
+ 
++/*
++ * Bring-up instrument, not a feature: programming the CPRh corner table kills
++ * MSM8998 with no console output, and the phases below separate the software
++ * half from the first register write so the last log line names the phase.
++ * Zero touches no hardware at all, which is the known-good control.
++ */
++static int cprh_init_stop;
++module_param(cprh_init_stop, int, 0444);
++MODULE_PARM_DESC(cprh_init_stop,
++		 "stop CPRh setup after phase N (0: no hardware access)");
++
++/**
++ * cprh_stop_after() - Report a finished CPRh setup phase
++ * @dev:   CPR device, for the log line
++ * @tid:   Thread number
++ * @phase: Number of the phase that has just completed
++ * @name:  Short name of that phase
++ *
++ * Returns: True when setup must not go any further.
++ */
++static bool cprh_stop_after(struct device *dev, int tid, int phase,
++			    const char *name)
++{
++	dev_info(dev, "cprh-init: thread %d phase %d ok (%s)\n",
++		 tid, phase, name);
++
++	return phase >= cprh_init_stop;
++}
++
+ struct cpr_drv;
+ struct cpr_thread {
+ 	int			num_corners;
+@@ -1642,6 +1671,9 @@ static int cpr3_corner_init(struct cpr_thread *thread)
+ 	/* Reassign extra_corners, as we have to exclude delta_quot for them */
+ 	extra_corners = drv->extra_corners;
+ 
++	if (cprh_stop_after(drv->dev, thread->id, 2, "corner-calc"))
++		return -ECANCELED;
++
+ 	/* Disable the interface between OSM and CPRh */
+ 	cpr_masked_write(thread, drv->reg_ctl,
+ 			 CPRH_CTL_OSM_ENABLED, 0);
+@@ -1675,6 +1707,9 @@ static int cpr3_corner_init(struct cpr_thread *thread)
+ 			 tgt_quot_val, tgt_quot_reg);
+ 	}
+ 
++	if (cprh_stop_after(drv->dev, thread->id, 3, "cpr-regs"))
++		return -ECANCELED;
++
+ 	for (i = 0; i < total_corners; i++) {
+ 		int volt_oloop_steps, volt_floor_steps, delta_quot_steps;
+ 		int ring_osc;
+@@ -1743,6 +1778,9 @@ static int cpr3_corner_init(struct cpr_thread *thread)
+ 			delta_quot_steps);
+ 	}
+ 
++	if (cprh_stop_after(drv->dev, thread->id, 4, "cpr-corners"))
++		return -ECANCELED;
++
+ 	/*
+ 	 * On CPR-Hardened the corner request comes from the OSM, so the loop
+ 	 * cannot be armed here: qcom_cpr3_cprh_enable() does it once the OSM
+@@ -2513,13 +2551,28 @@ int qcom_cpr3_cprh_init(struct device *virt_dev)
+ 		return 0;
+ 	}
+ 
++	if (cprh_stop_after(drv->dev, thread->id, 0, "attach")) {
++		ret = 0;
++		goto unlock;
++	}
++
+ 	ret = dev_pm_opp_of_add_table(thread->attached_cpu_dev);
+ 	if (ret && ret != -EEXIST) {
+ 		dev_err(drv->dev, "Cannot add table: %d\n", ret);
+ 		goto unlock;
+ 	}
+ 
++	if (cprh_stop_after(drv->dev, thread->id, 1, "opp-table")) {
++		ret = 0;
++		goto unlock;
++	}
++
+ 	ret = cpr3_corner_init(thread);
++	if (ret == -ECANCELED) {
++		/* Stopped on purpose partway: leave the table, arm nothing */
++		ret = 0;
++		goto unlock;
++	}
+ 	if (ret) {
+ 		/*
+ 		 * The table was installed but never set up and never will

@@ -1,0 +1,6 @@
+option('alsa_plugin_dir', type: 'string', value: '',
+  description: 'alsa-lib plugin directory (default: <alsa libdir>/alsa-lib)')
+option('alsa_conf', type: 'string', value: '',
+  description: 'system alsa.conf used by the plugin test (default: <alsa prefix>/share/alsa/alsa.conf)')
+option('etc_conf_link', type: 'boolean', value: true,
+  description: 'link the config into <sysconfdir>/alsa/conf.d')

@@ -1,0 +1,278 @@
+From b20509374c092526cbf035f459992bf2198813b2 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 13:01:18 +0900
+Subject: [PATCH 71/94] iio: common: qcom_smgr: one info line for a rate
+ fallback
+
+When SMGR refused a sampling rate, every refused ADD of the fallback
+logged a warning of its own, up to 35 of them, then one more warning
+said which rate runs instead. A fallback that finds a rate is what it
+is there for, not something to warn about.
+
+Log a refused ADD at debug level and keep what SMGR answered, so that
+the fallback ends in one line: at info level with the refused rate,
+SMGR's answer to it and the rate that runs, or as before at error
+level, now with that answer, when SMGR refused every rate. A refused
+sampling_frequency write gets one info line with SMGR's answer, the
+writer gets the error as before. A refused DELETE is still a warning.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ drivers/iio/common/qcom_smgr/qcom_smgr.c | 123 +++++++++++++++--------
+ 1 file changed, 79 insertions(+), 44 deletions(-)
+
+diff --git a/drivers/iio/common/qcom_smgr/qcom_smgr.c b/drivers/iio/common/qcom_smgr/qcom_smgr.c
+index b79394dd4..2bbfc61d9 100644
+--- a/drivers/iio/common/qcom_smgr/qcom_smgr.c
++++ b/drivers/iio/common/qcom_smgr/qcom_smgr.c
+@@ -287,6 +287,19 @@ static unsigned int qcom_smgr_samples_per_report(const struct qcom_smgr_sensor *
+ 	return max(n, 1U);
+ }
+ 
++/*
++ * What SMGR answered to a buffering request it did not accept. A refused
++ * ADD is part of the rate fallback (qcom_smgr_start_report()), which logs
++ * one line for the whole of it, so the answer is kept for that line.
++ */
++struct qcom_smgr_refusal {
++	/* SMGR answered, and said no; else the request got no answer */
++	bool rejected;
++	u8 ack_nak;
++	u8 reason;
++	u16 result;
++};
++
+ /*
+  * Turn the AckNak of a buffering response into an error code, as the stock
+  * HAL does (SMGRSensor::processBufferingResp): ACK_SUCCESS and ACK_MODIFIED
+@@ -295,13 +308,17 @@ static unsigned int qcom_smgr_samples_per_report(const struct qcom_smgr_sensor *
+  * at debug level, so does this. NAK_REPORT_ID ("no such report") is never
+  * an error to stock, whatever the result, for an ADD as for a DELETE; for a
+  * DELETE it means the report is gone, which is what the DELETE wanted.
++ * A refusal fills @refusal; one of an ADD is logged at debug level here,
++ * and once by the caller.
+  */
+ static int qcom_smgr_check_buffering_resp(struct qcom_smgr *smgr,
+ 					  struct qcom_smgr_sensor *sensor,
+ 					  bool enable, u16 sample_rate,
+-					  const struct sns_smgr_buffering_resp *resp)
++					  const struct sns_smgr_buffering_resp *resp,
++					  struct qcom_smgr_refusal *refusal)
+ {
+ 	u8 reason = resp->reasons_len ? resp->reasons[0].reason : 0;
++	int ret;
+ 
+ 	switch (resp->ack_nak) {
+ 	case SNS_SMGR_RESPONSE_ACK_SUCCESS:
+@@ -321,44 +338,52 @@ static int qcom_smgr_check_buffering_resp(struct qcom_smgr *smgr,
+ 				sensor->id);
+ 		return 0;
+ 	default:
+-		if (enable)
+-			dev_warn(smgr->dev,
+-				 "0x%02x: SMGR refused a %u Hz report: ack_nak %u, reason %u, result 0x%x\n",
+-				 sensor->id, sample_rate, resp->ack_nak, reason,
+-				 resp->result);
+-		else
+-			dev_warn(smgr->dev,
+-				 "0x%02x: SMGR refused to delete the report: ack_nak %u, reason %u, result 0x%x\n",
+-				 sensor->id, resp->ack_nak, reason, resp->result);
+-
+ 		switch (resp->ack_nak) {
+ 		case SNS_SMGR_RESPONSE_NAK_RESOURCES:
+-			return -EBUSY;
++			ret = -EBUSY;
++			break;
+ 		case SNS_SMGR_RESPONSE_NAK_NO_ITEMS:
+-			return -EINVAL;
++			ret = -EINVAL;
++			break;
+ 		default:
+-			return -EREMOTEIO;
++			ret = -EREMOTEIO;
++			break;
+ 		}
++		goto refused;
+ 	}
+ 
+-	if (resp->result) {
+-		dev_warn(smgr->dev, "0x%02x: buffering request failed: 0x%x\n",
+-			 sensor->id, resp->result);
+-		return -EREMOTEIO;
+-	}
++	if (!resp->result)
++		return 0;
++	ret = -EREMOTEIO;
+ 
+-	return 0;
++refused:
++	refusal->rejected = true;
++	refusal->ack_nak = resp->ack_nak;
++	refusal->reason = reason;
++	refusal->result = resp->result;
++
++	if (enable)
++		dev_dbg(smgr->dev,
++			"0x%02x: SMGR refused a %u Hz report: ack_nak %u, reason %u, result 0x%x\n",
++			sensor->id, sample_rate, resp->ack_nak, reason,
++			resp->result);
++	else
++		dev_warn(smgr->dev,
++			 "0x%02x: SMGR refused to delete the report: ack_nak %u, reason %u, result 0x%x\n",
++			 sensor->id, resp->ack_nak, reason, resp->result);
++
++	return ret;
+ }
+ 
+ /*
+  * Send one buffering ADD (at @sample_rate) or DELETE. Returns 0 if SMGR
+- * accepted it. @rejected tells an answer from SMGR saying no apart from a
+- * request that never got one.
++ * accepted it. @refusal tells an answer from SMGR saying no (rejected, and
++ * what it said) apart from a request that never got one.
+  */
+ static int qcom_smgr_send_buffering(struct qcom_smgr *smgr,
+ 				    struct qcom_smgr_sensor *sensor,
+ 				    bool enable, u16 sample_rate,
+-				    bool *rejected)
++				    struct qcom_smgr_refusal *refusal)
+ {
+ 	struct sns_smgr_buffering_req req = {
+ 		/*
+@@ -373,7 +398,7 @@ static int qcom_smgr_send_buffering(struct qcom_smgr *smgr,
+ 
+ 	lockdep_assert_held(&smgr->lock);
+ 
+-	*rejected = false;
++	*refusal = (struct qcom_smgr_refusal){ };
+ 
+ 	if (enable) {
+ 		req.action = SNS_SMGR_BUFFERING_ACTION_ADD;
+@@ -447,50 +472,51 @@ static int qcom_smgr_send_buffering(struct qcom_smgr *smgr,
+ 		return ret;
+ 	}
+ 
+-	ret = qcom_smgr_check_buffering_resp(smgr, sensor, enable, sample_rate,
+-					     &resp);
+-	*rejected = ret != 0;
+-
+-	return ret;
++	return qcom_smgr_check_buffering_resp(smgr, sensor, enable, sample_rate,
++					      &resp, refusal);
+ }
+ 
+ /* Remove the report of @sensor. A DELETE keeps cur_sample_rate for the next ADD. */
+ static int qcom_smgr_stop_report(struct qcom_smgr *smgr,
+ 				 struct qcom_smgr_sensor *sensor)
+ {
+-	bool rejected;
++	struct qcom_smgr_refusal refusal;
+ 
+-	return qcom_smgr_send_buffering(smgr, sensor, false, 0, &rejected);
++	return qcom_smgr_send_buffering(smgr, sensor, false, 0, &refusal);
+ }
+ 
+ /*
+  * Add the report of @sensor at its cur_sample_rate. If SMGR refuses that
+  * rate, fall back to the default rate, then to each native rate, then to the
+  * maximum, so a rate SMGR does not take never leaves the sensor without
+- * reports. cur_sample_rate is the rate that runs afterwards.
++ * reports. cur_sample_rate is the rate that runs afterwards. A fallback that
++ * finds a rate is not an error: one line at info level says what SMGR
++ * refused and what runs instead.
+  */
+ static int qcom_smgr_start_report(struct qcom_smgr *smgr,
+ 				  struct qcom_smgr_sensor *sensor)
+ {
+ 	struct qcom_smgr_data_type_item *dt = &sensor->data_types[0];
+ 	u16 tried[SNS_SMGR_NATIVE_SAMPLE_RATES_MAX_LEN + 3];
++	struct qcom_smgr_refusal refusal, first_refusal;
+ 	unsigned int n = 0, i, k;
+ 	u16 first, rate;
+-	bool rejected;
+ 	int ret;
+ 
+ 	first = dt->cur_sample_rate;
+ 	if (first == 0)
+ 		first = qcom_smgr_default_sample_rate(dt);
+ 
+-	ret = qcom_smgr_send_buffering(smgr, sensor, true, first, &rejected);
++	ret = qcom_smgr_send_buffering(smgr, sensor, true, first, &refusal);
+ 	if (!ret) {
+ 		dt->cur_sample_rate = first;
+ 		return 0;
+ 	}
+-	if (!rejected)
++	if (!refusal.rejected)
+ 		return ret;
+ 
++	first_refusal = refusal;
++
+ 	tried[n++] = first;
+ 
+ 	/* i == 0: the default rate, 1..count: the native rates, last: max */
+@@ -511,19 +537,23 @@ static int qcom_smgr_start_report(struct qcom_smgr *smgr,
+ 		tried[n++] = rate;
+ 
+ 		ret = qcom_smgr_send_buffering(smgr, sensor, true, rate,
+-					       &rejected);
++					       &refusal);
+ 		if (!ret) {
+-			dev_warn(smgr->dev, "0x%02x: streaming at %u Hz instead of %u Hz\n",
+-				 sensor->id, rate, first);
++			dev_info(smgr->dev,
++				 "0x%02x: SMGR refused %u Hz (ack_nak %u, reason %u, result 0x%x), streaming at %u Hz\n",
++				 sensor->id, first, first_refusal.ack_nak,
++				 first_refusal.reason, first_refusal.result, rate);
+ 			dt->cur_sample_rate = rate;
+ 			return 0;
+ 		}
+-		if (!rejected)
++		if (!refusal.rejected)
+ 			return ret;
+ 	}
+ 
+-	dev_err(smgr->dev, "0x%02x: SMGR refused every sampling rate\n",
+-		sensor->id);
++	dev_err(smgr->dev,
++		"0x%02x: SMGR refused every sampling rate, %u Hz with ack_nak %u, reason %u, result 0x%x\n",
++		sensor->id, first, first_refusal.ack_nak, first_refusal.reason,
++		first_refusal.result);
+ 
+ 	return ret;
+ }
+@@ -703,7 +733,7 @@ static int qcom_smgr_iio_write_raw(struct iio_dev *iio_dev,
+ 	struct qcom_smgr_iio_priv *priv = iio_priv(iio_dev);
+ 	struct qcom_smgr_sensor *sensor = priv->sensor;
+ 	struct qcom_smgr_data_type_item *dt;
+-	bool rejected;
++	struct qcom_smgr_refusal refusal;
+ 	u16 old;
+ 	int ret;
+ 
+@@ -727,9 +757,14 @@ static int qcom_smgr_iio_write_raw(struct iio_dev *iio_dev,
+ 			return 0;
+ 
+ 		ret = qcom_smgr_send_buffering(smgr, sensor, true, val,
+-					       &rejected);
++					       &refusal);
+ 		if (!ret)
+ 			return 0;
++		if (refusal.rejected)
++			dev_info(smgr->dev,
++				 "0x%02x: SMGR refused %u Hz (ack_nak %u, reason %u, result 0x%x)\n",
++				 sensor->id, val, refusal.ack_nak, refusal.reason,
++				 refusal.result);
+ 
+ 		/*
+ 		 * The old rate stays. A refused ADD may have dropped the
+@@ -737,7 +772,7 @@ static int qcom_smgr_iio_write_raw(struct iio_dev *iio_dev,
+ 		 * SMGR refuses the old rate now as well.
+ 		 */
+ 		dt->cur_sample_rate = old;
+-		if (rejected && qcom_smgr_start_report(smgr, sensor))
++		if (refusal.rejected && qcom_smgr_start_report(smgr, sensor))
+ 			dev_err(smgr->dev, "0x%02x: no reports after a refused rate\n",
+ 				sensor->id);
+ 

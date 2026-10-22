@@ -1,0 +1,91 @@
+From 54d138552c3b3c20b06c222c8563962c2699ed77 Mon Sep 17 00:00:00 2001
+From: Fabricio Akio <fabricioakio@gmail.com>
+Date: Tue, 20 Oct 2026 00:02:53 -0300
+Subject: [PATCH 1/4] freedreno/a5xx: Use the blob's RB_CCU_CNTL values on A508
+
+The A5xx code writes the A530's RB_CCU_CNTL values on every A5xx:
+0x10000000 when rendering direct to memory and 0x7c13c080 in GMEM
+mode. On A508, a 128x64 render direct to memory with 0x10000000 leaves
+5888 of its 8192 pixels unwritten, without a fault. GMEM rendering
+loses no pixels.
+
+Use the values Qualcomm's driver writes on A508 in both modes,
+0x04000000 when rendering direct to memory and 0x10107880 in GMEM
+mode. With them no pixel is lost.
+
+Fixes: 07e1233c615 ("freedreno: Enable Adreno 508, 509 and 512")
+Assisted-by: LLM
+Signed-off-by: Fabricio Akio <fabricioakio@gmail.com>
+---
+ src/gallium/drivers/freedreno/a5xx/fd5_draw.c |  2 +-
+ src/gallium/drivers/freedreno/a5xx/fd5_emit.h | 12 ++++++++++++
+ src/gallium/drivers/freedreno/a5xx/fd5_gmem.c |  6 ++----
+ 3 files changed, 15 insertions(+), 5 deletions(-)
+
+diff --git a/src/gallium/drivers/freedreno/a5xx/fd5_draw.c b/src/gallium/drivers/freedreno/a5xx/fd5_draw.c
+index f0dff4e..4f0f47f 100644
+--- a/src/gallium/drivers/freedreno/a5xx/fd5_draw.c
++++ b/src/gallium/drivers/freedreno/a5xx/fd5_draw.c
+@@ -158,7 +158,7 @@ fd5_clear_lrz(struct fd_batch *batch, struct fd_resource *zsbuf, double depth)
+    OUT_WFI5(ring);
+ 
+    OUT_PKT4(ring, REG_A5XX_RB_CCU_CNTL, 1);
+-   OUT_RING(ring, 0x10000000);
++   OUT_RING(ring, fd5_ccu_cntl_bypass(batch->ctx->screen));
+ 
+    OUT_PKT4(ring, REG_A5XX_HLSQ_UPDATE_CNTL, 1);
+    OUT_RING(ring, 0x20fffff);
+diff --git a/src/gallium/drivers/freedreno/a5xx/fd5_emit.h b/src/gallium/drivers/freedreno/a5xx/fd5_emit.h
+index 7add21a..5dbc1e6 100644
+--- a/src/gallium/drivers/freedreno/a5xx/fd5_emit.h
++++ b/src/gallium/drivers/freedreno/a5xx/fd5_emit.h
+@@ -51,6 +51,18 @@ struct fd5_emit {
+    unsigned streamout_mask;
+ };
+ 
++static inline uint32_t
++fd5_ccu_cntl_bypass(const struct fd_screen *screen)
++{
++   return screen->gpu_id == 508 ? 0x04000000 : 0x10000000;
++}
++
++static inline uint32_t
++fd5_ccu_cntl_gmem(const struct fd_screen *screen)
++{
++   return screen->gpu_id == 508 ? 0x10107880 : 0x7c13c080;
++}
++
+ static inline enum a5xx_color_fmt
+ fd5_emit_format(struct pipe_surface *surf)
+ {
+diff --git a/src/gallium/drivers/freedreno/a5xx/fd5_gmem.c b/src/gallium/drivers/freedreno/a5xx/fd5_gmem.c
+index cdece22..d7a4895 100644
+--- a/src/gallium/drivers/freedreno/a5xx/fd5_gmem.c
++++ b/src/gallium/drivers/freedreno/a5xx/fd5_gmem.c
+@@ -399,10 +399,9 @@ fd5_emit_tile_init(struct fd_batch *batch) assert_dt
+    OUT_PKT4(ring, REG_A5XX_VFD_POWER_CNTL, 1);
+    OUT_RING(ring, ctx->screen->info->num_sp_cores - 1); /* VFD_POWER_CNTL */
+ 
+-   /* 0x10000000 for BYPASS.. 0x7c13c080 for GMEM: */
+    fd_wfi(batch, ring);
+    OUT_PKT4(ring, REG_A5XX_RB_CCU_CNTL, 1);
+-   OUT_RING(ring, 0x7c13c080); /* RB_CCU_CNTL */
++   OUT_RING(ring, fd5_ccu_cntl_gmem(batch->ctx->screen)); /* RB_CCU_CNTL */
+ 
+    emit_zs(ring, &pfb->zsbuf, batch->gmem_state);
+    emit_mrt(ring, pfb->nr_cbufs, pfb->cbufs, batch->gmem_state);
+@@ -721,10 +720,9 @@ fd5_emit_sysmem_prep(struct fd_batch *batch) assert_dt
+    OUT_PKT4(ring, REG_A5XX_VFD_POWER_CNTL, 1);
+    OUT_RING(ring, ctx->screen->info->num_sp_cores - 1); /* VFD_POWER_CNTL */
+ 
+-   /* 0x10000000 for BYPASS.. 0x7c13c080 for GMEM: */
+    fd_wfi(batch, ring);
+    OUT_PKT4(ring, REG_A5XX_RB_CCU_CNTL, 1);
+-   OUT_RING(ring, 0x10000000); /* RB_CCU_CNTL */
++   OUT_RING(ring, fd5_ccu_cntl_bypass(batch->ctx->screen)); /* RB_CCU_CNTL */
+ 
+    OUT_PKT4(ring, REG_A5XX_RB_CNTL, 1);
+    OUT_RING(ring, A5XX_RB_CNTL_WIDTH(0) | A5XX_RB_CNTL_HEIGHT(0) |
+-- 
+2.56.0
+

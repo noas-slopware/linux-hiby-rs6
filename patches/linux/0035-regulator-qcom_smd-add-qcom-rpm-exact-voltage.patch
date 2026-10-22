@@ -1,0 +1,60 @@
+From 9156d67a90ebd1524274e006c3ddb2f55f32837a Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 18:25:02 +0900
+Subject: [PATCH 35/94] regulator: qcom_smd: add qcom,rpm-exact-voltage
+
+The RPM takes any microvolt value and rounds it itself. With the
+property the regulator has no voltage table, so the core doesn't snap
+the constraints to it and the vote is exactly regulator-min-microvolt
+(e.g. a stock 925 mV vote between 920 and 928 mV on an 8 mV table).
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ .../bindings/regulator/qcom,smd-rpm-regulator.yaml |  7 +++++++
+ drivers/regulator/qcom_smd-regulator.c             | 14 ++++++++++++++
+ 2 files changed, 21 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/regulator/qcom,smd-rpm-regulator.yaml b/Documentation/devicetree/bindings/regulator/qcom,smd-rpm-regulator.yaml
+index 0d8bc9bf9..266c2e07a 100644
+--- a/Documentation/devicetree/bindings/regulator/qcom,smd-rpm-regulator.yaml
++++ b/Documentation/devicetree/bindings/regulator/qcom,smd-rpm-regulator.yaml
+@@ -123,6 +123,13 @@ patternProperties:
+     description: List of regulators and its properties
+     $ref: regulator.yaml#
+     unevaluatedProperties: false
++    properties:
++      qcom,rpm-exact-voltage:
++        type: boolean
++        description:
++          Send regulator-min-microvolt to the RPM as is instead of snapping
++          the constraints to the regulator's voltage table first (the RPM
++          rounds the value itself).
+ 
+ additionalProperties: false
+ 
+diff --git a/drivers/regulator/qcom_smd-regulator.c b/drivers/regulator/qcom_smd-regulator.c
+index 23ed594b5..673bffbb6 100644
+--- a/drivers/regulator/qcom_smd-regulator.c
++++ b/drivers/regulator/qcom_smd-regulator.c
+@@ -1473,6 +1473,20 @@ static int rpm_regulator_init_vreg(struct qcom_rpm_reg *vreg, struct device *dev
+ 	vreg->desc.type = REGULATOR_VOLTAGE;
+ 	vreg->desc.of_match = rpm_data->name;
+ 
++	/*
++	 * The RPM takes any microvolt value and rounds it itself. Without the
++	 * voltage table the core doesn't snap the constraints to it, so the
++	 * vote is exactly regulator-min-microvolt (e.g. a stock 925 mV vote
++	 * between 920 and 928 on an 8 mV table).
++	 */
++	if (of_property_read_bool(node, "qcom,rpm-exact-voltage") &&
++	    vreg->desc.ops == &rpm_smps_ldo_ops) {
++		vreg->desc.ops = &rpm_smps_ldo_ops_fixed;
++		vreg->desc.n_voltages = 0;
++		vreg->desc.linear_ranges = NULL;
++		vreg->desc.n_linear_ranges = 0;
++	}
++
+ 	config.dev		= dev;
+ 	config.of_node		= node;
+ 	config.driver_data	= vreg;

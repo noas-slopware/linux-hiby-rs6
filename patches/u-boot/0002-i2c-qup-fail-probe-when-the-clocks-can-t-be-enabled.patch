@@ -1,0 +1,30 @@
+From 28a1088b37c4e2fc3a760ae43579062d37f7d2ad Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 17:43:22 +0900
+Subject: [PATCH 2/6] i2c: qup: fail probe when the clocks can't be enabled
+
+qup_i2c_probe() ignored the return value of qup_i2c_enable_clocks() and
+went on to reset the QUP even when its clocks were not enabled. Return
+the error instead.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ drivers/i2c/qup_i2c.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/i2c/qup_i2c.c b/drivers/i2c/qup_i2c.c
+index 26707d63..b022d2f9 100644
+--- a/drivers/i2c/qup_i2c.c
++++ b/drivers/i2c/qup_i2c.c
+@@ -466,7 +466,9 @@ static int qup_i2c_probe(struct udevice *dev)
+ 		pr_err("clk_get_by_name(iface) failed: %d\n", ret);
+ 		return ret;
+ 	}
+-	qup_i2c_enable_clocks(dev, qup);
++	ret = qup_i2c_enable_clocks(dev, qup);
++	if (ret)
++		return ret;
+ 
+ 	writel(1, qup->base + QUP_SW_RESET);
+ 	ret = qup_i2c_poll_state_valid(qup);

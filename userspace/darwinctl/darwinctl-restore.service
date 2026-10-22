@@ -1,0 +1,11 @@
+[Unit]
+Description=Load the saved Darwin filter into the RS6 DAC
+# alsa-restore puts "Digital Filter" back first; if that is "custom", this loads its taps
+After=alsa-restore.service sound.target systemd-tmpfiles-setup.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/darwinctl restore
+
+[Install]
+WantedBy=sound.target

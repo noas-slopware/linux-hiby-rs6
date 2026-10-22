@@ -1,0 +1,207 @@
+From 0fe990ab3b7dd54e1b2100770172bfee6cf43862 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 18:25:01 +0900
+Subject: [PATCH 32/94] ASoC: qcom: q6asm-dai: fixed-rate streams and S32 as
+ 16-bit pairs
+
+Two optional properties for codecs that clock their own I2S:
+- qcom,fixed-rate: the stream is declared to the DSP at the fixed port
+  rate whatever the front-end rate, so it never resamples, and the
+  front end offers 352.8k-768k.
+- qcom,s32-as-s16-pairs: S32 samples go out as two 16-bit I2S words,
+  high word first (the stream stays S16 to the DSP; ack swaps the
+  halves in place).
+Both are used by the HiBy RS6, whose FPGA DAC runs the I2S at the track
+rate while the ASM/ADM/AFE path stays at 384 kHz, as in the stock HAL.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ .../bindings/sound/qcom,q6asm-dais.yaml       | 13 ++++
+ sound/soc/qcom/qdsp6/q6asm-dai.c              | 59 +++++++++++++++++--
+ 2 files changed, 66 insertions(+), 6 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/sound/qcom,q6asm-dais.yaml b/Documentation/devicetree/bindings/sound/qcom,q6asm-dais.yaml
+index 47a105a97..88e757763 100644
+--- a/Documentation/devicetree/bindings/sound/qcom,q6asm-dais.yaml
++++ b/Documentation/devicetree/bindings/sound/qcom,q6asm-dais.yaml
+@@ -55,6 +55,19 @@ patternProperties:
+         description:
+           Compress offload dai.
+ 
++      qcom,fixed-rate:
++        $ref: /schemas/types.yaml#/definitions/uint32
++        description:
++          Sample rate in Hz at which the stream is always declared to the DSP,
++          whatever rate the frontend runs at, so that the DSP never resamples.
++          Enables the rates up to 768000 Hz on the frontend.
++
++      qcom,s32-as-s16-pairs:
++        type: boolean
++        description:
++          Accept S32_LE playback and send each 32-bit sample as two 16-bit
++          words, high word first, while the stream to the DSP stays S16.
++
+     dependencies:
+       is-compress-dai: [ direction ]
+ 
+diff --git a/sound/soc/qcom/qdsp6/q6asm-dai.c b/sound/soc/qcom/qdsp6/q6asm-dai.c
+index 4f09fdd40..1cd23697c 100644
+--- a/sound/soc/qcom/qdsp6/q6asm-dai.c
++++ b/sound/soc/qcom/qdsp6/q6asm-dai.c
+@@ -3,6 +3,7 @@
+ // Copyright (c) 2018, Linaro Limited
+ 
+ #include <dt-bindings/sound/qcom,q6asm.h>
++#include <linux/bitops.h>
+ #include <linux/init.h>
+ #include <linux/err.h>
+ #include <linux/module.h>
+@@ -74,12 +75,15 @@ struct q6asm_dai_rtd {
+ 	uint32_t initial_samples_drop;
+ 	uint32_t trailing_samples_drop;
+ 	bool notify_on_drain;
++	bool split_s32;		/* S32 samples sent as hi/lo S16 word pairs */
+ };
+ 
+ struct q6asm_dai_data {
+ 	struct snd_soc_dai_driver *dais;
+ 	int num_dais;
+ 	long long int sid;
++	u32 fixed_rate[MAX_SESSIONS];
++	bool split_s32[MAX_SESSIONS];
+ };
+ 
+ static const struct snd_pcm_hardware q6asm_dai_hardware_capture = {
+@@ -114,9 +118,15 @@ static const struct snd_pcm_hardware q6asm_dai_hardware_playback = {
+ 				SNDRV_PCM_INFO_PAUSE | SNDRV_PCM_INFO_RESUME),
+ 	.formats =              (SNDRV_PCM_FMTBIT_S16_LE |
+ 				SNDRV_PCM_FMTBIT_S24_LE),
+-	.rates =                SNDRV_PCM_RATE_8000_192000,
++	/*
++	 * 352.8k-768k: with qcom,fixed-rate (HiBy RS6) the ASM/ADM/AFE path stays at 384000
++	 * and only the DAC runs at the track rate; 705.6k/768k are its HDR rates.
++	 */
++	.rates =                SNDRV_PCM_RATE_8000_192000 | SNDRV_PCM_RATE_352800 |
++				SNDRV_PCM_RATE_384000 | SNDRV_PCM_RATE_705600 |
++				SNDRV_PCM_RATE_768000,
+ 	.rate_min =             8000,
+-	.rate_max =             192000,
++	.rate_max =             768000,
+ 	.channels_min =         1,
+ 	.channels_max =         8,
+ 	.buffer_bytes_max =     (PLAYBACK_MAX_NUM_PERIODS *
+@@ -137,13 +147,18 @@ static const struct snd_pcm_hardware q6asm_dai_hardware_playback = {
+ 				  SNDRV_PCM_RATE_88200 |		\
+ 				  SNDRV_PCM_RATE_96000 |		\
+ 				  SNDRV_PCM_RATE_176400 |		\
+-				  SNDRV_PCM_RATE_192000),		\
++				  SNDRV_PCM_RATE_192000 |		\
++				  SNDRV_PCM_RATE_352800 |		\
++				  SNDRV_PCM_RATE_384000 |		\
++				  SNDRV_PCM_RATE_705600 |		\
++				  SNDRV_PCM_RATE_768000),		\
+ 			.formats = (SNDRV_PCM_FMTBIT_S16_LE |		\
+-					SNDRV_PCM_FMTBIT_S24_LE),	\
++					SNDRV_PCM_FMTBIT_S24_LE |	\
++					SNDRV_PCM_FMTBIT_S32_LE),	\
+ 			.channels_min = 1,				\
+ 			.channels_max = 8,				\
+ 			.rate_min =     8000,				\
+-			.rate_max =	192000,				\
++			.rate_max =	768000,				\
+ 		},							\
+ 		.capture = {						\
+ 			.stream_name = "MultiMedia"#num" Capture",	\
+@@ -222,6 +237,7 @@ static int q6asm_dai_prepare(struct snd_soc_component *component,
+ 	}
+ 
+ 	prtd->pcm_count = snd_pcm_lib_period_bytes(substream);
++	prtd->queue_ptr = 0;	/* appl_ptr restarts at 0 after prepare */
+ 	/* rate and channels are sent to audio driver */
+ 	if (prtd->state == Q6ASM_STREAM_RUNNING) {
+ 		/* clear the previous setup if any  */
+@@ -278,9 +294,15 @@ static int q6asm_dai_prepare(struct snd_soc_component *component,
+ 	}
+ 
+ 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
++		/*
++		 * qcom,fixed-rate: the stream is declared at the fixed port rate whatever the FE
++		 * rate, so the DSP never resamples (HiBy RS6: the DAC clocks the I2S at the
++		 * track rate, the ASM/ADM/AFE path stays at 384000).
++		 */
+ 		ret = q6asm_media_format_block_multi_ch_pcm(
+ 				prtd->audio_client, prtd->stream_id,
+-				runtime->rate, runtime->channels, NULL,
++				pdata->fixed_rate[soc_prtd->dai_link->id] ?: runtime->rate,
++				runtime->channels, NULL,
+ 				prtd->bits_per_sample);
+ 	} else if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
+ 		ret = q6asm_enc_cfg_blk_pcm_format_support(prtd->audio_client,
+@@ -318,6 +340,14 @@ static int q6asm_dai_ack(struct snd_soc_component *component, struct snd_pcm_sub
+ 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK && prtd->state == Q6ASM_STREAM_RUNNING) {
+ 		avail_periods = (runtime->control->appl_ptr - prtd->queue_ptr)/runtime->period_size;
+ 		for (i = 0; i < avail_periods; i++) {
++			if (prtd->split_s32) {
++				u32 *w = (u32 *)(runtime->dma_area +
++					frames_to_bytes(runtime, prtd->queue_ptr % runtime->buffer_size));
++				unsigned int n;
++
++				for (n = 0; n < prtd->pcm_count / 4; n++)
++					w[n] = ror32(w[n], 16);
++			}
+ 			ret = q6asm_write_async(prtd->audio_client, prtd->stream_id,
+ 					   prtd->pcm_count, 0, 0, 0);
+ 
+@@ -441,6 +471,9 @@ static int q6asm_dai_open(struct snd_soc_component *component,
+ 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+ 		snd_soc_set_runtime_hwparams(substream, &q6asm_dai_hardware_playback);
+ 		runtime->dma_bytes = q6asm_dai_hardware_playback.buffer_bytes_max;
++		/* S32 = samples (word pairs), S16 = raw pre-split words; never S24 to the DAC */
++		if (pdata->split_s32[stream_id])
++			runtime->hw.formats = SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S32_LE;
+ 	} else {
+ 		snd_soc_set_runtime_hwparams(substream, &q6asm_dai_hardware_capture);
+ 		runtime->dma_bytes = q6asm_dai_hardware_capture.buffer_bytes_max;
+@@ -501,6 +534,7 @@ static int q6asm_dai_hw_params(struct snd_soc_component *component,
+ 
+ 	prtd->pcm_size = params_buffer_bytes(params);
+ 	prtd->periods = params_periods(params);
++	prtd->split_s32 = false;
+ 
+ 	switch (params_format(params)) {
+ 	case SNDRV_PCM_FORMAT_S16_LE:
+@@ -509,6 +543,15 @@ static int q6asm_dai_hw_params(struct snd_soc_component *component,
+ 	case SNDRV_PCM_FORMAT_S24_LE:
+ 		prtd->bits_per_sample = 24;
+ 		break;
++	case SNDRV_PCM_FORMAT_S32_LE:
++		/*
++		 * qcom,s32-as-s16-pairs (HiBy RS6): the DAC takes each 32-bit sample as two
++		 * 16-bit I2S words, high word first, as the stock HAL output callback writes
++		 * them. The stream stays S16 to the DSP; ack swaps the halves in place.
++		 */
++		prtd->bits_per_sample = 16;
++		prtd->split_s32 = true;
++		break;
+ 	}
+ 
+ 	return 0;
+@@ -1280,6 +1323,9 @@ static int of_q6asm_parse_dai_data(struct device *dev,
+ 		dai_drv = &pdata->dais[idx++];
+ 		*dai_drv = q6asm_fe_dais_template[id];
+ 
++		of_property_read_u32(node, "qcom,fixed-rate", &pdata->fixed_rate[id]);
++		pdata->split_s32[id] = of_property_read_bool(node, "qcom,s32-as-s16-pairs");
++
+ 		ret = of_property_read_u32(node, "direction", &dir);
+ 		if (ret)
+ 			continue;
+@@ -1291,6 +1337,7 @@ static int of_q6asm_parse_dai_data(struct device *dev,
+ 
+ 		if (of_property_read_bool(node, "is-compress-dai"))
+ 			dai_drv->ops = &q6asm_dai_ops;
++
+ 	}
+ 
+ 	return 0;

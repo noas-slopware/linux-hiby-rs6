@@ -1,0 +1,168 @@
+From b95bcb880164decd2d3a89bfbfac46a55ac8e040 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 12:28:29 +0900
+Subject: [PATCH 66/94] ASoC: codecs: hiby-hm100: leave the target off after a
+ failed FPGA load
+
+hiby_target_poweron() marked the target on even when the FPGA load
+failed, as stock did, so every later hw_params tried the load again (up
+to three tries with 1 s power cycles) and logged again, and hw_params
+ignored the error.
+
+Stop at the failed load, before the amps, power down what came up and
+fail the stream. While a load has failed, further hw_params fail at
+once; the next stream open clears that and retries the load once.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ sound/soc/codecs/hiby-hm100.c | 63 +++++++++++++++++++++++++++++------
+ 1 file changed, 52 insertions(+), 11 deletions(-)
+
+diff --git a/sound/soc/codecs/hiby-hm100.c b/sound/soc/codecs/hiby-hm100.c
+index 761fe32c8..c7de1a050 100644
+--- a/sound/soc/codecs/hiby-hm100.c
++++ b/sound/soc/codecs/hiby-hm100.c
+@@ -127,6 +127,7 @@ struct hm100 {
+ 	u8 fir_custom[1024];		/* hm100_fir_coef_custom */
+ 	bool fir_custom_set;		/* seeded from the default set, or written by the user */
+ 	u32 usercode;
++	bool load_failed;		/* not stock: an FPGA load failed, no retry before the next open */
+ };
+ 
+ /* ---- bit-banged lines, back to back like stock gpiod_set_raw_value sequences ---- */
+@@ -674,6 +675,8 @@ static void hm100_disable(struct hm100 *h)
+ 	h->enabled = false;
+ }
+ 
++static void hiby_target_poweroff(struct hm100 *h, int t);
++
+ /* NJW volume at power-on: lrch_volume_imm_set(target, l, r, 1), then the input select */
+ static void njw_power_on(struct hm100 *h, u16 insel)
+ {
+@@ -685,6 +688,13 @@ static void njw_power_on(struct hm100 *h, u16 insel)
+ 	njw(h, w, 2);
+ }
+ 
++/* hiby_dac_power(1) and hm100_enable, as every analog target starts */
++static int hiby_dac_enable(struct hm100 *h)
++{
++	hiby_dac_power(h, 1);
++	return hm100_enable(h);
++}
++
+ /* hiby_target_poweron; always from T_NONE (hiby_target_poweroff of the old target) */
+ static int hiby_target_poweron(struct hm100 *h, int t)
+ {
+@@ -694,8 +704,9 @@ static int hiby_target_poweron(struct hm100 *h, int t)
+ 	case T_LO:
+ 		hiby_lo_mute(h, 1);
+ 		hiby_lpf_sel(h, 1);
+-		hiby_dac_power(h, 1);
+-		ret = hm100_enable(h);
++		ret = hiby_dac_enable(h);
++		if (ret)
++			break;
+ 		hiby_delay(10);
+ 		hiby_lpf_power(h, 1);
+ 		hiby_delay(10);
+@@ -707,8 +718,9 @@ static int hiby_target_poweron(struct hm100 *h, int t)
+ 	case T_PO:
+ 	case T_BAL:
+ 		hiby_po_mute(h, 1);
+-		hiby_dac_power(h, 1);
+-		ret = hm100_enable(h);
++		ret = hiby_dac_enable(h);
++		if (ret)
++			break;
+ 		hiby_delay(10);
+ 		hiby_lpf_power(h, 1);
+ 		hiby_delay(10);
+@@ -724,8 +736,9 @@ static int hiby_target_poweron(struct hm100 *h, int t)
+ 		break;
+ 	case T_BALLO:
+ 		hiby_bal_lo_mute(h, 1);
+-		hiby_dac_power(h, 1);
+-		ret = hm100_enable(h);
++		ret = hiby_dac_enable(h);
++		if (ret)
++			break;
+ 		hiby_delay(10);
+ 		hiby_lpf_power(h, 1);
+ 		hiby_delay(10);
+@@ -752,10 +765,22 @@ static int hiby_target_poweron(struct hm100 *h, int t)
+ 		return -EINVAL;
+ 	}
+ 	h->target = t;
++	if (ret) {
++		/*
++		 * Not stock (it marked the target on anyway, so every later hw_params loaded
++		 * again): stop at the failed load, before the amps, power the part that came up
++		 * back down and fail the stream. The next stream open retries, once.
++		 */
++		dev_err(h->dev, "target %d: FPGA load failed (%d), off until the next open\n",
++			t, ret);
++		hiby_target_poweroff(h, t);
++		h->load_failed = true;
++		return ret;
++	}
+ 	WRITE_ONCE(h->powered, true);
+ 	h->mute_pending = true;		/* sound_platform +0x134 */
+-	dev_info(h->dev, "target %d on (reg1 0x%03x)%s\n", t, h->gpo, ret ? ", FPGA load failed" : "");
+-	return ret;
++	dev_info(h->dev, "target %d on (reg1 0x%03x)\n", t, h->gpo);
++	return 0;
+ }
+ 
+ /* hiby_target_poweroff up to hm100_disable: mute, amps, NJW supply, LPF */
+@@ -1087,6 +1112,7 @@ static int hm100_startup(struct snd_pcm_substream *substream, struct snd_soc_dai
+ 		return 0;
+ 	mutex_lock(&h->lock);
+ 	h->spdif = hm100_resolved(h) == T_SPDIF;
++	h->load_failed = false;		/* a new open: a failed FPGA load gets one more try */
+ 	mutex_unlock(&h->lock);
+ 	return 0;
+ }
+@@ -1096,7 +1122,7 @@ static int hm100_hw_params(struct snd_pcm_substream *substream, struct snd_pcm_h
+ {
+ 	struct hm100 *h = snd_soc_component_get_drvdata(dai->component);
+ 	unsigned int rate = fe_rate(substream, params);
+-	int w = rate_word(rate), t;
++	int w = rate_word(rate), t, ret = 0;
+ 
+ 	if (substream->stream != SNDRV_PCM_STREAM_PLAYBACK)
+ 		return 0;
+@@ -1118,7 +1144,15 @@ static int hm100_hw_params(struct snd_pcm_substream *substream, struct snd_pcm_h
+ 	if (h->target != t) {
+ 		if (h->powered)
+ 			hiby_target_poweroff(h, h->target);
+-		hiby_target_poweron(h, t);
++		/* not stock: after a failed load, the next stream open tries again, not this one */
++		if (h->load_failed) {
++			dev_dbg(h->dev, "FPGA load failed, no retry before the next open\n");
++			ret = -EIO;
++		} else {
++			ret = hiby_target_poweron(h, t);
++		}
++		if (ret)
++			goto out;
+ 	}
+ 	h->want = t;
+ 	h->streaming = true;
+@@ -1141,8 +1175,15 @@ static int hm100_hw_params(struct snd_pcm_substream *substream, struct snd_pcm_h
+ 		set(h->run, 0);		/* hm100_set_samplerate: hm100_stop, reg0 */
+ 		reg_write(h, 0, stream_word(h));
+ 	}
++out:
++	if (ret) {		/* a failed load: the target is off, no hw_free follows */
++		h->streaming = false;
++		WRITE_ONCE(h->running, false);
++	}
+ 	mutex_unlock(&h->lock);
+-	return 0;
++	if (ret && h->idle_off)
++		mod_delayed_work(system_dfl_wq, &h->idle_work, secs_to_jiffies(h->idle_off));
++	return ret;
+ }
+ 
+ /* stock hiby_snd_trigger; runs atomic, the bus work happens in the works */

@@ -1,0 +1,49 @@
+From 57ea143e7de728706f6fb37f11056d8b1b32d564 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 17:55:05 +0900
+Subject: [PATCH 94/94] drm/msm/gpu: Remove the bus vote when the GPU is
+ suspended
+
+disable_clk() parks the core clock with dev_pm_opp_set_rate(27 MHz),
+which selects one of the lowest OPPs. When the OPP table carries
+bandwidth (opp-peak-kBps, as on SDM630/SDM660), that also votes the
+OPP's bandwidth on the GPU's memory path, and nothing removes it until
+the GPU resumes. On SDM660 the path is tagged RPM_ALWAYS_TAG, so a
+runtime-suspended GPU keeps asking the RPM for 1.2 GB/s of DDR
+bandwidth, in the sleep set too, which keeps the BIMC clocked and the
+SoC out of XO shutdown and VDD minimization.
+
+Remove the vote the way the GMU and GMU wrapper paths already do, with
+dev_pm_opp_set_opp(dev, NULL). That also drops the required-opps of the
+parked OPP. The next dev_pm_opp_set_rate() on resume finds the table
+disabled and programs bandwidth and required-opps again.
+
+Downstream does the same: KGSL's _slumber() goes through
+kgsl_pwrctrl_disable() and kgsl_pwrctrl_axi(OFF) to
+kgsl_pwrctrl_buslevel_update(false), which votes bus level 0 (0 KBps in
+the RS6's grp3d bus table) and 0 to the GPU bandwidth devfreq.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ drivers/gpu/drm/msm/msm_gpu.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/msm_gpu.c b/drivers/gpu/drm/msm/msm_gpu.c
+index ae6bf627c..c05537faf 100644
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -83,6 +83,13 @@ static int disable_clk(struct msm_gpu *gpu)
+ 	if (gpu->rbbmtimer_clk)
+ 		clk_set_rate(gpu->rbbmtimer_clk, 0);
+ 
++	/*
++	 * Remove the bus vote. Parking the clock leaves an OPP selected, and
++	 * with it that OPP's bandwidth on the GPU's memory path, which would
++	 * keep DDR up for as long as the GPU is off.
++	 */
++	dev_pm_opp_set_opp(&gpu->pdev->dev, NULL);
++
+ 	return 0;
+ }
+ 

@@ -1,0 +1,13 @@
+[Unit]
+Description=Raise CPU and GPU clock floors while the touchscreen is in use
+After=systemd-udev-settle.service systemd-udevd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/hiby-rs6/rs6-touchboost
+Restart=on-failure
+RestartSec=2
+Nice=-10
+
+[Install]
+WantedBy=multi-user.target

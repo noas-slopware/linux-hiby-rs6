@@ -1,0 +1,186 @@
+From c6d726664bdb8cb8d7b56fa45e7631be81e9d608 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 16:56:51 +0900
+Subject: [PATCH] Emit finished() of embedded cover responses on the pixmap
+ reader thread
+
+AsyncImageResponse was both the QQuickImageResponse and the QRunnable
+that decodes the cover, so it emitted finished() from a thread of the
+provider's pool. Qt Quick's pixmap reader receives finished() through a
+queued connection on its own thread, handles the result and deletes the
+response with deleteLater() right away. When the pool thread is
+preempted after posting that event, the reader deletes the response
+while the pool thread is still inside QMetaObject::activate() for
+finished(), which then reads the freed QObjectPrivate: a SIGSEGV in
+doActivate() (cleanOrphanedConnections() on a null connection list).
+Scrolling quickly through a long list starts and finishes a lot of
+responses, which is when it hits.
+
+Do what the QQuickAsyncImageProvider documentation example does: a
+separate runnable (owned and deleted by the pool) decodes the cover and
+hands the image to the response through a queued connection, and the
+response emits finished() from the reader thread it lives in. Receiving
+a queued signal is safe against the receiver being deleted on its own
+thread, emitting from a sender that is being deleted is not.
+
+cancel() now also marks the request, so a job that has not started yet
+when its delegate scrolled away skips extracting and decoding the cover.
+It still reports back, since a cancelled response must emit finished()
+for the reader to delete it.
+---
+ src/embeddedcoverageimageprovider.cpp | 90 ++++++++++++++++++++++-----
+ 1 file changed, 73 insertions(+), 17 deletions(-)
+
+diff --git a/src/embeddedcoverageimageprovider.cpp b/src/embeddedcoverageimageprovider.cpp
+index 6b9320e..ad59427 100644
+--- a/src/embeddedcoverageimageprovider.cpp
++++ b/src/embeddedcoverageimageprovider.cpp
+@@ -18,17 +18,28 @@
+ #include <QMimeDatabase>
+ #include <QThread>
+ 
++#include <atomic>
++#include <memory>
++
+ namespace
+ {
+-class AsyncImageResponse : public QQuickImageResponse, public QRunnable
++/**
++ * Decodes one embedded cover on a thread of the provider's pool and reports it
++ * with done(). Owned and deleted by the pool (autoDelete).
++ *
++ * It is deliberately not the QQuickImageResponse itself: the pixmap reader
++ * deletes a response as soon as it has handled finished(), on its own
++ * thread. A response that emits finished() from a pool thread is still
++ * inside QMetaObject::activate() when that happens.
++ */
++class EmbeddedCoverJob : public QObject, public QRunnable
+ {
+     Q_OBJECT
+ 
+ public:
+-    AsyncImageResponse(QString id, QSize requestedSize)
+-        : QQuickImageResponse(), mId(std::move(id)), mRequestedSize(requestedSize)
++    EmbeddedCoverJob(QString id, QSize requestedSize, std::shared_ptr<const std::atomic_bool> cancelled)
++        : mId(std::move(id)), mRequestedSize(requestedSize), mCancelled(std::move(cancelled))
+     {
+-        setAutoDelete(false);
+ 
+         if (!mRequestedSize.width()) {
+             mRequestedSize.setWidth(mRequestedSize.height());
+@@ -39,13 +50,14 @@ public:
+         }
+     }
+ 
+-    [[nodiscard]] QQuickTextureFactory *textureFactory() const override
+-    {
+-        return QQuickTextureFactory::textureFactoryForImage(mCoverImage);
+-    }
+-
+     void run() override
+     {
++        // the delegate that asked for it is gone already (fast scrolling)
++        if (mCancelled->load()) {
++          Q_EMIT done({}, QStringLiteral("Cancelled"));
++          return;
++        }
++
+         QMimeDatabase mimeDatabase;
+         const auto fileMimeType = mimeDatabase.mimeTypeForFile(mId).name();
+         KFileMetaData::ExtractorCollection ec;
+@@ -62,7 +74,7 @@ public:
+ 
+         if (imageData.isEmpty()) {
+           mErrorMessage = QString{QLatin1String{"Unable to load image data from "} + mId};
+-          Q_EMIT finished();
++          Q_EMIT done(mCoverImage, mErrorMessage);
+           return;
+         }
+ 
+@@ -105,7 +117,7 @@ public:
+ 
+         if (mCoverImage.isNull()) {
+           mErrorMessage = QString{QLatin1String{"Invalid embedded cover image in "} + mId};
+-          Q_EMIT finished();
++          Q_EMIT done(mCoverImage, mErrorMessage);
+           return;
+         }
+ 
+@@ -117,7 +129,40 @@ public:
+           }
+         }
+ 
+-        Q_EMIT finished();
++        Q_EMIT done(mCoverImage, mErrorMessage);
++    }
++
++Q_SIGNALS:
++    void done(const QImage &image, const QString &errorMessage);
++
++private:
++    QString mId;
++    QString mErrorMessage;
++    QSize mRequestedSize;
++    QImage mCoverImage;
++    std::shared_ptr<const std::atomic_bool> mCancelled;
++};
++
++/**
++ * Lives in the pixmap reader thread that called requestImageResponse() and
++ * emits finished() only from there, after the job's result arrived through
++ * a queued connection.
++ */
++class AsyncImageResponse : public QQuickImageResponse
++{
++    Q_OBJECT
++
++public:
++    AsyncImageResponse(QString id, QSize requestedSize, QThreadPool &pool)
++    {
++        auto job = new EmbeddedCoverJob(std::move(id), requestedSize, mCancelled);
++        connect(job, &EmbeddedCoverJob::done, this, &AsyncImageResponse::handleDone, Qt::QueuedConnection);
++        pool.start(job);
++    }
++
++    [[nodiscard]] QQuickTextureFactory *textureFactory() const override
++    {
++        return QQuickTextureFactory::textureFactoryForImage(mCoverImage);
+     }
+ 
+     QString errorString() const override
+@@ -125,9 +170,22 @@ public:
+       return mErrorMessage;
+     }
+ 
+-    QString mId;
++    void cancel() override
++    {
++        // the job still reports back, so finished() is emitted in any case
++        mCancelled->store(true);
++    }
++
++private:
++    void handleDone(const QImage &image, const QString &errorMessage)
++    {
++        mCoverImage = image;
++        mErrorMessage = errorMessage;
++        Q_EMIT finished();
++    }
++
++    std::shared_ptr<std::atomic_bool> mCancelled = std::make_shared<std::atomic_bool>(false);
+     QString mErrorMessage;
+-    QSize mRequestedSize;
+     QImage mCoverImage;
+ };
+ }
+@@ -144,9 +202,7 @@ EmbeddedCoverageImageProvider::EmbeddedCoverageImageProvider()
+ QQuickImageResponse *EmbeddedCoverageImageProvider::requestImageResponse(const QString &id, const QSize &requestedSize)
+ {
+     const QString decodedId = QUrl::fromPercentEncoding(id.toUtf8());
+-    auto response = std::make_unique<AsyncImageResponse>(decodedId, requestedSize);
+-    pool.start(response.get());
+-    return response.release();
++    return new AsyncImageResponse(decodedId, requestedSize, pool);
+ }
+ 
+ #include "embeddedcoverageimageprovider.moc"

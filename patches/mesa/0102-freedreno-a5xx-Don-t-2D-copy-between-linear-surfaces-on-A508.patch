@@ -1,0 +1,48 @@
+From 11d8b125da36440ad3acaceb18780b1206ecf128 Mon Sep 17 00:00:00 2001
+From: Fabricio Akio <fabricioakio@gmail.com>
+Date: Tue, 20 Oct 2026 00:02:53 -0300
+Subject: [PATCH 2/4] freedreno/a5xx: Don't 2D-copy between linear surfaces on
+ A508
+
+On A508 a 2D-engine copy, BLIT_OP_COPY, from one linear surface to
+another writes nothing, without a fault; copies with a tiled side are
+correct. So glCopyTexSubImage2D, glCopyBufferSubData and the
+base-level copy in glGenerateMipmap produce zeros when both surfaces
+are linear.
+
+Decline such copies on A508 and let the fallback paths handle them:
+textures by a 3D draw, as Qualcomm's driver copies linear textures,
+buffers by the CPU.
+
+Fixes: 07e1233c615 ("freedreno: Enable Adreno 508, 509 and 512")
+Assisted-by: LLM
+Signed-off-by: Fabricio Akio <fabricioakio@gmail.com>
+---
+ src/gallium/drivers/freedreno/a5xx/fd5_blitter.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/src/gallium/drivers/freedreno/a5xx/fd5_blitter.c b/src/gallium/drivers/freedreno/a5xx/fd5_blitter.c
+index 4539760..ce40f58 100644
+--- a/src/gallium/drivers/freedreno/a5xx/fd5_blitter.c
++++ b/src/gallium/drivers/freedreno/a5xx/fd5_blitter.c
+@@ -462,6 +462,17 @@ fd5_blitter_blit(struct fd_context *ctx,
+       return false;
+    }
+ 
++   /* A508's 2D engine writes nothing on a linear-to-linear copy. */
++   if (ctx->screen->gpu_id == 508) {
++      enum a5xx_tile_mode stile =
++         fd_resource_tile_mode(info->src.resource, info->src.level);
++      enum a5xx_tile_mode dtile =
++         fd_resource_tile_mode(info->dst.resource, info->dst.level);
++
++      if (stile == TILE5_LINEAR && dtile == TILE5_LINEAR)
++         return false;
++   }
++
+    struct fd_resource *src = fd_resource(info->src.resource);
+    struct fd_resource *dst = fd_resource(info->dst.resource);
+ 
+-- 
+2.56.0
+

@@ -1,0 +1,23 @@
+From dc508dcc08504c528a642e81c22d3bc1d860a2f8 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 18:25:02 +0900
+Subject: [PATCH 40/94] dt-bindings: watchdog: qcom-wdt: add SDM660 APSS
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ Documentation/devicetree/bindings/watchdog/qcom-wdt.yaml | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/watchdog/qcom-wdt.yaml b/Documentation/devicetree/bindings/watchdog/qcom-wdt.yaml
+index 74117f572..e0df13f6d 100644
+--- a/Documentation/devicetree/bindings/watchdog/qcom-wdt.yaml
++++ b/Documentation/devicetree/bindings/watchdog/qcom-wdt.yaml
+@@ -41,6 +41,7 @@ properties:
+               - qcom,apss-wdt-sc7280
+               - qcom,apss-wdt-sc8180x
+               - qcom,apss-wdt-sc8280xp
++              - qcom,apss-wdt-sdm660
+               - qcom,apss-wdt-sdm845
+               - qcom,apss-wdt-sdx55
+               - qcom,apss-wdt-sdx65

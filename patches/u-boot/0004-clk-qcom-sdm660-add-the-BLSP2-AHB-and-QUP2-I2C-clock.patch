@@ -1,0 +1,77 @@
+From 529ab2990dc515cb9529458598a402c9c9105cb2 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 17:43:22 +0900
+Subject: [PATCH 4/6] clk: qcom: sdm660: add the BLSP2 AHB and QUP2 I2C clocks
+
+Gate clocks for BLSP2 AHB (vote bit 15) and BLSP2 QUP2 I2C apps, the
+latter fed 19.2 MHz from XO, which is what Linux's frequency table and
+qup_i2c's DEFAULT_SRC_CLK assume.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ drivers/clk/qcom/clock-sdm660.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/drivers/clk/qcom/clock-sdm660.c b/drivers/clk/qcom/clock-sdm660.c
+index 20445a7d..c6acf400 100644
+--- a/drivers/clk/qcom/clock-sdm660.c
++++ b/drivers/clk/qcom/clock-sdm660.c
+@@ -32,6 +32,9 @@
+ #define GCC_BLSP1_AHB_CBCR			0x17004
+ #define GCC_BLSP1_UART2_APPS_CBCR		0x1c004
+ #define GCC_BLSP1_UART2_APPS_CLK_CMD_RCGR	0x1c00c
++#define GCC_BLSP2_AHB_CBCR			0x25004
++#define GCC_BLSP2_QUP2_I2C_APPS_CBCR		0x28008
++#define GCC_BLSP2_QUP2_I2C_APPS_CMD_RCGR	0x28020
+ #define GCC_USB3_PHY_AUX_CBCR			0x50000
+ #define GCC_USB3_PHY_PIPE_CBCR			0x50004
+ #define GCC_USB3_PHY_AUX_CMD_RCGR		0x5000c
+@@ -51,6 +54,7 @@
+ #define GCC_APCS_CLOCK_BRANCH_ENA_VOTE		0x52004
+ #define   BLSP1_AHB_CLK_ENA_BIT			BIT(17)
+ #define   BLSP1_SLEEP_CLK_ENA_BIT		BIT(16)
++#define   BLSP2_AHB_CLK_ENA_BIT			BIT(15)
+ 
+ /* GPLL mode regs - offset relative to GCC base */
+ #define GCC_GPLL0_MODE				0x0
+@@ -156,6 +160,8 @@ static const struct gate_clk sdm660_clks[] = {
+ 	GATE_CLK_POLLED(GCC_AGGRE2_USB3_AXI_CLK, GCC_AGGRE2_USB3_AXI_CBCR, BIT(0), GCC_AGGRE2_USB3_AXI_CBCR),
+ 	GATE_CLK_POLLED(GCC_BLSP1_AHB_CLK, GCC_APCS_CLOCK_BRANCH_ENA_VOTE, BLSP1_AHB_CLK_ENA_BIT, GCC_BLSP1_AHB_CBCR),
+ 	GATE_CLK_POLLED(GCC_BLSP1_UART2_APPS_CLK, GCC_BLSP1_UART2_APPS_CBCR, BIT(0), GCC_BLSP1_UART2_APPS_CBCR),
++	GATE_CLK_POLLED(GCC_BLSP2_AHB_CLK, GCC_APCS_CLOCK_BRANCH_ENA_VOTE, BLSP2_AHB_CLK_ENA_BIT, GCC_BLSP2_AHB_CBCR),
++	GATE_CLK_POLLED(GCC_BLSP2_QUP2_I2C_APPS_CLK, GCC_BLSP2_QUP2_I2C_APPS_CBCR, BIT(0), GCC_BLSP2_QUP2_I2C_APPS_CBCR),
+ 	GATE_CLK_POLLED(GCC_CFG_NOC_USB3_AXI_CLK, GCC_CFG_NOC_USB3_AXI_CBCR, BIT(0), GCC_CFG_NOC_USB3_AXI_CBCR),
+ 	GATE_CLK_POLLED(GCC_SDCC1_AHB_CLK, GCC_SDCC1_AHB_CBCR, BIT(0), GCC_SDCC1_AHB_CBCR),
+ 	GATE_CLK_POLLED(GCC_SDCC1_APPS_CLK, GCC_SDCC1_APPS_CBCR, BIT(0), GCC_SDCC1_APPS_CBCR),
+@@ -237,6 +243,14 @@ static int sdm660_gcc_enable(struct clk *clk)
+ 
+ 	debug("enable clk %s\n", sdm660_clks[clk->id].name);
+ 
++	switch (clk->id) {
++	case GCC_BLSP2_QUP2_I2C_APPS_CLK:
++		/* 19.2 MHz from XO, as Linux's ftbl and qup_i2c's DEFAULT_SRC_CLK assume */
++		clk_rcg_set_rate(priv->base, GCC_BLSP2_QUP2_I2C_APPS_CMD_RCGR, 1,
++				 CFG_CLK_SRC_CXO);
++		break;
++	}
++
+ 	return qcom_gate_clk_en(priv, clk->id);
+ }
+ 
+@@ -270,6 +284,7 @@ static const phys_addr_t sdm660_rcg_addrs[] = {
+ 	GCC_BASE + GCC_SDCC1_APPS_CLK_CMD_RCGR,
+ 	GCC_BASE + GCC_SDCC2_APPS_CLK_CMD_RCGR,
+ 	GCC_BASE + GCC_BLSP1_UART2_APPS_CLK_CMD_RCGR,
++	GCC_BASE + GCC_BLSP2_QUP2_I2C_APPS_CMD_RCGR,
+ };
+ 
+ static const char *const sdm660_rcg_names[] = {
+@@ -278,6 +293,7 @@ static const char *const sdm660_rcg_names[] = {
+ 	"GCC_SDCC1_APPS_CLK",
+ 	"GCC_SDCC2_APPS_CLK",
+ 	"GCC_BLSP1_UART2_APPS_CLK",
++	"GCC_BLSP2_QUP2_I2C_APPS_CLK",
+ };
+ 
+ static struct msm_clk_data sdm660_gcc_data = {

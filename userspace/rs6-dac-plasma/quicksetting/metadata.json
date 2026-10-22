@@ -1,0 +1,16 @@
+{
+    "KPackageStructure": "KPackage/GenericQML",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Email": "himesaka@noa.codes",
+                "Name": "Noa Himesaka"
+            }
+        ],
+        "Description": "Quick setting for the HiBy RS6 DAC: NOS on/off, current output and filter",
+        "Icon": "audio-card",
+        "Id": "codes.noa.quicksetting.rs6dac",
+        "License": "MIT",
+        "Name": "RS6 DAC"
+    }
+}

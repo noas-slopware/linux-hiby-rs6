@@ -1,0 +1,32 @@
+From d68f919e118df843350ac3a5a93c2cd511bb9b64 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 12:19:27 +0900
+Subject: [PATCH 45/94] drm/msm/a5xx: say why the GPMU registers are only
+ dumped on A530/A540
+
+Note in the comment what reading the GPMU aperture does on the other
+parts, which is why the ranges have their own list.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ drivers/gpu/drm/msm/adreno/a5xx_gpu.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a5xx_gpu.c b/drivers/gpu/drm/msm/adreno/a5xx_gpu.c
+index 7f677cbdc..b3688c55d 100644
+--- a/drivers/gpu/drm/msm/adreno/a5xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a5xx_gpu.c
+@@ -1335,7 +1335,11 @@ static const u32 a5xx_registers[] = {
+ 	0xEAA5, 0xEAC2, ~0,
+ };
+ 
+-/* GPMU registers, only valid on parts with a GPMU (a530/a540) */
++/*
++ * GPMU registers, only valid on the parts with a GPMU (A530, A540).  On the
++ * others reading this aperture resets the SoC: a crash dump on SDM660 (A512)
++ * rebooted the device instead of recovering the GPU.
++ */
+ static const u32 a5xx_gpmu_registers[] = {
+ 	0xA800, 0xA800, 0xA820, 0xA828, 0xA840, 0xA87D, 0xA880, 0xA88D,
+ 	0xA890, 0xA8A3, 0xA8D0, 0xA8D8, 0xA8E0, 0xA8F5, 0xAC60, 0xAC60,

@@ -1,0 +1,111 @@
+From 7cf984debf736ddb295d73e45a586dadc7902946 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 15:02:51 +0900
+Subject: [PATCH 85/94] arm64: dts: qcom: sdm630: Add the CPU BWMON
+
+Since the interconnect providers sync their state, the BIMC runs at
+what its consumers vote, down to the 19.2 MHz keep_alive floor. The
+CPUs vote nothing, so CPU-bound work gets whatever DDR rate the GPU,
+display and DMA masters happen to ask for. Downstream scales DDR for
+the CPU with the bandwidth monitor at the start of the BIMC block
+(qcom,bimc-bwmon4, port 0, SPI 183) driving the cpubw devfreq device,
+whose vote is active-only.
+
+Describe the same monitor for the mainline icc-bwmon driver. It votes
+on the APSS -> EBI path with RPM_ACTIVE_TAG, so the vote only lands in
+the RPM active set and drops out when the APSS power-collapses; it
+must not hold DDR in the sleep set.
+
+The OPP table is the downstream cpubw qcom,bw-tbl (MiB/s, SDM660),
+starting at the 762 MiB/s (200 MHz) min_freq the downstream init
+script (init.qcom.post_boot.sh, sdm660 branch) sets for cpubw;
+381 and 572 MiB/s are never voted there. Downstream devbw votes
+ib = MiB/s * 2^20 B/s, and both msm_bus and icc-rpm divide the peak
+by the 4-byte EBI width to get the BIMC rate, so each OPP is written
+as MiB/s * 1048576 / 1000 kB/s: the same RPM request downstream sends
+(762 -> ~200 MHz ... 6881 -> ~1804 MHz). The GPU OPPs in this file
+already vote 768/1017/1296/1353 MHz the same way (MHz * 4000 kB/s).
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ arch/arm64/boot/dts/qcom/sdm630.dtsi | 66 ++++++++++++++++++++++++++++
+ 1 file changed, 66 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sdm630.dtsi b/arch/arm64/boot/dts/qcom/sdm630.dtsi
+index 29913c23b..d4e9813cd 100644
+--- a/arch/arm64/boot/dts/qcom/sdm630.dtsi
++++ b/arch/arm64/boot/dts/qcom/sdm630.dtsi
+@@ -627,6 +627,72 @@ rng: rng@793000 {
+ 			clock-names = "core";
+ 		};
+ 
++		pmu@1008000 {
++			compatible = "qcom,sdm660-cpu-bwmon", "qcom,msm8998-bwmon";
++			reg = <0x01008000 0x300>, <0x01001000 0x200>;
++			reg-names = "monitor", "global";
++			interrupts = <GIC_SPI 183 IRQ_TYPE_LEVEL_HIGH>;
++
++			operating-points-v2 = <&cpu_bwmon_opp_table>;
++			interconnects = <&gnoc MASTER_APSS_PROC RPM_ACTIVE_TAG
++					 &bimc SLAVE_EBI RPM_ACTIVE_TAG>;
++
++			/*
++			 * Downstream cpubw bw-tbl in MiB/s, from the 762 MiB/s
++			 * (200 MHz) min_freq its init script sets for SDM660.
++			 * Downstream votes MiB/s * 2^20 B/s over the 4-byte EBI,
++			 * so the same peak in kB/s asks the RPM for the same
++			 * BIMC rate.
++			 */
++			cpu_bwmon_opp_table: opp-table {
++				compatible = "operating-points-v2";
++
++				opp-0 {
++					opp-peak-kBps = <(762 * 1048576 / 1000)>;
++				};
++
++				opp-1 {
++					opp-peak-kBps = <(1144 * 1048576 / 1000)>;
++				};
++
++				opp-2 {
++					opp-peak-kBps = <(1571 * 1048576 / 1000)>;
++				};
++
++				opp-3 {
++					opp-peak-kBps = <(2086 * 1048576 / 1000)>;
++				};
++
++				opp-4 {
++					opp-peak-kBps = <(2597 * 1048576 / 1000)>;
++				};
++
++				opp-5 {
++					opp-peak-kBps = <(2929 * 1048576 / 1000)>;
++				};
++
++				opp-6 {
++					opp-peak-kBps = <(3879 * 1048576 / 1000)>;
++				};
++
++				opp-7 {
++					opp-peak-kBps = <(4943 * 1048576 / 1000)>;
++				};
++
++				opp-8 {
++					opp-peak-kBps = <(5163 * 1048576 / 1000)>;
++				};
++
++				opp-9 {
++					opp-peak-kBps = <(5931 * 1048576 / 1000)>;
++				};
++
++				opp-10 {
++					opp-peak-kBps = <(6881 * 1048576 / 1000)>;
++				};
++			};
++		};
++
+ 		bimc: interconnect@1008300 {
+ 			compatible = "qcom,sdm660-bimc";
+ 			reg = <0x01008300 0x77d00>;

@@ -1,0 +1,46 @@
+From a6f1bacd06c5d6ae15325cfd6e8a897a8cf610ca Mon Sep 17 00:00:00 2001
+From: Giuseppe Maggio <jertlok@proton.me>
+Date: Wed, 19 Aug 2026 12:21:48 +0200
+Subject: [PATCH 12/94] cpufreq: qcom-hw: msm8998: do not enable the droop FSMs
+
+The downstream wahoo kernel gates every PDN_FSM_CTRL bit on a DT flag,
+and the wahoo DT only sets qcom,boost-fsm-en, qcom,safe-fsm-en and
+qcom,ps-fsm-en -- so the vendor runs msm8998 with PDN_FSM_CTRL = 0x7
+and never enables the WFx droop, PC/RET-exit droop or DCVS droop FSMs.
+
+We enable all six.  The droop FSMs stall the OSM's DCVS work until a
+release signal (WFx from the cores, power-collapse exit from the SPM)
+that this platform never delivers, which matches the live capture on a
+gated boot: PERF_STATE_DESIRED latched at the top corner, sequencer
+parked, APM still on MX, DEVIATION_STAT and MET_STAT both zero.
+
+Enable only the three boost FSMs, like the vendor does.
+
+Assisted-by: LLM
+Signed-off-by: Giuseppe Maggio <jertlok@proton.me>
+---
+ drivers/cpufreq/qcom-cpufreq-hw.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/cpufreq/qcom-cpufreq-hw.c b/drivers/cpufreq/qcom-cpufreq-hw.c
+index f05f8c62c..020e8e423 100644
+--- a/drivers/cpufreq/qcom-cpufreq-hw.c
++++ b/drivers/cpufreq/qcom-cpufreq-hw.c
+@@ -1604,10 +1604,15 @@ static int qcom_cpufreq_hw_osm_setup(struct device *cpu_dev,
+ 	if (qcom_cpufreq_osm_stop_after(cpu_dev, index, 6, "droop-timers"))
+ 		return -ECANCELED;
+ 
+-	/* Enable CC-Boost, DCVS-Boost, PS-Boost, WFx, PC/RET, DCVS FSM */
++	/*
++	 * Enable CC-Boost, DCVS-Boost and PS-Boost, matching the downstream
++	 * kernel: the wahoo DT sets only qcom,{boost,safe,ps}-fsm-en, so the
++	 * vendor never enables the WFx, PC/RET-exit and DCVS droop FSMs on
++	 * msm8998.  Those three gate DCVS work on stall/release signals this
++	 * platform does not deliver.
++	 */
+ 	val = readl(drv_data->base + setup_regs->reg_pdn_fsm_ctrl);
+ 	val |= CC_BOOST_EN | PS_BOOST_EN | DCVS_BOOST_EN;
+-	val |= WFX_DROOP_EN | PC_RET_EXIT_DROOP_EN | DCVS_DROOP_EN;
+ 	writel(val, drv_data->base + setup_regs->reg_pdn_fsm_ctrl);
+ 
+ 	/* Enable PLL Droop Override */

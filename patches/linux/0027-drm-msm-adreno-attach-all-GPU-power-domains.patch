@@ -1,0 +1,74 @@
+From 2337732ef5e895b7e9660ce7585909eca591a672 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 18:25:01 +0900
+Subject: [PATCH 27/94] drm/msm/adreno: attach all GPU power domains
+
+On SDM630/660 GX is fed from CX through the GFX LDO, so the GPU OPPs
+carry required-opps for both CX and MX. The OPP core only votes those
+through attached domain devices: attach every domain listed when there
+is more than one. Document the second domain.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ .../devicetree/bindings/display/msm/gpu.yaml   | 10 +++++++++-
+ drivers/gpu/drm/msm/adreno/adreno_gpu.c        | 18 ++++++++++++++++++
+ 2 files changed, 27 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/display/msm/gpu.yaml b/Documentation/devicetree/bindings/display/msm/gpu.yaml
+index dbbd8b814..d16c7f1e9 100644
+--- a/Documentation/devicetree/bindings/display/msm/gpu.yaml
++++ b/Documentation/devicetree/bindings/display/msm/gpu.yaml
+@@ -96,7 +96,15 @@ properties:
+     type: object
+ 
+   power-domains:
+-    maxItems: 1
++    minItems: 1
++    items:
++      - description: GPU power domain, or the CX rail when the MX rail is listed too
++      - description: MX rail (Adreno 5xx without a GMU, voted through required-opps)
++
++  power-domain-names:
++    items:
++      - const: cx
++      - const: mx
+ 
+   zap-shader:
+     type: object
+diff --git a/drivers/gpu/drm/msm/adreno/adreno_gpu.c b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+index c62c45bb0..c60c4b6a9 100644
+--- a/drivers/gpu/drm/msm/adreno/adreno_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+@@ -11,6 +11,7 @@
+ #include <linux/firmware/qcom/qcom_scm.h>
+ #include <linux/kernel.h>
+ #include <linux/of_reserved_mem.h>
++#include <linux/pm_domain.h>
+ #include <linux/pm_opp.h>
+ #include <linux/slab.h>
+ #include <linux/soc/qcom/mdt_loader.h>
+@@ -1104,6 +1105,23 @@ static int adreno_get_pwrlevels(struct device *dev,
+ 
+ 	gpu->fast_rate = 0;
+ 
++	/*
++	 * Rails beyond the one the platform core attaches: SDM660 feeds GX from
++	 * CX through the GFX LDO, so its OPPs carry required-opps for both CX
++	 * and MX. The OPP core only drives those through attached domain devs.
++	 */
++	if (of_count_phandle_with_args(dev->of_node, "power-domains",
++				       "#power-domain-cells") > 1) {
++		struct dev_pm_domain_attach_data pd_data = {
++			.pd_flags = PD_FLAG_DEV_LINK_ON | PD_FLAG_REQUIRED_OPP,
++		};
++		struct dev_pm_domain_list *pds;
++
++		ret = devm_pm_domain_attach_list(dev, &pd_data, &pds);
++		if (ret < 0)
++			return dev_err_probe(dev, ret, "failed to attach power domains\n");
++	}
++
+ 	/* devm_pm_opp_of_add_table may error out but will still create an OPP table */
+ 	ret = devm_pm_opp_of_add_table(dev);
+ 	if (ret == -ENODEV) {

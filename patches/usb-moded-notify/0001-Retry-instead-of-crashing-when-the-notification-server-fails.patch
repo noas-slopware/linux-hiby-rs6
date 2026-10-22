@@ -1,0 +1,161 @@
+From: Noa Himesaka <himesaka@noa.codes>
+Subject: [PATCH] usb-moded-notify: retry instead of crashing when the notification server fails
+
+notification.show() raises a GError ("Timeout was reached") when the
+notification server is missing or not answering, e.g. while the shell is
+still starting or is stuck. The script let it escape, exited with status 1
+and systemd's Restart=on-failure restarted it every ~26 s forever.
+
+Catch it, keep running and retry with a growing delay (2, 5, 10, 30, 60 s),
+or right away when a server takes org.freedesktop.Notifications. Also
+schedule the rate-limit retry on the main loop instead of sleep() plus
+recursion, and don't let close() on a dead server raise either.
+
+---
+--- a/usb-moded-notify.py
++++ b/usb-moded-notify.py
+@@ -8,7 +8,7 @@
+ from dbus.mainloop.glib import DBusGMainLoop
+ 
+ gi.require_version('Notify', '0.7')
+-from gi.repository import GLib, Notify  # noqa: E402
++from gi.repository import Gio, GLib, Notify  # noqa: E402
+ from gi.repository.GLib import GError
+ 
+ DBusGMainLoop(set_as_default=True)
+@@ -17,6 +17,16 @@
+ bus = dbus.SystemBus()
+ notification = None
+ 
++# The notification server can be missing (not started yet, crashed, being
++# restarted) or present but not answering (its process is busy or stuck), in
++# which case show()/close() raise a GError after the D-Bus timeout. Don't exit
++# on that (systemd would restart us in a tight loop); keep running and try
++# again later with a growing delay, or right away when a server takes the name.
++NOTIFICATIONS_BUS_NAME = "org.freedesktop.Notifications"
++RETRY_DELAYS = (2, 5, 10, 30, 60)  # seconds; the last one repeats
++retry_source = 0
++retry_count = 0
++
+ 
+ mode_labels = {
+     "charging_only": "Charging",
+@@ -86,15 +96,57 @@
+     iface.set_mode(mode)
+ 
+ 
++def cancel_retry():
++    global retry_source
++    if retry_source:
++        GLib.source_remove(retry_source)
++        retry_source = 0
++
++
++def retry_cb():
++    global retry_source
++    retry_source = 0
++    show_notification()
++    return GLib.SOURCE_REMOVE
++
++
++def schedule_retry(delay=None):
++    global retry_source, retry_count
++    cancel_retry()
++    if delay is None:
++        delay = RETRY_DELAYS[min(retry_count, len(RETRY_DELAYS) - 1)]
++        retry_count += 1
++    print(f"Retrying the notification in {delay} s")
++    retry_source = GLib.timeout_add_seconds(delay, retry_cb)
++
++
++def on_server_appeared(connection, name, owner):
++    # A notification server just took the name: show a pending notification now
++    # instead of waiting for the next retry.
++    if retry_source:
++        print(f"Notification server appeared ({owner}), retrying now")
++        cancel_retry()
++        show_notification()
++
++
++def close_quietly(notif):
++    try:
++        notif.close()
++    except GError as error:
++        print(f"Failed to close the notification: {error.message}")
++
++
+ def on_action(notification, action, user_data):
+     print(f"Action clicked: {action}")
+     set_mode(action)
+-    notification.close()
++    close_quietly(notification)
+     show_notification()
+ 
+ 
+ def show_notification():
+-    global notification
++    global notification, retry_count
++
++    cancel_retry()
+ 
+     if is_locked():
+         print("Screen locked, skipping notification")
+@@ -102,7 +154,7 @@
+ 
+     # Close existing notification
+     if notification:
+-        notification.close()
++        close_quietly(notification)
+ 
+     # Try to determine current and available USB modes
+     try:
+@@ -136,24 +188,31 @@
+         notification.set_app_icon("dialog-warning-symbolic")
+         notification.set_hint("x-phosh-fb-profile", GLib.Variant.new_string("none"))
+ 
+-    # Try again when rate-limited by notification server
+     try:
+         notification.show()
+     except GError as error:
+-        # 36 is GDBus.Error:org.freedesktop.Notifications.Error.ExcessNotificationGeneration
+-        if error.code != 36:
+-            raise
++        # G_IO_ERROR_DBUS_ERROR (36) is how GDBus reports a remote error it has no
++        # mapping for, here org.freedesktop.Notifications.Error.ExcessNotificationGeneration
++        if error.domain == "g-io-error-quark" and error.code == 36:
++            print("Failed to show a notification due to rate-limiting, trying again in a second")
++            schedule_retry(1)
++        else:
++            print(f"Failed to show a notification: {error.message}")
++            schedule_retry()
++        # It never made it on screen, so there is nothing to close() later
++        notification = None
++        return
+ 
+-        print("Failed to show a notification due to rate-limiting, trying again in a second")
+-        sleep(1)
+-        show_notification()
++    retry_count = 0
+ 
+ 
+ def close_notification():
+-    global notification
++    global notification, retry_count
++    cancel_retry()
++    retry_count = 0
+     if notification:
+         print("Closing notification")
+-        notification.close()
++        close_quietly(notification)
+         notification = None
+ 
+ 
+@@ -173,6 +232,8 @@
+     signal_name="sig_usb_event_ind",
+ )
+ 
++Gio.bus_watch_name(Gio.BusType.SESSION, NOTIFICATIONS_BUS_NAME, Gio.BusNameWatcherFlags.NONE, on_server_appeared, None)
++
+ print("Monitoring USB events...")
+ show_notification()
+ loop = GLib.MainLoop()

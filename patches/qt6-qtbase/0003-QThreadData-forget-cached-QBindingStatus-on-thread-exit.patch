@@ -1,0 +1,79 @@
+From: Noa Himesaka <himesaka@noa.codes>
+Subject: [PATCH] QThreadData: forget the cached QBindingStatus when a thread drops its data
+
+deref_current_thread_data() resets currentThreadData but leaves the
+thread_local tl_status pointing at the QBindingStatus owned by the
+QThreadData it just released.
+
+If anything on the same native thread runs Qt code after that, for
+example a C++ thread_local destructor that uses QThreadStorage (KF6
+keeps KSharedConfig in thread_locals, e.g. KIconLoader::global() and
+KColorScheme's defaultConfig(), and ~KSharedConfig calls
+QThreadStorage::hasLocalData()), QThreadData::current() adopts the
+thread again and the new QAdoptedThread takes the stale status through
+getBindingStatus().
+Both QThreadData objects then own the same QBindingStatus and the
+second ~QThreadData frees it again.
+
+This happens wherever C++ thread_local destructors run after pthread
+key destructors, which is the case with libstdc++'s
+__cxa_thread_atexit fallback on musl. On glibc the order is the other
+way round, so the bug stays latent there, but the fix is plain C++
+and correct on any libc.
+
+Seen as Elisa crashing in ~QThreadData (free of the QBindingStatus)
+when its QQuickPixmapReader thread exits, either in that thread or in
+the main thread when it deletes the QThread.
+---
+diff -ruN a/src/corelib/kernel/qproperty.cpp b/src/corelib/kernel/qproperty.cpp
+--- a/src/corelib/kernel/qproperty.cpp
++++ b/src/corelib/kernel/qproperty.cpp
+@@ -2522,6 +2522,17 @@
+     tl_status = status;
+ }
+ 
++/*!
++    \internal
++    Forgets the binding status cached for the current thread. Called when the
++    thread's QThreadData (which owns the QBindingStatus) is released, so that
++    a later re-adoption of the same native thread allocates a new one.
++ */
++void clearBindingStatus(QBindingStatusAccessToken) noexcept
++{
++    tl_status = nullptr;
++}
++
+ namespace PropertyAdaptorSlotObjectHelpers {
+ void getter(const QUntypedPropertyData *d, void *value)
+ {
+diff -ruN a/src/corelib/kernel/qproperty_p.h b/src/corelib/kernel/qproperty_p.h
+--- a/src/corelib/kernel/qproperty_p.h
++++ b/src/corelib/kernel/qproperty_p.h
+@@ -32,6 +32,7 @@
+ namespace QtPrivate {
+     Q_CORE_EXPORT bool isAnyBindingEvaluating();
+     struct QBindingStatusAccessToken {};
++    void clearBindingStatus(QBindingStatusAccessToken) noexcept;
+ 
+     namespace BindableWarnings {
+     Q_CORE_EXPORT void printSignalArgumentsWithCustomGetter();
+diff -ruN a/src/corelib/thread/qthread_unix.cpp b/src/corelib/thread/qthread_unix.cpp
+--- a/src/corelib/thread/qthread_unix.cpp
++++ b/src/corelib/thread/qthread_unix.cpp
+@@ -187,6 +187,16 @@
+     // ... but we must reset it to zero before returning so we aren't
+     // leaving a dangling pointer.
+     currentThreadData = nullptr;
++
++    // The same goes for the cached QBindingStatus: it is owned by the
++    // QThreadData we just released, which may already be gone (or will be
++    // once the QThread is destroyed). If anything running later on this
++    // native thread (e.g. a C++ thread_local destructor that uses
++    // QThreadStorage, which on some C libraries runs after this pthread key
++    // destructor) adopts the thread again, the new QAdoptedThread must get a
++    // fresh QBindingStatus instead of taking ownership of this one, or both
++    // QThreadData objects end up deleting the same QBindingStatus.
++    QtPrivate::clearBindingStatus({});
+ }
+ 
+ static void destroy_auxiliary_thread_data(void *p)

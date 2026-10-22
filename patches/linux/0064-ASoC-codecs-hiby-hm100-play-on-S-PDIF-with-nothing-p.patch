@@ -1,0 +1,429 @@
+From a78fff800d200b97c066e4702798362182078318 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 12:28:21 +0900
+Subject: [PATCH 64/94] ASoC: codecs: hiby-hm100: play on S/PDIF with nothing
+ plugged in
+
+Stock routes a stream with nothing plugged in to the Spdif target (4):
+its HAL maps the speaker device to the spdif path, which powers the
+FPGA alone with the analog side down, and its kernel puts reg0 in mode
+1, where the FPGA forwards SD to its S/PDIF pin. The HAL encodes the
+IEC 60958 biphase-mark cells itself; the FPGA does not.
+
+Add the Spdif target with stock's power-on and power-off order, and
+resolve Auto with nothing plugged to it. Every stream now gets a
+target in hw_params, so the FPGA, which is the I2S clock provider,
+always runs and a stream with no jack no longer stalls the graph. As
+stock's hm100_set_spdif_mode, hm100_startup latches whether the stream
+is S/PDIF cells (opened while the target is Spdif); such a stream gets
+the spdif_table word of its S/PDIF frame rate (16 bytes per frame),
+anything else the PCM word of its rate. The word follows the stream
+across output switches, and an analog output stays muted while it
+carries S/PDIF cells, which would be full-scale noise there. An output
+switch with a stream open restarts it with its word, and Spdif is
+appended to the Output control so the saved indices keep their
+meaning.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ sound/soc/codecs/hiby-hm100.c | 242 +++++++++++++++++++++++++++-------
+ 1 file changed, 198 insertions(+), 44 deletions(-)
+
+diff --git a/sound/soc/codecs/hiby-hm100.c b/sound/soc/codecs/hiby-hm100.c
+index 5b0d83875..060afc01b 100644
+--- a/sound/soc/codecs/hiby-hm100.c
++++ b/sound/soc/codecs/hiby-hm100.c
+@@ -18,6 +18,12 @@
+  *   trigger START:  RUN high, unmute work queued with no delay (per output target, as stock
+  *                   hiby_target_poweron_umute) only if a mute is pending
+  *   trigger STOP:   mute work queued with no delay
++ * With nothing plugged in, Output Auto selects Spdif (4), as the stock HAL did by mapping the
++ * speaker device to its spdif path: the FPGA alone, the analog side down. The FPGA is the I2S
++ * clock provider, so this is also what keeps a stream with no jack moving. The stream itself
++ * must be S/PDIF biphase-mark cells (a userspace encoder, see docs/spdif-dsd.md); a stream
++ * opened on another target is plain PCM. hm100_startup latches which one it is, as stock
++ * hm100_set_spdif_mode, and a later output switch never sends one kind to the other output.
+  * The DSP side stays at 384 kHz (FE media format, ADM, AFE), as stock hiby_fixed_samplerate.
+  * What matters for correct sound is the init rate word: a 48k-family init frame before the
+  * load_flash pulse breaks the R2R calibration (right channel blasts on negative samples, ear
+@@ -67,7 +73,7 @@
+ #define REG3_OSR_BYPASS	BIT(4)
+ 
+ /* stock hiby_target_poweron/poweroff targets (_current_target_on) */
+-enum { T_NONE = 0, T_LO = 1, T_PO = 2, T_BAL = 3, T_BALLO = 7 };
++enum { T_NONE = 0, T_LO = 1, T_PO = 2, T_BAL = 3, T_SPDIF = 4, T_BALLO = 7 };
+ 
+ /* stock hiby,sa_sound_switch jacks, in report_only_one priority order */
+ enum { J_BAL, J_BALLO, J_PO, J_LO, J_NUM };
+@@ -101,13 +107,15 @@ struct hm100 {
+ 	bool mute_pending;		/* stock sound_platform +0x134 */
+ 	bool powered;			/* a target is on */
+ 	bool enabled;			/* stock hm100_enabled: FPGA programmed */
++	bool spdif;			/* stock spdif_enabled: this stream is S/PDIF cells */
+ 	unsigned int gpo, reg3;
+ 	unsigned int rate;
++	unsigned int spdif_fs;		/* S/PDIF frame rate of the stream, 0 = PCM word */
+ 	int target;			/* stock _current_target_on */
+ 	int want;			/* stock _current_target */
+ 	int output;			/* Output control: 0 = Auto (jacks), else a target */
+ 	int jack_state[J_NUM], jack_last[J_NUM], jack_cnt[J_NUM];
+-	int jack_target;		/* target the jacks ask for */
++	int jack_target;		/* target the jacks ask for, T_NONE = nothing plugged */
+ 	/* stock _left_level/_right_level, _current_*_level, _plat_vol_gain, _plat_pregain, _plat_vol_lrbalance */
+ 	int left, right, cur_left, cur_right;
+ 	int gain, pregain, lrbalance;
+@@ -363,6 +371,33 @@ static int rate_word(unsigned int rate)
+ 	return -EINVAL;
+ }
+ 
++/*
++ * stock hm100_set_samplerate with spdif_enabled: spdif_table {rate, f0, f1, f2}, mode 1 (the
++ * FPGA forwards SD to its S/PDIF pin). The rate is the S/PDIF frame rate fs: a frame is 16
++ * bytes of biphase-mark cells, BCLK 128 fs. Stock runs off the end to 384k for any other rate.
++ */
++static const struct { u32 rate; u8 f0, f1, f2; } spdif_table[] = {
++	{ 44100, 0, 0, 2 }, { 48000, 1, 0, 2 }, { 88200, 0, 0, 1 }, { 96000, 1, 0, 1 },
++	{ 176400, 0, 0, 0 }, { 192000, 1, 0, 0 }, { 352800, 0, 0, 5 }, { 384000, 1, 0, 5 },
++};
++
++static int spdif_word(unsigned int fs)
++{
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(spdif_table); i++)
++		if (spdif_table[i].rate == fs)
++			return spdif_table[i].f0 << 9 | (spdif_table[i].f1 & 3) << 7 |
++			       (spdif_table[i].f2 & 0xf) << 3 | 1;
++	return -EINVAL;
++}
++
++/* reg0 of the open PCM-format stream: its S/PDIF word, else the PCM word of the FE rate */
++static int stream_word(struct hm100 *h)
++{
++	return h->spdif_fs ? spdif_word(h->spdif_fs) : rate_word(h->rate);
++}
++
+ /* ---- SRAM load ---- */
+ 
+ static int load_bitstream(struct hm100 *h, const u8 *bs, size_t n)
+@@ -648,7 +683,7 @@ static void njw_power_on(struct hm100 *h, u16 insel)
+ 	njw(h, w, 2);
+ }
+ 
+-/* hiby_target_poweron */
++/* hiby_target_poweron; always from T_NONE (hiby_target_poweroff of the old target) */
+ static int hiby_target_poweron(struct hm100 *h, int t)
+ {
+ 	int ret = 0;
+@@ -697,6 +732,20 @@ static int hiby_target_poweron(struct hm100 *h, int t)
+ 		hiby_po_amp_power(h, 0);
+ 		hiby_bal_po_amp_power(h, 0);
+ 		break;
++	case T_SPDIF:
++		/*
++		 * The FPGA alone (it forwards SD to its S/PDIF pin in reg0 mode 1), with the DAC
++		 * rails and the analog chain down. The mutes stay as the old target's power-off
++		 * left them, as stock; hm100_enable_init writes the reg1 shadow.
++		 */
++		hiby_bal_po_amp_power(h, 0);
++		hiby_po_amp_power(h, 0);
++		hiby_volume_power(h, 0);
++		hiby_lpf_sel(h, 0);
++		hiby_lpf_power(h, 0);
++		hiby_dac_power(h, 0);
++		ret = hm100_enable(h);
++		break;
+ 	default:
+ 		return -EINVAL;
+ 	}
+@@ -707,8 +756,8 @@ static int hiby_target_poweron(struct hm100 *h, int t)
+ 	return ret;
+ }
+ 
+-/* hiby_target_poweroff */
+-static void hiby_target_poweroff(struct hm100 *h, int t)
++/* hiby_target_poweroff up to hm100_disable: mute, amps, NJW supply, LPF */
++static bool hiby_output_poweroff(struct hm100 *h, int t)
+ {
+ 	switch (t) {
+ 	case T_LO:
+@@ -725,69 +774,111 @@ static void hiby_target_poweroff(struct hm100 *h, int t)
+ 		hiby_delay(100);
+ 		break;
+ 	default:
+-		return;
++		return false;
+ 	}
+ 	hiby_bal_po_amp_power(h, 0);
+ 	hiby_po_amp_power(h, 0);
+ 	hiby_volume_power(h, 0);
+ 	hiby_lpf_sel(h, 0);
+ 	hiby_lpf_power(h, 0);
+-	hm100_disable(h);
+-	hiby_dac_power(h, 0);
+-	if (t == T_LO)
+-		hiby_lo_mute(h, 0);
+-	else if (t == T_BALLO)
+-		hiby_bal_lo_mute(h, 0);
+-	else
+-		hiby_po_mute(h, 0);
++	return true;
++}
++
++/* hiby_target_poweroff */
++static void hiby_target_poweroff(struct hm100 *h, int t)
++{
++	if (t == T_SPDIF) {
++		/* its own order: no lpf_sel, the rails go before the FPGA */
++		hiby_bal_po_amp_power(h, 0);
++		hiby_po_amp_power(h, 0);
++		hiby_volume_power(h, 0);
++		hiby_lpf_power(h, 0);
++		hiby_dac_power(h, 0);
++		hm100_disable(h);
++	} else {
++		if (!hiby_output_poweroff(h, t))
++			return;
++		hm100_disable(h);
++		hiby_dac_power(h, 0);
++		if (t == T_LO)
++			hiby_lo_mute(h, 0);
++		else if (t == T_BALLO)
++			hiby_bal_lo_mute(h, 0);
++		else
++			hiby_po_mute(h, 0);
++	}
+ 	h->target = T_NONE;
+ 	WRITE_ONCE(h->powered, false);
+ 	dev_info(h->dev, "target %d off\n", t);
+ }
+ 
+-/* hiby_output_switch; T_NONE powers off after 5 s (500 jiffies at the stock HZ=100) */
++/* the target a stream gets now: the Output control, else the jacks; nothing plugged is Spdif */
++static int hm100_resolved(struct hm100 *h)
++{
++	int t = h->output ? h->output : h->jack_target;
++
++	return t != T_NONE ? t : T_SPDIF;
++}
++
++/*
++ * hiby_output_switch: old target off, new one on. T_NONE (Auto, nothing plugged) with no
++ * stream open powers off after 5 s (stock switch_work, 500 jiffies at HZ=100) and leaves the
++ * Spdif power-on to the next stream; with a stream open it is Spdif now, as stock's HAL
++ * routed a stream with nothing plugged.
++ */
+ static void hm100_output_switch(struct hm100 *h, int t)
+ {
+-	if (t == T_NONE) {
+-		mutex_lock(&h->lock);
++	mutex_lock(&h->lock);
++	if (t == T_NONE && !h->streaming) {
+ 		h->want = T_NONE;
+ 		mutex_unlock(&h->lock);
+ 		mod_delayed_work(system_dfl_wq, &h->poweroff_work, msecs_to_jiffies(5000));
+ 		return;
+ 	}
++	if (t == T_NONE)
++		t = T_SPDIF;
++	h->want = t;		/* a running poweroff_work leaves the target alone now */
++	mutex_unlock(&h->lock);
+ 	cancel_delayed_work_sync(&h->poweroff_work);
+ 	mutex_lock(&h->lock);
+-	h->want = t;
+-	if (h->target != t) {
++	if (h->want == t && h->target != t) {
+ 		int ret;
+ 
++		/* as hiby_target_poweron_mute, which stock's HAL ran (STOP) before rerouting */
++		if (h->streaming && h->powered)
++			hiby_iv_mute(h, 1);
+ 		if (h->target != T_NONE)
+ 			hiby_target_poweroff(h, h->target);
+ 		ret = hiby_target_poweron(h, t);
+ 		/*
+ 		 * Not stock (its HAL put the stream in standby on a routing change): a stream is
+-		 * playing, but the re-init left the FPGA stopped and the new output muted. Restart
+-		 * it the hm100_set_samplerate way and let the unmute work open the output.
++		 * open, but the re-init left the FPGA stopped at 0x0120 and the new output muted.
++		 * Restart it the hm100_set_samplerate way and let the unmute work open the output.
++		 * The rate word is the stream's: S/PDIF cells keep mode 1 on an analog target,
++		 * whose unmute waits for a PCM stream (hm100_unmute_work), and PCM keeps mode 0 on
++		 * Spdif, so the pin stays quiet.
+ 		 */
+-		if (!ret && h->running) {
++		if (!ret && h->streaming) {
+ 			set(h->run, 0);
+-			reg_write(h, 0, rate_word(h->rate));
+-			set(h->run, 1);
+-			queue_delayed_work(system_dfl_wq, &h->unmute_work, 0);
++			reg_write(h, 0, stream_word(h));
++			if (h->running)
++				set(h->run, 1);
+ 		}
++		if (!ret && h->running)
++			queue_delayed_work(system_dfl_wq, &h->unmute_work, 0);
+ 	}
+ 	if (h->idle_off && !h->streaming)
+ 		mod_delayed_work(system_dfl_wq, &h->idle_work, secs_to_jiffies(h->idle_off));
+ 	mutex_unlock(&h->lock);
+ }
+ 
+-/* switch_work_schedule */
++/* switch_work_schedule; a stream opened since then moved want off T_NONE (hm100_hw_params) */
+ static void hm100_poweroff_work(struct work_struct *work)
+ {
+ 	struct hm100 *h = container_of(to_delayed_work(work), struct hm100, poweroff_work);
+ 
+ 	mutex_lock(&h->lock);
+-	if (h->want == T_NONE && h->target != T_NONE)
++	if (h->want == T_NONE && h->target != T_NONE && !h->streaming)
+ 		hiby_target_poweroff(h, h->target);
+ 	mutex_unlock(&h->lock);
+ }
+@@ -843,7 +934,13 @@ static void hm100_unmute_work(struct work_struct *work)
+ 	 */
+ 	cancel_delayed_work(&h->mute_work);
+ 	mutex_lock(&h->lock);
+-	if (h->mute_pending && h->powered) {
++	/*
++	 * Not stock: S/PDIF cells (a stream with a spdif_table word) on an analog output, after
++	 * a jack plugged in during the stream, are full-scale noise: that output stays muted
++	 * until a PCM stream opens (hm100_startup).
++	 */
++	if (h->mute_pending && h->powered &&
++	    !(h->spdif_fs && h->target != T_SPDIF)) {
+ 		/* hiby_target_poweron_umute */
+ 		switch (h->target) {
+ 		case T_LO:
+@@ -937,12 +1034,49 @@ static unsigned int fe_rate(struct snd_pcm_substream *substream, struct snd_pcm_
+ 	return rate;
+ }
+ 
++/*
++ * bytes per FE frame of a PCM format: 8 for S32_LE stereo (the I2S word pairs), 4 for
++ * S16_LE stereo.
++ */
++static unsigned int fe_frame_bytes(struct snd_pcm_substream *substream,
++				   struct snd_pcm_hw_params *params)
++{
++	struct snd_soc_pcm_runtime *be = snd_soc_substream_to_rtd(substream);
++	struct snd_soc_dpcm *dpcm;
++	struct snd_pcm_hw_params *p = params;
++	int width;
++
++	for_each_dpcm_fe(be, substream->stream, dpcm)
++		p = &dpcm->fe->dpcm[substream->stream].hw_params;
++	width = params_physical_width(p);
++	if (!snd_pcm_format_linear(params_format(p)) || width <= 0)
++		return 0;
++	return width / 8 * params_channels(p);
++}
++
++/*
++ * stock hiby_snd_startup: hm100_set_spdif_mode(current_target_on == 4), latched for the
++ * stream. From the target hw_params will power, not h->target: an idle power-off left that at
++ * T_NONE, and stock had its HAL select the output before every open.
++ */
++static int hm100_startup(struct snd_pcm_substream *substream, struct snd_soc_dai *dai)
++{
++	struct hm100 *h = snd_soc_component_get_drvdata(dai->component);
++
++	if (substream->stream != SNDRV_PCM_STREAM_PLAYBACK)
++		return 0;
++	mutex_lock(&h->lock);
++	h->spdif = hm100_resolved(h) == T_SPDIF;
++	mutex_unlock(&h->lock);
++	return 0;
++}
++
+ static int hm100_hw_params(struct snd_pcm_substream *substream, struct snd_pcm_hw_params *params,
+ 			   struct snd_soc_dai *dai)
+ {
+ 	struct hm100 *h = snd_soc_component_get_drvdata(dai->component);
+ 	unsigned int rate = fe_rate(substream, params);
+-	int w = rate_word(rate);
++	int w = rate_word(rate), t;
+ 
+ 	if (substream->stream != SNDRV_PCM_STREAM_PLAYBACK)
+ 		return 0;
+@@ -953,26 +1087,39 @@ static int hm100_hw_params(struct snd_pcm_substream *substream, struct snd_pcm_h
+ 
+ 	cancel_delayed_work_sync(&h->idle_work);
+ 	mutex_lock(&h->lock);
+-	if (!h->powered) {
+-		/* idle power-off (or not powered yet): bring the wanted output back */
+-		int t = h->output ? h->output : h->jack_target;
+-
+-		if (t != T_NONE)
+-			hiby_target_poweron(h, t);
++	/*
++	 * Every stream gets a target, so the FPGA, the I2S clock provider, always runs: without
++	 * BCLK/WS the AFE port never moves and the PCM sits in RUNNING with a frozen hw_ptr,
++	 * stalling the whole graph. Nothing plugged in (Output Auto, no jack) is Spdif, as stock.
++	 * Power it here after an idle power-off, a pending 5 s power-off (want T_NONE) or an
++	 * Output change whose switch work has not run yet; that work then finds it on.
++	 */
++	t = hm100_resolved(h);
++	if (h->target != t) {
++		if (h->powered)
++			hiby_target_poweroff(h, h->target);
++		hiby_target_poweron(h, t);
+ 	}
++	h->want = t;
+ 	h->streaming = true;
+ 	h->rate = rate;
+ 	/*
+-	 * Nothing plugged in (Output Auto, no jack): take the stream anyway, the samples go
+-	 * nowhere, like stock, whose output switch only powers the DAC off. Plugging a jack
+-	 * powers the target on and hm100_output_switch() restarts the running stream at
+-	 * h->rate. Refusing it here made PipeWire's probe at login drop the UCM profile for
+-	 * the whole session.
++	 * S/PDIF cells (hm100_startup): 16 bytes per S/PDIF frame, so S32_LE at 2 fs or S16_LE
++	 * at 4 fs. A rate with no spdif_table entry (PipeWire's probe of a plain stream at
++	 * 44.1k/48k) takes the PCM word of the FE rate instead: mode 0, the S/PDIF pin quiet and
++	 * the clocks at the stream's rate, where stock ran off the table to 384k.
+ 	 */
++	h->spdif_fs = 0;
++	if (h->spdif) {
++		unsigned int n = rate * fe_frame_bytes(substream, params);
++
++		if (n % 16 == 0 && spdif_word(n / 16) >= 0)
++			h->spdif_fs = n / 16;
++	}
+ 	if (h->powered) {
+ 		gpo_set(h, IOB35B, 0);	/* hm100_set_gpo(pcm_dsd_sel, 0) */
+ 		set(h->run, 0);		/* hm100_set_samplerate: hm100_stop, reg0 */
+-		reg_write(h, 0, w);
++		reg_write(h, 0, stream_word(h));
+ 	}
+ 	mutex_unlock(&h->lock);
+ 	return 0;
+@@ -1026,6 +1173,7 @@ static int hm100_hw_free(struct snd_pcm_substream *substream, struct snd_soc_dai
+ }
+ 
+ static const struct snd_soc_dai_ops hm100_dai_ops = {
++	.startup = hm100_startup,
+ 	.hw_params = hm100_hw_params,
+ 	.hw_free = hm100_hw_free,
+ 	.trigger = hm100_trigger,
+@@ -1152,9 +1300,15 @@ static int level_put(struct snd_kcontrol *kc, struct snd_ctl_elem_value *uc)
+ }
+ 
+ static const char * const gain_texts[] = { "Low", "Middle", "High" };
+-/* stock output_select names; Auto = follow the jacks (the stock HAL did that from the switches) */
+-static const char * const output_texts[] = { "Auto", "Lineout", "Headset", "Balance", "BalanceLo" };
+-static const int output_target[] = { 0, T_LO, T_PO, T_BAL, T_BALLO };
++/*
++ * stock output_select names; Auto = follow the jacks (the stock HAL did that from the
++ * switches), Spdif when nothing is plugged. Spdif last, so the older indices keep their
++ * meaning.
++ */
++static const char * const output_texts[] = {
++	"Auto", "Lineout", "Headset", "Balance", "BalanceLo", "Spdif",
++};
++static const int output_target[] = { 0, T_LO, T_PO, T_BAL, T_BALLO, T_SPDIF };
+ /*
+  * stock plat_set_digital_filter names; only the first four select a coefficient set. Not
+  * stock: "custom" (last, so the stock indices keep their meaning) selects the FIR Custom set,

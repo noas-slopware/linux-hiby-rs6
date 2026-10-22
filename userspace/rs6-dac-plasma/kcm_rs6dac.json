@@ -1,0 +1,22 @@
+{
+    "KPlugin": {
+        "Authors": [
+            {
+                "Email": "himesaka@noa.codes",
+                "Name": "Noa Himesaka"
+            }
+        ],
+        "Description": "Output, filter and level of the HiBy RS6 DAC",
+        "FormFactors": [
+            "handset",
+            "tablet",
+            "desktop"
+        ],
+        "Icon": "audio-card",
+        "License": "MIT",
+        "Name": "RS6 DAC"
+    },
+    "X-KDE-Keywords": "dac,hiby,rs6,r2r,nos,oversampling,filter,fir,gain,pregain,balance,output,line out,balanced,4.4,3.5,headphone,audio",
+    "X-KDE-System-Settings-Parent-Category": "input-devices",
+    "X-KDE-Weight": 201
+}

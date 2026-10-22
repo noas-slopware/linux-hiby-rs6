@@ -1,0 +1,4 @@
+# Keep the GPU at 266 MHz or above while active: the 19.2/160 MHz steps
+# stutter scrolling, and runtime suspend still drops the clock and the CX/MX
+# votes when the GPU idles.
+ACTION=="add", SUBSYSTEM=="devfreq", KERNEL=="5000000.gpu", ATTR{min_freq}="266000000"

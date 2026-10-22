@@ -1,0 +1,62 @@
+From 75f94abf02d317590d5891d059a91f9c47edd95f Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 18:25:01 +0900
+Subject: [PATCH 26/94] fs: don't charge do_file_open_root() lookups to the
+ caller's symlink budget
+
+do_file_open_root() (firmware loader, kernel_read_file_from_path_initns())
+walks a fixed, kernel-chosen path from the init root, often from inside
+the path walk of an unrelated open(), e.g. a driver's ->open() asking
+for firmware. Its nameidata inherited the outer walk's total_link_count
+and gave it back, so every failed search-path attempt through a
+"/lib -> usr/lib" symlink leaked counts into the outer walk, and later
+lookups of nonexistent files failed with -ELOOP instead of -ENOENT
+(seen as a530_pm4.fw failing with -40 on postmarketOS). Start the walk at
+zero and restore the outer count afterwards.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ fs/namei.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/fs/namei.c b/fs/namei.c
+index 19ce43c9a..617de4da4 100644
+--- a/fs/namei.c
++++ b/fs/namei.c
+@@ -4902,6 +4902,8 @@ struct file *do_file_open_root(const struct path *root,
+ 		const char *name, const struct open_flags *op)
+ {
+ 	struct nameidata nd;
++	struct nameidata *outer = current->nameidata;
++	int outer_links = outer ? outer->total_link_count : 0;
+ 	struct file *file;
+ 	int flags = op->lookup_flags;
+ 
+@@ -4913,12 +4915,26 @@ struct file *do_file_open_root(const struct path *root,
+ 		return ERR_CAST(filename);
+ 
+ 	set_nameidata(&nd, -1, filename, root);
++	/*
++	 * Callers (firmware loader, kernel_read_file_from_path_initns()) walk
++	 * a fixed, kernel-chosen path from the init root, and are often
++	 * entered from inside the path walk of an unrelated open() (a
++	 * driver's ->open() asking for firmware).  Such a walk cannot recurse
++	 * through symlinks, so it must neither start at, nor be charged to,
++	 * the outer walk's MAXSYMLINKS budget.  Otherwise every failed
++	 * search-path attempt through a "/lib -> usr/lib" symlink leaks one
++	 * or two counts into the outer walk and later lookups of
++	 * nonexistent files fail with -ELOOP instead of -ENOENT.
++	 */
++	nd.total_link_count = 0;
+ 	file = path_openat(&nd, op, flags | LOOKUP_RCU);
+ 	if (unlikely(file == ERR_PTR(-ECHILD)))
+ 		file = path_openat(&nd, op, flags);
+ 	if (unlikely(file == ERR_PTR(-ESTALE)))
+ 		file = path_openat(&nd, op, flags | LOOKUP_REVAL);
+ 	restore_nameidata();
++	if (outer)
++		outer->total_link_count = outer_links;
+ 	return file;
+ }
+ 

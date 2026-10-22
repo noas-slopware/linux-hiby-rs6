@@ -1,0 +1,39 @@
+From 321dba8bc81bb7d0826c8eb56d93e38ce36d6f6f Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 13:03:27 +0900
+Subject: [PATCH 73/94] ASoC: codecs: hiby-hm100: say when a DSD unmute after a
+ late mute comes
+
+The DSD mute work queues the unmute again so that an unmute always
+comes after it, and its comment said that unmute comes dsd_unmute_ms
+later. Not when an unmute work is already running and waiting for the
+lock the mute holds: mod_delayed_work() only queues another instance,
+and the running one opens the output as soon as the mute is done.
+That is harmless, since that work started only dsd_unmute_ms after
+the restart that queued it, but the comment claimed more. Say what
+happens.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ sound/soc/codecs/hiby-hm100.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/codecs/hiby-hm100.c b/sound/soc/codecs/hiby-hm100.c
+index 6d0dcaa2c..8fd2311a9 100644
+--- a/sound/soc/codecs/hiby-hm100.c
++++ b/sound/soc/codecs/hiby-hm100.c
+@@ -1189,7 +1189,12 @@ static void hm100_mute_work(struct work_struct *work)
+ 		 * queued, but nothing orders the two works: different queues, mutex waiters may
+ 		 * be overtaken, and with dsd_unmute_ms = 0 both run at once. If the unmute ran
+ 		 * first, this mute would hold until the next trigger. Queue it again from here,
+-		 * under the lock, so it always comes after the mute, dsd_unmute_ms from now.
++		 * under the lock, so that an unmute always comes after the mute: the requeued
++		 * one dsd_unmute_ms from now. An unmute work that is already running, waiting
++		 * for the lock, is not held back by mod_delayed_work(): it opens the output as
++		 * soon as this mute drops the lock, not dsd_unmute_ms later. It started only
++		 * dsd_unmute_ms after the restart that queued it, so the output still opens no
++		 * earlier than that; the requeued one then finds it open already.
+ 		 */
+ 		if (running)
+ 			hm100_queue_unmute(h);

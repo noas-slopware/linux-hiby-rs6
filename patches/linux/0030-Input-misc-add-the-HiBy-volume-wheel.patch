@@ -1,0 +1,391 @@
+From 87807e1bd7ccba5b2419ff2f5c247cb1ad6d7c32 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 18:25:01 +0900
+Subject: [PATCH 30/94] Input: misc: add the HiBy volume wheel
+
+The HiBy RS6 volume wheel is a two-GPIO rotary encoder that reports
+KEY_VOLUMEUP/KEY_VOLUMEDOWN, one key press per detent.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ .../bindings/input/hiby,ring-keys.yaml        |  82 ++++++
+ drivers/input/misc/Kconfig                    |  10 +
+ drivers/input/misc/Makefile                   |   1 +
+ drivers/input/misc/hiby-ring-keys.c           | 245 ++++++++++++++++++
+ 4 files changed, 338 insertions(+)
+ create mode 100644 Documentation/devicetree/bindings/input/hiby,ring-keys.yaml
+ create mode 100644 drivers/input/misc/hiby-ring-keys.c
+
+diff --git a/Documentation/devicetree/bindings/input/hiby,ring-keys.yaml b/Documentation/devicetree/bindings/input/hiby,ring-keys.yaml
+new file mode 100644
+index 000000000..9a57147f8
+--- /dev/null
++++ b/Documentation/devicetree/bindings/input/hiby,ring-keys.yaml
+@@ -0,0 +1,82 @@
++# SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/input/hiby,ring-keys.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: HiBy RS6 volume wheel (ring keys)
++
++maintainers:
++  - Noa Himesaka <himesaka@noa.codes>
++
++description:
++  Two-phase quadrature volume wheel of the HiBy RS6. Each rotation step is
++  decoded from the clockwise and anticlockwise GPIO edges and reported as a
++  key press of the child node whose direction matches.
++
++properties:
++  compatible:
++    const: hiby,ring-keys
++
++  clockwise-gpios:
++    maxItems: 1
++    description: GPIO of the clockwise phase, read as input and used as interrupt.
++
++  anticlockwise-gpios:
++    maxItems: 1
++    description: GPIO of the anticlockwise phase, read as input and used as interrupt.
++
++  wakeup-source: true
++
++patternProperties:
++  '^key-':
++    type: object
++    $ref: input.yaml#
++    description: A key reported for one rotation direction.
++    unevaluatedProperties: false
++
++    properties:
++      linux,code: true
++
++      hiby,direction:
++        $ref: /schemas/types.yaml#/definitions/uint32
++        enum: [1, 2]
++        description:
++          Rotation direction this key is reported for. 1 is the direction of
++          the volume down key and 2 of the volume up key in the stock firmware.
++
++    required:
++      - linux,code
++      - hiby,direction
++
++required:
++  - compatible
++  - clockwise-gpios
++  - anticlockwise-gpios
++
++allOf:
++  - $ref: input.yaml#
++
++unevaluatedProperties: false
++
++examples:
++  - |
++    #include <dt-bindings/gpio/gpio.h>
++    #include <dt-bindings/input/linux-event-codes.h>
++
++    ring-keys {
++        compatible = "hiby,ring-keys";
++        clockwise-gpios = <&tlmm 42 GPIO_ACTIVE_HIGH>;
++        anticlockwise-gpios = <&tlmm 43 GPIO_ACTIVE_HIGH>;
++
++        key-volume-down {
++            linux,code = <KEY_VOLUMEDOWN>;
++            hiby,direction = <1>;
++        };
++
++        key-volume-up {
++            linux,code = <KEY_VOLUMEUP>;
++            hiby,direction = <2>;
++        };
++    };
++...
+diff --git a/drivers/input/misc/Kconfig b/drivers/input/misc/Kconfig
+index 551cad6de..b80107a82 100644
+--- a/drivers/input/misc/Kconfig
++++ b/drivers/input/misc/Kconfig
+@@ -358,6 +358,16 @@ config INPUT_GPIO_BEEPER
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called gpio-beeper.
+ 
++config INPUT_HIBY_RING_KEYS
++	tristate "HiBy RS6 volume wheel"
++	depends on GPIOLIB || COMPILE_TEST
++	help
++	  Say Y here to use the two-GPIO volume wheel on the HiBy RS6.
++	  Each detent click is reported as a volume key.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called hiby-ring-keys.
++
+ config INPUT_GPIO_DECODER
+ 	tristate "Polled GPIO Decoder Input driver"
+ 	depends on GPIOLIB || COMPILE_TEST
+diff --git a/drivers/input/misc/Makefile b/drivers/input/misc/Makefile
+index 7c20cf27e..a4f99e097 100644
+--- a/drivers/input/misc/Makefile
++++ b/drivers/input/misc/Makefile
+@@ -40,6 +40,7 @@ obj-$(CONFIG_INPUT_DRV260X_HAPTICS)	+= drv260x.o
+ obj-$(CONFIG_INPUT_DRV2665_HAPTICS)	+= drv2665.o
+ obj-$(CONFIG_INPUT_DRV2667_HAPTICS)	+= drv2667.o
+ obj-$(CONFIG_INPUT_GPIO_BEEPER)		+= gpio-beeper.o
++obj-$(CONFIG_INPUT_HIBY_RING_KEYS)	+= hiby-ring-keys.o
+ obj-$(CONFIG_INPUT_GPIO_DECODER)	+= gpio_decoder.o
+ obj-$(CONFIG_INPUT_GPIO_VIBRA)		+= gpio-vibra.o
+ obj-$(CONFIG_INPUT_HISI_POWERKEY)	+= hisi_powerkey.o
+diff --git a/drivers/input/misc/hiby-ring-keys.c b/drivers/input/misc/hiby-ring-keys.c
+new file mode 100644
+index 000000000..07c456860
+--- /dev/null
++++ b/drivers/input/misc/hiby-ring-keys.c
+@@ -0,0 +1,245 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * HiBy RS6 volume wheel ("ring-keys").
++ *
++ * Two GPIOs, both pulled up and high at rest. A detent click raises one line
++ * and then the other; whichever rises first gives the direction. Every
++ * rising edge reads both lines, and a key press+release goes out for the
++ * child whose direction matches. The state machine, the ~102 ms pairing
++ * window and the 3-jiffy (HZ=100) rate limit follow the stock 4.4 driver
++ * (ring_interrupt / ring_keys_work_func, firmware 1.80).
++ */
++
++#include <linux/devm-helpers.h>
++#include <linux/gpio/consumer.h>
++#include <linux/input.h>
++#include <linux/interrupt.h>
++#include <linux/ktime.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/property.h>
++#include <linux/spinlock.h>
++#include <linux/workqueue.h>
++
++/* stock: (ns delta >> 10) compared against these, with whole seconds as 1000000 */
++#define RING_PAIR_WINDOW	100001
++#define RING_IDLE_RESET		1000000
++#define RING_KEY_GAP_MS		30	/* jiffies delta > 2 at HZ=100 */
++
++enum { RING_DIR_NONE, RING_DIR_1, RING_DIR_2 };
++
++struct ring_key {
++	unsigned int code;
++	u32 direction;
++};
++
++struct ring_keys {
++	struct device *dev;
++	struct input_dev *input;
++	struct gpio_desc *cw, *acw;
++	int irq_cw, irq_acw;
++	struct ring_key *keys;
++	unsigned int nkeys;
++	struct work_struct work;
++	spinlock_t lock;
++	ktime_t last_edge;
++	ktime_t last_key;
++	u32 seq;
++	u32 dir;
++	u32 count;
++};
++
++static void ring_keys_work(struct work_struct *work)
++{
++	struct ring_keys *rk = container_of(work, struct ring_keys, work);
++	ktime_t now = ktime_get();
++	unsigned long flags;
++	u32 dir = RING_DIR_NONE;
++	unsigned int i;
++
++	spin_lock_irqsave(&rk->lock, flags);
++	rk->count++;
++	if (rk->count && ktime_ms_delta(now, rk->last_key) >= RING_KEY_GAP_MS) {
++		rk->count = 0;
++		rk->last_key = now;
++		dir = rk->dir;
++	}
++	spin_unlock_irqrestore(&rk->lock, flags);
++
++	if (dir == RING_DIR_NONE)
++		return;
++
++	for (i = 0; i < rk->nkeys; i++) {
++		if (rk->keys[i].direction != dir)
++			continue;
++		input_report_key(rk->input, rk->keys[i].code, 1);
++		input_sync(rk->input);
++		input_report_key(rk->input, rk->keys[i].code, 0);
++		input_sync(rk->input);
++	}
++}
++
++static irqreturn_t ring_keys_irq(int irq, void *data)
++{
++	struct ring_keys *rk = data;
++	ktime_t now = ktime_get();
++	s64 dt = ktime_to_ns(ktime_sub(now, rk->last_edge));
++	unsigned long flags;
++	int a, b, a2;
++	u32 state;
++
++	/* stock: same-second delta in ns >> 10, one second as +1000000, more as idle */
++	if (dt >= 2 * NSEC_PER_SEC)
++		dt = RING_IDLE_RESET + 0x1000;
++	else if (dt >= NSEC_PER_SEC)
++		dt = ((dt - NSEC_PER_SEC) >> 10) + 1000000;
++	else
++		dt >>= 10;
++
++	a = gpiod_get_raw_value(rk->cw);
++	b = gpiod_get_raw_value(rk->acw);
++	a2 = gpiod_get_raw_value(rk->cw);
++	if (a != a2 || b != gpiod_get_raw_value(rk->acw))
++		return IRQ_HANDLED;
++	/* the edge that fired must still read high */
++	if ((!a && irq == rk->irq_cw) || (!b && irq == rk->irq_acw))
++		return IRQ_HANDLED;
++
++	state = (a ? 2 : 0) | (b ? 1 : 0);
++
++	spin_lock_irqsave(&rk->lock, flags);
++	if (state == 1 || state == 2) {
++		rk->last_edge = now;
++		if (dt > RING_IDLE_RESET)
++			rk->count = 0;
++		rk->seq = state;
++	} else if (state == 3 && dt < RING_PAIR_WINDOW) {
++		u32 dir;
++
++		rk->last_edge = now;
++		rk->seq = rk->seq << 2 | 3;
++		if (rk->seq == 7)
++			dir = RING_DIR_1;
++		else if (rk->seq == 0xb)
++			dir = RING_DIR_2;
++		else
++			goto out;
++		if (rk->dir != dir) {
++			rk->count = 0;
++			rk->dir = dir;
++			rk->last_key = ktime_sub_ms(now, RING_KEY_GAP_MS);
++		}
++		queue_work(system_highpri_wq, &rk->work);
++	} else {
++		if (state == 3)
++			rk->last_edge = now;
++		rk->seq = 0;
++	}
++out:
++	spin_unlock_irqrestore(&rk->lock, flags);
++	return IRQ_HANDLED;
++}
++
++static int ring_keys_parse_keys(struct ring_keys *rk)
++{
++	struct device *dev = rk->dev;
++	unsigned int i = 0;
++
++	rk->nkeys = device_get_child_node_count(dev);
++	if (!rk->nkeys)
++		return dev_err_probe(dev, -EINVAL, "no keys\n");
++
++	rk->keys = devm_kcalloc(dev, rk->nkeys, sizeof(*rk->keys), GFP_KERNEL);
++	if (!rk->keys)
++		return -ENOMEM;
++
++	device_for_each_child_node_scoped(dev, child) {
++		if (fwnode_property_read_u32(child, "linux,code", &rk->keys[i].code))
++			return dev_err_probe(dev, -EINVAL, "key without linux,code\n");
++		if (fwnode_property_read_u32(child, "hiby,direction", &rk->keys[i].direction))
++			return dev_err_probe(dev, -EINVAL, "key without hiby,direction\n");
++		input_set_capability(rk->input, EV_KEY, rk->keys[i].code);
++		i++;
++	}
++
++	return 0;
++}
++
++static int ring_keys_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct ring_keys *rk;
++	int ret;
++
++	rk = devm_kzalloc(dev, sizeof(*rk), GFP_KERNEL);
++	if (!rk)
++		return -ENOMEM;
++	rk->dev = dev;
++	spin_lock_init(&rk->lock);
++	rk->last_edge = ktime_get();
++	rk->last_key = rk->last_edge;
++
++	rk->cw = devm_gpiod_get(dev, "clockwise", GPIOD_IN);
++	if (IS_ERR(rk->cw))
++		return dev_err_probe(dev, PTR_ERR(rk->cw), "clockwise gpio\n");
++	rk->acw = devm_gpiod_get(dev, "anticlockwise", GPIOD_IN);
++	if (IS_ERR(rk->acw))
++		return dev_err_probe(dev, PTR_ERR(rk->acw), "anticlockwise gpio\n");
++
++	rk->input = devm_input_allocate_device(dev);
++	if (!rk->input)
++		return -ENOMEM;
++	rk->input->name = "HiBy RS6 Volume Wheel";
++	rk->input->phys = "ring-keys/input0";
++	rk->input->id.bustype = BUS_HOST;
++
++	ret = ring_keys_parse_keys(rk);
++	if (ret)
++		return ret;
++
++	ret = input_register_device(rk->input);
++	if (ret)
++		return ret;
++
++	ret = devm_work_autocancel(dev, &rk->work, ring_keys_work);
++	if (ret)
++		return ret;
++
++	rk->irq_cw = gpiod_to_irq(rk->cw);
++	if (rk->irq_cw < 0)
++		return rk->irq_cw;
++	rk->irq_acw = gpiod_to_irq(rk->acw);
++	if (rk->irq_acw < 0)
++		return rk->irq_acw;
++
++	ret = devm_request_any_context_irq(dev, rk->irq_cw, ring_keys_irq,
++					   IRQF_TRIGGER_RISING, "ring-keys-cw", rk);
++	if (ret < 0)
++		return ret;
++	ret = devm_request_any_context_irq(dev, rk->irq_acw, ring_keys_irq,
++					   IRQF_TRIGGER_RISING, "ring-keys-acw", rk);
++	if (ret < 0)
++		return ret;
++
++	device_init_wakeup(dev, device_property_read_bool(dev, "wakeup-source"));
++	return 0;
++}
++
++static const struct of_device_id ring_keys_of_match[] = {
++	{ .compatible = "hiby,ring-keys" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, ring_keys_of_match);
++
++static struct platform_driver ring_keys_driver = {
++	.probe = ring_keys_probe,
++	.driver = {
++		.name = "hiby-ring-keys",
++		.of_match_table = ring_keys_of_match,
++	},
++};
++module_platform_driver(ring_keys_driver);
++
++MODULE_DESCRIPTION("HiBy RS6 volume wheel");
++MODULE_LICENSE("GPL");

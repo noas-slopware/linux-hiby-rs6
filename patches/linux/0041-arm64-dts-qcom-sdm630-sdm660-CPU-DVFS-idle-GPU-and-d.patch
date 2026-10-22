@@ -1,0 +1,1008 @@
+From 51912dc10ed3b3d808803bc81e055be01f51f120 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 18:25:02 +0900
+Subject: [PATCH 41/94] arm64: dts: qcom: sdm630/sdm660: CPU DVFS, idle, GPU
+ and display
+
+- CPRh and the OSM (cpufreq-hw) with the CPU OPP tables, L2 SAW AVS,
+  the fuse cells, from the stock 1.80 kernel. Node layout follows
+  AngeloGioacchino Del Regno's MSM8998 CPRh/cpufreq-hw nodes.
+- Energy model: dynamic-power-coefficient for both clusters.
+- OSI cluster idle and the MPM system power domain.
+- GPU OPPs voting CX and MX.
+- MDSS: the MNOC AHB clock; the APSS watchdog.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ arch/arm64/boot/dts/qcom/sdm630.dtsi |  15 +-
+ arch/arm64/boot/dts/qcom/sdm660.dtsi | 811 ++++++++++++++++++++++++++-
+ 2 files changed, 811 insertions(+), 15 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sdm630.dtsi b/arch/arm64/boot/dts/qcom/sdm630.dtsi
+index 9ea64cd2f..cf4716ff4 100644
+--- a/arch/arm64/boot/dts/qcom/sdm630.dtsi
++++ b/arch/arm64/boot/dts/qcom/sdm630.dtsi
+@@ -1626,14 +1626,17 @@ mdss: display-subsystem@c900000 {
+ 			power-domains = <&mmcc MDSS_GDSC>;
+ 			resets = <&mmcc MDSS_BCR>;
+ 
++			/* mnoc: held around every MDSS AHB switch, as downstream */
+ 			clocks = <&mmcc MDSS_AHB_CLK>,
+ 				 <&mmcc MDSS_AXI_CLK>,
+ 				 <&mmcc MDSS_VSYNC_CLK>,
+-				 <&mmcc MDSS_MDP_CLK>;
++				 <&mmcc MDSS_MDP_CLK>,
++				 <&mmcc MNOC_AHB_CLK>;
+ 			clock-names = "iface",
+ 				      "bus",
+ 				      "vsync",
+-				      "core";
++				      "core",
++				      "mnoc";
+ 
+ 			interrupts = <GIC_SPI 83 IRQ_TYPE_LEVEL_HIGH>;
+ 
+@@ -2559,6 +2562,14 @@ compute-cb@9 {
+ 			};
+ 		};
+ 
++		/* APSS watchdog; address and bark interrupt from the downstream qcom,msm-watchdog node */
++		watchdog@17817000 {
++			compatible = "qcom,apss-wdt-sdm660", "qcom,kpss-wdt";
++			reg = <0x17817000 0x1000>;
++			clocks = <&sleep_clk>;
++			interrupts = <GIC_SPI 3 IRQ_TYPE_EDGE_RISING>;
++		};
++
+ 		gnoc: interconnect@17900000 {
+ 			compatible = "qcom,sdm660-gnoc";
+ 			reg = <0x17900000 0xe000>;
+diff --git a/arch/arm64/boot/dts/qcom/sdm660.dtsi b/arch/arm64/boot/dts/qcom/sdm660.dtsi
+index 70505591f..921bcdf77 100644
+--- a/arch/arm64/boot/dts/qcom/sdm660.dtsi
++++ b/arch/arm64/boot/dts/qcom/sdm660.dtsi
+@@ -44,6 +44,15 @@ &adreno_gpu {
+ 	compatible = "qcom,adreno-512.0", "qcom,adreno";
+ 	operating-points-v2 = <&gpu_sdm660_opp_table>;
+ 
++	/*
++	 * The GX rail is fed from CX through the GFX LDO (bypass on this SoC), so
++	 * every GPU corner needs a CX vote on top of MX. CX levels per frequency
++	 * are the stock cpr4 gfx "qcom,system-voltage" table (system-supply is
++	 * the rwcx level regulator); MX keeps the levels this table had before.
++	 */
++	power-domains = <&rpmpd RPMPD_VDDCX>, <&rpmpd RPMPD_VDDMX>;
++	power-domain-names = "cx", "mx";
++
+ 	/*
+ 	 * Delete the whole OPP table inherited from SDM630 - we need to
+ 	 * rewrite it cleanly from scratch, because frequency tables in gpucc
+@@ -68,7 +77,7 @@ gpu_sdm660_opp_table: opp-table {
+ 		 * bin 157 -> bit 6 *
+ 		opp-750000000 {
+ 			opp-hz = /bits/ 64 <750000000>;
+-			opp-level = <RPM_SMD_LEVEL_TURBO>;
++			required-opps = <&rpmpd_opp_turbo>, <&rpmpd_opp_turbo>;
+ 			opp-peak-kBps = <5412000>;
+ 			opp-supported-hw = <0x40>;
+ 		}; */
+@@ -76,23 +85,26 @@ opp-750000000 {
+ 		/* bins 157,146 -> bits 6,5 */
+ 		/*opp-700000000 {
+ 			opp-hz = /bits/ 64 <700000000>;
+-			opp-level = <RPM_SMD_LEVEL_TURBO>;
++			required-opps = <&rpmpd_opp_turbo>, <&rpmpd_opp_turbo>;
+ 			opp-peak-kBps = <5184000>;
+ 			opp-supported-hw = <0x60>;
+ 		};*/
+ 
+-		/* bins 157,146,135 -> bits 6,5,4 */
+-		/*opp-647000000 {
++		/*
++		 * bins 157,146,135 -> bits 6,5,4; stock runs bin 135 (0x87) up to here.
++		 * Usable now that every OPP votes CX as well as MX.
++		 */
++		opp-647000000 {
+ 			opp-hz = /bits/ 64 <647000000>;
+-			opp-level = <RPM_SMD_LEVEL_NOM_PLUS>;
++			required-opps = <&rpmpd_opp_nom_plus>, <&rpmpd_opp_nom_plus>;
+ 			opp-peak-kBps = <4068000>;
+ 			opp-supported-hw = <0x70>;
+-		};*/
++		};
+ 
+ 		/* bins 157,146,135 -> bits 6,5,4 */
+ 		opp-588000000 {
+ 			opp-hz = /bits/ 64 <588000000>;
+-			opp-level = <RPM_SMD_LEVEL_NOM>;
++			required-opps = <&rpmpd_opp_nom>, <&rpmpd_opp_nom>;
+ 			opp-peak-kBps = <3072000>;
+ 			opp-supported-hw = <0x70>;
+ 		};
+@@ -100,7 +112,7 @@ opp-588000000 {
+ 		/* bins 157,146,135,122 -> bits 6,5,4,3 */
+ 		opp-465000000 {
+ 			opp-hz = /bits/ 64 <465000000>;
+-			opp-level = <RPM_SMD_LEVEL_SVS_PLUS>;
++			required-opps = <&rpmpd_opp_svs_plus>, <&rpmpd_opp_svs_plus>;
+ 			opp-peak-kBps = <2724000>;
+ 			opp-supported-hw = <0x78>;
+ 		};
+@@ -108,7 +120,7 @@ opp-465000000 {
+ 		/* this one is for SDM636 with bin 90, bit 2 */
+ 		opp-430000000 {
+ 			opp-hz = /bits/ 64 <430000000>;
+-			opp-level = <RPM_SMD_LEVEL_SVS_PLUS>;
++			required-opps = <&rpmpd_opp_svs_plus>, <&rpmpd_opp_svs_plus>;
+ 			opp-peak-kBps = <2724000>;
+ 			opp-supported-hw = <0x4>;
+ 		};
+@@ -116,21 +128,21 @@ opp-430000000 {
+ 		/* 370 MHz and below are supported in all bins */
+ 		opp-370000000 {
+ 			opp-hz = /bits/ 64 <370000000>;
+-			opp-level = <RPM_SMD_LEVEL_SVS>;
++			required-opps = <&rpmpd_opp_svs>, <&rpmpd_opp_svs>;
+ 			opp-peak-kBps = <2188000>;
+ 			opp-supported-hw = <0xff>;
+ 		};
+ 
+ 		opp-266000000 {
+ 			opp-hz = /bits/ 64 <266000000>;
+-			opp-level = <RPM_SMD_LEVEL_LOW_SVS>;
++			required-opps = <&rpmpd_opp_low_svs>, <&rpmpd_opp_low_svs>;
+ 			opp-peak-kBps = <1648000>;
+ 			opp-supported-hw = <0xff>;
+ 		};
+ 
+ 		opp-160000000 {
+ 			opp-hz = /bits/ 64 <160000000>;
+-			opp-level = <RPM_SMD_LEVEL_MIN_SVS>;
++			required-opps = <&rpmpd_opp_low_svs>, <&rpmpd_opp_min_svs>;
+ 			opp-peak-kBps = <1200000>;
+ 			opp-supported-hw = <0xff>;
+ 		};
+@@ -138,7 +150,7 @@ opp-160000000 {
+ 		/* Idle, parented to gpucc_cxo */
+ 		opp-19200000 {
+ 			opp-hz = /bits/ 64 <19200000>;
+-			opp-level = <RPM_SMD_LEVEL_MIN_SVS>;
++			required-opps = <&rpmpd_opp_min_svs>, <&rpmpd_opp_min_svs>;
+ 			opp-peak-kBps = <1200000>;
+ 			opp-supported-hw = <0xff>;
+ 		};
+@@ -148,49 +160,368 @@ opp-19200000 {
+ &cpu0 {
+ 	compatible = "qcom,kryo260";
+ 	capacity-dmips-mhz = <1024>;
++	/* Kryo 260 gold (A73-class), as on sm6115 */
++	dynamic-power-coefficient = <282>;
+ 	/delete-property/ operating-points-v2;
++	cpu-idle-states = <&perf_cpu_sleep_0 &perf_cpu_sleep_1>;
++	power-domains = <&cpu_pd0>;
++	power-domain-names = "psci";
+ };
+ 
+ &cpu1 {
+ 	compatible = "qcom,kryo260";
+ 	capacity-dmips-mhz = <1024>;
++	/* Kryo 260 gold (A73-class), as on sm6115 */
++	dynamic-power-coefficient = <282>;
+ 	/delete-property/ operating-points-v2;
++	cpu-idle-states = <&perf_cpu_sleep_0 &perf_cpu_sleep_1>;
++	power-domains = <&cpu_pd1>;
++	power-domain-names = "psci";
+ };
+ 
+ &cpu2 {
+ 	compatible = "qcom,kryo260";
+ 	capacity-dmips-mhz = <1024>;
++	/* Kryo 260 gold (A73-class), as on sm6115 */
++	dynamic-power-coefficient = <282>;
+ 	/delete-property/ operating-points-v2;
++	cpu-idle-states = <&perf_cpu_sleep_0 &perf_cpu_sleep_1>;
++	power-domains = <&cpu_pd2>;
++	power-domain-names = "psci";
+ };
+ 
+ &cpu3 {
+ 	compatible = "qcom,kryo260";
+ 	capacity-dmips-mhz = <1024>;
++	/* Kryo 260 gold (A73-class), as on sm6115 */
++	dynamic-power-coefficient = <282>;
+ 	/delete-property/ operating-points-v2;
++	cpu-idle-states = <&perf_cpu_sleep_0 &perf_cpu_sleep_1>;
++	power-domains = <&cpu_pd3>;
++	power-domain-names = "psci";
+ };
+ 
+ &cpu4 {
+ 	compatible = "qcom,kryo260";
+ 	capacity-dmips-mhz = <640>;
++	/* Kryo 260 silver (A53-class), as on sm6115 */
++	dynamic-power-coefficient = <100>;
+ 	/delete-property/ operating-points-v2;
++	cpu-idle-states = <&pwr_cpu_sleep_0 &pwr_cpu_sleep_1>;
++	power-domains = <&cpu_pd4>;
++	power-domain-names = "psci";
+ };
+ 
+ &cpu5 {
+ 	compatible = "qcom,kryo260";
+ 	capacity-dmips-mhz = <640>;
++	/* Kryo 260 silver (A53-class), as on sm6115 */
++	dynamic-power-coefficient = <100>;
+ 	/delete-property/ operating-points-v2;
++	cpu-idle-states = <&pwr_cpu_sleep_0 &pwr_cpu_sleep_1>;
++	power-domains = <&cpu_pd5>;
++	power-domain-names = "psci";
+ };
+ 
+ &cpu6 {
+ 	compatible = "qcom,kryo260";
+ 	capacity-dmips-mhz = <640>;
++	/* Kryo 260 silver (A53-class), as on sm6115 */
++	dynamic-power-coefficient = <100>;
+ 	/delete-property/ operating-points-v2;
++	cpu-idle-states = <&pwr_cpu_sleep_0 &pwr_cpu_sleep_1>;
++	power-domains = <&cpu_pd6>;
++	power-domain-names = "psci";
+ };
+ 
+ &cpu7 {
+ 	compatible = "qcom,kryo260";
+ 	capacity-dmips-mhz = <640>;
++	/* Kryo 260 silver (A53-class), as on sm6115 */
++	dynamic-power-coefficient = <100>;
+ 	/delete-property/ operating-points-v2;
++	cpu-idle-states = <&pwr_cpu_sleep_0 &pwr_cpu_sleep_1>;
++	power-domains = <&cpu_pd7>;
++	power-domain-names = "psci";
++};
++
++/*
++ * CPU and cluster (L2) idle, laid out for PSCI OS-initiated mode.
++ *
++ * The SDM660 PSCI firmware runs in OSI mode: SET_SUSPEND_MODE(PC) is DENIED
++ * ("failed to set PC mode: -3", the same pair of boot messages SC8280XP
++ * prints before switching to OSI fine). The vendor 4.4 kernel never switches
++ * modes; its lpm-levels driver composes OSI requests itself. In
++ * psci_enter_sleep()/get_cluster_id() (stock RS6 kernel, read in Ghidra) the
++ * power_state is
++ *
++ *   is_reset(CPU level) << 30 | affinity level << 24 | L2 mode << 4 | CPU mode
++ *
++ * where only the last CPU of a cluster adds an L2 mode, and every cluster
++ * level that is not the default (L2 WFI) adds 1 to the affinity level.
++ * CPU modes: 1 WFI, 2 retention, 3 power collapse. L2 modes: 2 dynamic
++ * retention, 3 retention, 4 power collapse (qcom,lpm-levels in the stock DT).
++ * The flat sdm630.dtsi cluster states (0x400000f2..f4: L2 field 0xf, affinity
++ * level 0, requested by any CPU) are not in that encoding and the firmware
++ * fails them at once. In s2idle that left the gold CPUs spinning through
++ * cpuidle with their tick running while silver slept, which the RS6 showed
++ * as hard-lockup and RCU stall reports. They are replaced by the hierarchy
++ * below: the CPU states stay per-CPU and the L2 states hang off one PSCI
++ * domain per cluster, which genpd only powers off once every CPU of the
++ * cluster is in CPU power collapse. With the domain parameter replacing the CPU one in
++ * __psci_enter_domain_idle_state(), each L2 state carries the full request
++ * the last CPU makes: CPU PC (is_reset, mode 3), affinity level 1, L2 mode.
++ * CPU retention is not a reset state in lpm-levels, hence 0x00000002.
++ *
++ * Timings come from the same stock qcom,lpm-levels nodes:
++ *   exit-latency-us  = qcom,latency-us
++ *   entry-latency-us = qcom,time-overhead - qcom,latency-us
++ *   min-residency-us = the level's min_residency as the vendor driver
++ *                      computes it from qcom,ss-power/energy-overhead/
++ *                      time-overhead (parse_cpu_levels(), parse_cluster(),
++ *                      set_optimum_cpu_residency(): one more than the
++ *                      shallower level's break-even residency).
++ * SM6115 (also Kryo 260) uses the same latencies for the states it shares.
++ *
++ * The system (CCI) level is the stock "system-pc" level: psci-mode 3 at
++ * qcom,psci-mode-shift 8, the level above both L2 levels, so affinity level 2
++ * on top of CPU PC and L2 PC: 0x42000343. Its timings use the same rules
++ * (latency 4506, time-overhead 15337, and system-wfi's break-even residency
++ * of 2156 us is below system-pc's time-overhead, so min_residency is
++ * 15337 + 1). Stock only enters it with qcom,min-child-idx = 3 (both
++ * clusters in L2 PC), which genpd gives here as well: the system domain's
++ * residency is longer than either L2 PC's, so by the time the CPU governor
++ * picks it each cluster has already picked L2 PC. It has qcom,notify-rpm:
++ * before the last CPU goes down, stock writes the next timer event into the
++ * vMPM, copies the wakeup interrupt setup there and kicks RPM through the
++ * APCS IPC register (msm_mpm_enter_sleep(), cluster_prepare()). Here the MPM
++ * is the parent of the system domain and does the same in its genpd
++ * power_off (irq-qcom-mpm.c), so RPM is told exactly when this state is
++ * picked. Dropping the system level alone: delete system_pd's
++ * domain-idle-states and power-domains together, never only the states.
++ */
++&pwr_cpu_sleep_0 {
++	arm,psci-suspend-param = <0x00000002>;
++	entry-latency-us = <109>;
++	exit-latency-us = <63>;
++	min-residency-us = <173>;
++};
++
++&pwr_cpu_sleep_1 {
++	entry-latency-us = <290>;
++	exit-latency-us = <376>;
++	min-residency-us = <2010>;
++};
++
++&perf_cpu_sleep_0 {
++	arm,psci-suspend-param = <0x00000002>;
++	entry-latency-us = <121>;
++	exit-latency-us = <60>;
++	min-residency-us = <192>;
++};
++
++&perf_cpu_sleep_1 {
++	entry-latency-us = <297>;
++	exit-latency-us = <324>;
++	min-residency-us = <2411>;
++};
++
++/delete-node/ &pwr_cluster_sleep_0;
++/delete-node/ &pwr_cluster_sleep_1;
++/delete-node/ &pwr_cluster_sleep_2;
++/delete-node/ &perf_cluster_sleep_0;
++/delete-node/ &perf_cluster_sleep_1;
++/delete-node/ &perf_cluster_sleep_2;
++
++&{/cpus} {
++	domain-idle-states {
++		pwr_l2_dynret: cluster-sleep-0-0 {
++			compatible = "domain-idle-state";
++			idle-state-name = "pwr-l2-dynret";
++			arm,psci-suspend-param = <0x41000023>;
++			entry-latency-us = <360>;
++			exit-latency-us = <421>;
++			min-residency-us = <782>;
++		};
++
++		pwr_l2_ret: cluster-sleep-0-1 {
++			compatible = "domain-idle-state";
++			idle-state-name = "pwr-l2-ret";
++			arm,psci-suspend-param = <0x41000033>;
++			entry-latency-us = <405>;
++			exit-latency-us = <517>;
++			min-residency-us = <6129>;
++		};
++
++		pwr_l2_pc: cluster-sleep-0-2 {
++			compatible = "domain-idle-state";
++			idle-state-name = "pwr-l2-pc";
++			arm,psci-suspend-param = <0x41000043>;
++			entry-latency-us = <800>;
++			exit-latency-us = <2118>;
++			min-residency-us = <8078>;
++		};
++
++		perf_l2_dynret: cluster-sleep-1-0 {
++			compatible = "domain-idle-state";
++			idle-state-name = "perf-l2-dynret";
++			arm,psci-suspend-param = <0x41000023>;
++			entry-latency-us = <314>;
++			exit-latency-us = <345>;
++			min-residency-us = <660>;
++		};
++
++		perf_l2_ret: cluster-sleep-1-1 {
++			compatible = "domain-idle-state";
++			idle-state-name = "perf-l2-ret";
++			arm,psci-suspend-param = <0x41000033>;
++			entry-latency-us = <318>;
++			exit-latency-us = <419>;
++			min-residency-us = <7114>;
++		};
++
++		perf_l2_pc: cluster-sleep-1-2 {
++			compatible = "domain-idle-state";
++			idle-state-name = "perf-l2-pc";
++			arm,psci-suspend-param = <0x41000043>;
++			entry-latency-us = <640>;
++			exit-latency-us = <1654>;
++			min-residency-us = <8444>;
++		};
++
++		system_pc: domain-sleep-system {
++			compatible = "domain-idle-state";
++			idle-state-name = "system-pc";
++			arm,psci-suspend-param = <0x42000343>;
++			entry-latency-us = <10831>;
++			exit-latency-us = <4506>;
++			min-residency-us = <15338>;
++		};
++	};
++};
++
++&{/psci} {
++	/* cpu@100-103: performance (gold) cluster, cpu-map cluster1 */
++	cpu_pd0: power-domain-cpu0 {
++		#power-domain-cells = <0>;
++		power-domains = <&cluster_pd1>;
++	};
++
++	cpu_pd1: power-domain-cpu1 {
++		#power-domain-cells = <0>;
++		power-domains = <&cluster_pd1>;
++	};
++
++	cpu_pd2: power-domain-cpu2 {
++		#power-domain-cells = <0>;
++		power-domains = <&cluster_pd1>;
++	};
++
++	cpu_pd3: power-domain-cpu3 {
++		#power-domain-cells = <0>;
++		power-domains = <&cluster_pd1>;
++	};
++
++	/* cpu@0-3: power (silver) cluster, cpu-map cluster0 */
++	cpu_pd4: power-domain-cpu4 {
++		#power-domain-cells = <0>;
++		power-domains = <&cluster_pd0>;
++	};
++
++	cpu_pd5: power-domain-cpu5 {
++		#power-domain-cells = <0>;
++		power-domains = <&cluster_pd0>;
++	};
++
++	cpu_pd6: power-domain-cpu6 {
++		#power-domain-cells = <0>;
++		power-domains = <&cluster_pd0>;
++	};
++
++	cpu_pd7: power-domain-cpu7 {
++		#power-domain-cells = <0>;
++		power-domains = <&cluster_pd0>;
++	};
++
++	cluster_pd0: power-domain-cluster0 {
++		#power-domain-cells = <0>;
++		power-domains = <&system_pd>;
++		domain-idle-states = <&pwr_l2_dynret>, <&pwr_l2_ret>, <&pwr_l2_pc>;
++	};
++
++	cluster_pd1: power-domain-cluster1 {
++		#power-domain-cells = <0>;
++		power-domains = <&system_pd>;
++		domain-idle-states = <&perf_l2_dynret>, <&perf_l2_ret>, <&perf_l2_pc>;
++	};
++
++	system_pd: power-domain-system {
++		#power-domain-cells = <0>;
++		power-domains = <&mpm>;
++		domain-idle-states = <&system_pc>;
++	};
++};
++
++/*
++ * MPM (MSM Power Manager) wakeup interrupt controller, from the stock
++ * qcom,mpm@7781b8 node (qcom,mpm-v2):
++ *   vMPM: reg 0x7781b8, inside the RPM message RAM at 0x778000. Its layout
++ *     (64-bit wakeup timer, then ENABLE, FALLING, RISING, POLARITY and STATUS
++ *     banks of 3 words for 0x60 pins) is the one stock msm_mpm_enter_sleep()
++ *     writes and irq-qcom-mpm.c uses.
++ *   ipc: 0x17911008 bit 1 (qcom,ipc-bit-offset), APCS IPC channel 1.
++ *   interrupts: <0 0xab 1>, SPI 171 rising edge.
++ *   qcom,gic-map pairs are <MPM pin, GIC hwirq>, hwirq = SPI + 32 (the 0xff
++ *     "no pin" entries start at hwirq 0x10, PPIs). Below as SPIs, with the
++ *     interrupt each one carries in the stock DT. Pins 79/81 (SPI 347,
++ *     dwc3 qusb2_phy) and 80/82 (SPI 348, usb2 qusb2_phy) share a GIC line,
++ *     which qcom,mpm-pin-map cannot express, so they are left out; USB plug
++ *     wakeup comes from the PM660 charger and Type-C blocks over SPMI.
++ *   qcom,gpio-map is pinctrl-sdm660.c's sdm660_mpm_map, entry for entry.
++ */
++/ {
++	mpm: interrupt-controller {
++		compatible = "qcom,mpm";
++		qcom,rpm-msg-ram = <&apss_mpm>;
++		interrupts = <GIC_SPI 171 IRQ_TYPE_EDGE_RISING>;
++		mboxes = <&apcs_glb 1>;
++		interrupt-controller;
++		#interrupt-cells = <2>;
++		#power-domain-cells = <0>;
++		interrupt-parent = <&intc>;
++		qcom,mpm-pin-count = <96>;
++		qcom,mpm-pin-map = <2 184>,	/* tsens uplow */
++				   <52 243>,	/* dwc3 ss_phy_irq */
++				   <61 177>,	/* wcd9xxx-irq (lpass) */
++				   <87 326>,	/* SPMI periph_irq */
++				   <91 487>;	/* no consumer in the stock DT */
++	};
++};
++
++&rpm_msg_ram {
++	#address-cells = <1>;
++	#size-cells = <1>;
++	ranges = <0 0x00778000 0x7000>;
++
++	apss_mpm: sram@1b8 {
++		reg = <0x1b8 0x48>;
++	};
++};
++
++/* PMIC interrupts: power key, RESIN, PM660L GPIO 7 key, RTC alarm, charger */
++&spmi_bus {
++	/delete-property/ interrupts;
++	interrupts-extended = <&mpm 87 IRQ_TYPE_LEVEL_HIGH>;
++};
++
++&tlmm {
++	wakeup-parent = <&mpm>;
++};
++
++&tsens {
++	/delete-property/ interrupts;
++	interrupts-extended = <&mpm 2 IRQ_TYPE_LEVEL_HIGH>,
++			      <&intc GIC_SPI 430 IRQ_TYPE_LEVEL_HIGH>;
+ };
+ 
+ &gcc {
+@@ -435,6 +766,142 @@ compute-cb@11 {
+ 			};
+ 		};
+ 	};
++
++	/*
++	 * L2 SAW4 AVS ports: CPRh voltage requests reach the PMIC through
++	 * them.  AVS_CTL/AVS_LIMIT come from the spm driver data, which
++	 * matches the vendor qcom,saw2-avs-{ctl,limit}.
++	 */
++	saw_gold_l2: power-manager@17812000 {
++		compatible = "qcom,sdm660-gold-saw2-v4.1-l2", "qcom,saw2";
++		reg = <0x17812000 0x1000>;
++		status = "disabled";
++	};
++
++	saw_silver_l2: power-manager@17912000 {
++		compatible = "qcom,sdm660-silver-saw2-v4.1-l2", "qcom,saw2";
++		reg = <0x17912000 0x1000>;
++		status = "disabled";
++	};
++
++	cpufreq_hw: cpufreq@179c0000 {
++		compatible = "qcom,sdm660-cpufreq-hw";
++		reg = <0x179c0000 0x1000>, <0x179c1000 0x1000>,
++		      <0x179c2000 0x1000>, <0x179c3000 0x1000>;
++		reg-names = "osm-domain0", "freq-domain0",
++			    "osm-domain1", "freq-domain1";
++
++		clocks = <&rpmcc RPM_SMD_XO_A_CLK_SRC>,
++			 <&gcc HMSS_GPLL0_CLK_SRC>;
++		clock-names = "xo", "alternate";
++
++		/* OSM LUT index 0 runs from this 300 MHz source */
++		assigned-clocks = <&gcc HMSS_GPLL0_CLK_SRC>;
++		assigned-clock-rates = <300000000>;
++
++		#freq-domain-cells = <1>;
++		#clock-cells = <1>;
++		status = "disabled";
++	};
++
++	/* reg[0] = apc0 (power cluster), reg[1] = apc1 (performance cluster) */
++	apc_cprh: power-controller@179c8000 {
++		compatible = "qcom,sdm660-cprh";
++		reg = <0x179c8000 0x4000>, <0x179c4000 0x4000>;
++
++		clocks = <&gcc GCC_HMSS_RBCPR_CLK>;
++		clock-names = "ref";
++		assigned-clocks = <&gcc GCC_HMSS_RBCPR_CLK>;
++		assigned-clock-rates = <19200000>;
++
++		operating-points-v2 = <&cprh_opp_table>;
++		power-domains = <&rpmpd SDM660_VDDCX_AO>;
++		#power-domain-cells = <1>;
++
++		nvmem-cells = <&cpr_efuse_speedbin>,
++			      <&cpr_fuse_revision>,
++			      <&cpr_quot0_pwrcl>,
++			      <&cpr_quot1_pwrcl>,
++			      <&cpr_quot2_pwrcl>,
++			      <&cpr_quot3_pwrcl>,
++			      <&cpr_quot4_pwrcl>,
++			      <&cpr_qoff1_pwrcl>,
++			      <&cpr_qoff2_pwrcl>,
++			      <&cpr_qoff3_pwrcl>,
++			      <&cpr_qoff4_pwrcl>,
++			      <&cpr_ivolt0_pwrcl>,
++			      <&cpr_ivolt1_pwrcl>,
++			      <&cpr_ivolt2_pwrcl>,
++			      <&cpr_ivolt3_pwrcl>,
++			      <&cpr_ivolt4_pwrcl>,
++			      <&cpr_rosel0_pwrcl>,
++			      <&cpr_rosel1_pwrcl>,
++			      <&cpr_rosel2_pwrcl>,
++			      <&cpr_rosel3_pwrcl>,
++			      <&cpr_rosel4_pwrcl>,
++			      <&cpr_quot0_perfcl>,
++			      <&cpr_quot1_perfcl>,
++			      <&cpr_quot2_perfcl>,
++			      <&cpr_quot3_perfcl>,
++			      <&cpr_quot4_perfcl>,
++			      <&cpr_qoff1_perfcl>,
++			      <&cpr_qoff2_perfcl>,
++			      <&cpr_qoff3_perfcl>,
++			      <&cpr_qoff4_perfcl>,
++			      <&cpr_ivolt0_perfcl>,
++			      <&cpr_ivolt1_perfcl>,
++			      <&cpr_ivolt2_perfcl>,
++			      <&cpr_ivolt3_perfcl>,
++			      <&cpr_ivolt4_perfcl>,
++			      <&cpr_rosel0_perfcl>,
++			      <&cpr_rosel1_perfcl>,
++			      <&cpr_rosel2_perfcl>,
++			      <&cpr_rosel3_perfcl>,
++			      <&cpr_rosel4_perfcl>;
++
++		nvmem-cell-names = "cpr_speed_bin",
++				   "cpr_fuse_revision",
++				   "cpr0_quotient1",
++				   "cpr0_quotient2",
++				   "cpr0_quotient3",
++				   "cpr0_quotient4",
++				   "cpr0_quotient5",
++				   "cpr0_quotient_offset2",
++				   "cpr0_quotient_offset3",
++				   "cpr0_quotient_offset4",
++				   "cpr0_quotient_offset5",
++				   "cpr0_init_voltage1",
++				   "cpr0_init_voltage2",
++				   "cpr0_init_voltage3",
++				   "cpr0_init_voltage4",
++				   "cpr0_init_voltage5",
++				   "cpr0_ring_osc1",
++				   "cpr0_ring_osc2",
++				   "cpr0_ring_osc3",
++				   "cpr0_ring_osc4",
++				   "cpr0_ring_osc5",
++				   "cpr1_quotient1",
++				   "cpr1_quotient2",
++				   "cpr1_quotient3",
++				   "cpr1_quotient4",
++				   "cpr1_quotient5",
++				   "cpr1_quotient_offset2",
++				   "cpr1_quotient_offset3",
++				   "cpr1_quotient_offset4",
++				   "cpr1_quotient_offset5",
++				   "cpr1_init_voltage1",
++				   "cpr1_init_voltage2",
++				   "cpr1_init_voltage3",
++				   "cpr1_init_voltage4",
++				   "cpr1_init_voltage5",
++				   "cpr1_ring_osc1",
++				   "cpr1_ring_osc2",
++				   "cpr1_ring_osc3",
++				   "cpr1_ring_osc4",
++				   "cpr1_ring_osc5";
++
++		status = "disabled";
++	};
+ };
+ 
+ &tlmm {
+@@ -444,3 +911,321 @@ &tlmm {
+ &tsens {
+ 	#qcom,sensors = <14>;
+ };
++
++/*
++ * CPU DVFS: CPR-Hardened (KBSS) voltage controllers and the Operating State
++ * Manager, programmed by the OS.  The fuse layout below is the vendor
++ * kernel's (cprh-kbss-regulator.c: kbss_speed_bin_param,
++ * sdm660_cpr_fusing_rev_param, sdm660_kbss_{target_quot,quot_offset,
++ * init_voltage,ro_sel}_param), relative to qfprom@780000.  cpr0 = power
++ * (silver) cluster, cpr1 = performance (gold) cluster.
++ */
++&qfprom {
++	/* kbss_speed_bin_param: row 38 bits 29-31 */
++	cpr_efuse_speedbin: cpr-speedbin@4133 {
++		reg = <0x4133 0x1>;
++		bits = <5 3>;
++	};
++
++	/* sdm660_cpr_fusing_rev_param: row 71 bits 28-30 */
++	cpr_fuse_revision: cpr-fusing-rev@423b {
++		reg = <0x423b 0x1>;
++		bits = <4 3>;
++	};
++
++	/* sdm660_kbss_target_quot_param[0][0]: row 68 bits 12-23 */
++	cpr_quot0_pwrcl: quot0-pwrcl@4221 {
++		reg = <0x4221 0x2>;
++		bits = <4 12>;
++	};
++
++	/* sdm660_kbss_target_quot_param[0][1]: row 68 bits 0-11 */
++	cpr_quot1_pwrcl: quot1-pwrcl@4220 {
++		reg = <0x4220 0x2>;
++		bits = <0 12>;
++	};
++
++	/* sdm660_kbss_target_quot_param[0][2]: row 71 bits 9-20 */
++	cpr_quot2_pwrcl: quot2-pwrcl@4239 {
++		reg = <0x4239 0x2>;
++		bits = <1 12>;
++	};
++
++	/* sdm660_kbss_target_quot_param[0][3]: row 67 bits 52-63 */
++	cpr_quot3_pwrcl: quot3-pwrcl@421e {
++		reg = <0x421e 0x2>;
++		bits = <4 12>;
++	};
++
++	/* sdm660_kbss_target_quot_param[0][4]: row 67 bits 40-51 */
++	cpr_quot4_pwrcl: quot4-pwrcl@421d {
++		reg = <0x421d 0x2>;
++		bits = <0 12>;
++	};
++
++	/* sdm660_kbss_quot_offset_param[0][1]: row 68 bits 38-44 */
++	cpr_qoff1_pwrcl: qoff1-pwrcl@4224 {
++		reg = <0x4224 0x2>;
++		bits = <6 7>;
++	};
++
++	/* sdm660_kbss_quot_offset_param[0][2]: row 71 bits 21-27 */
++	cpr_qoff2_pwrcl: qoff2-pwrcl@423a {
++		reg = <0x423a 0x2>;
++		bits = <5 7>;
++	};
++
++	/* sdm660_kbss_quot_offset_param[0][3]: row 68 bits 31-37 */
++	cpr_qoff3_pwrcl: qoff3-pwrcl@4223 {
++		reg = <0x4223 0x2>;
++		bits = <7 7>;
++	};
++
++	/* sdm660_kbss_quot_offset_param[0][4]: row 68 bits 24-30 */
++	cpr_qoff4_pwrcl: qoff4-pwrcl@4223 {
++		reg = <0x4223 0x1>;
++		bits = <0 7>;
++	};
++
++	/* sdm660_kbss_init_voltage_param[0][0]: row 67 bits 34-39 */
++	cpr_ivolt0_pwrcl: ivolt0-pwrcl@421c {
++		reg = <0x421c 0x1>;
++		bits = <2 6>;
++	};
++
++	/* sdm660_kbss_init_voltage_param[0][1]: row 67 bits 28-33 */
++	cpr_ivolt1_pwrcl: ivolt1-pwrcl@421b {
++		reg = <0x421b 0x2>;
++		bits = <4 6>;
++	};
++
++	/* sdm660_kbss_init_voltage_param[0][2]: row 71 bits 3-8 */
++	cpr_ivolt2_pwrcl: ivolt2-pwrcl@4238 {
++		reg = <0x4238 0x2>;
++		bits = <3 6>;
++	};
++
++	/* sdm660_kbss_init_voltage_param[0][3]: row 67 bits 22-27 */
++	cpr_ivolt3_pwrcl: ivolt3-pwrcl@421a {
++		reg = <0x421a 0x2>;
++		bits = <6 6>;
++	};
++
++	/* sdm660_kbss_init_voltage_param[0][4]: row 67 bits 16-21 */
++	cpr_ivolt4_pwrcl: ivolt4-pwrcl@421a {
++		reg = <0x421a 0x1>;
++		bits = <0 6>;
++	};
++
++	/* sdm660_kbss_ro_sel_param[0][0]: row 67 bits 12-15 */
++	cpr_rosel0_pwrcl: rosel0-pwrcl@4219 {
++		reg = <0x4219 0x1>;
++		bits = <4 4>;
++	};
++
++	/* sdm660_kbss_ro_sel_param[0][1]: row 67 bits 8-11 */
++	cpr_rosel1_pwrcl: rosel1-pwrcl@4219 {
++		reg = <0x4219 0x1>;
++		bits = <0 4>;
++	};
++
++	/* sdm660_kbss_ro_sel_param[0][2]: row 65 bits 56-59 */
++	cpr_rosel2_pwrcl: rosel2-pwrcl@420f {
++		reg = <0x420f 0x1>;
++		bits = <0 4>;
++	};
++
++	/* sdm660_kbss_ro_sel_param[0][3]: row 67 bits 4-7 */
++	cpr_rosel3_pwrcl: rosel3-pwrcl@4218 {
++		reg = <0x4218 0x1>;
++		bits = <4 4>;
++	};
++
++	/* sdm660_kbss_ro_sel_param[0][4]: row 67 bits 0-3 */
++	cpr_rosel4_pwrcl: rosel4-pwrcl@4218 {
++		reg = <0x4218 0x1>;
++		bits = <0 4>;
++	};
++
++	/* sdm660_kbss_target_quot_param[1][0]: row 69 bits 53-63, row 70 bits 0-0 */
++	cpr_quot0_perfcl: quot0-perfcl@422e {
++		reg = <0x422e 0x3>;
++		bits = <5 12>;
++	};
++
++	/* sdm660_kbss_target_quot_param[1][1]: row 70 bits 1-12 */
++	cpr_quot1_perfcl: quot1-perfcl@4230 {
++		reg = <0x4230 0x2>;
++		bits = <1 12>;
++	};
++
++	/* sdm660_kbss_target_quot_param[1][2]: row 69 bits 41-52 */
++	cpr_quot2_perfcl: quot2-perfcl@422d {
++		reg = <0x422d 0x2>;
++		bits = <1 12>;
++	};
++
++	/* sdm660_kbss_target_quot_param[1][3]: row 69 bits 29-40 */
++	cpr_quot3_perfcl: quot3-perfcl@422b {
++		reg = <0x422b 0x3>;
++		bits = <5 12>;
++	};
++
++	/* sdm660_kbss_target_quot_param[1][4]: row 70 bits 48-59 */
++	cpr_quot4_perfcl: quot4-perfcl@4236 {
++		reg = <0x4236 0x2>;
++		bits = <0 12>;
++	};
++
++	/* sdm660_kbss_quot_offset_param[1][1]: row 70 bits 27-33 */
++	cpr_qoff1_perfcl: qoff1-perfcl@4233 {
++		reg = <0x4233 0x2>;
++		bits = <3 7>;
++	};
++
++	/* sdm660_kbss_quot_offset_param[1][2]: row 70 bits 20-26 */
++	cpr_qoff2_perfcl: qoff2-perfcl@4232 {
++		reg = <0x4232 0x2>;
++		bits = <4 7>;
++	};
++
++	/* sdm660_kbss_quot_offset_param[1][3]: row 70 bits 13-19 */
++	cpr_qoff3_perfcl: qoff3-perfcl@4231 {
++		reg = <0x4231 0x2>;
++		bits = <5 7>;
++	};
++
++	/* sdm660_kbss_quot_offset_param[1][4]: row 70 bits 60-63, row 71 bits 0-2 */
++	cpr_qoff4_perfcl: qoff4-perfcl@4237 {
++		reg = <0x4237 0x2>;
++		bits = <4 7>;
++	};
++
++	/* sdm660_kbss_init_voltage_param[1][0]: row 69 bits 17-22 */
++	cpr_ivolt0_perfcl: ivolt0-perfcl@422a {
++		reg = <0x422a 0x1>;
++		bits = <1 6>;
++	};
++
++	/* sdm660_kbss_init_voltage_param[1][1]: row 69 bits 23-28 */
++	cpr_ivolt1_perfcl: ivolt1-perfcl@422a {
++		reg = <0x422a 0x2>;
++		bits = <7 6>;
++	};
++
++	/* sdm660_kbss_init_voltage_param[1][2]: row 69 bits 11-16 */
++	cpr_ivolt2_perfcl: ivolt2-perfcl@4229 {
++		reg = <0x4229 0x2>;
++		bits = <3 6>;
++	};
++
++	/* sdm660_kbss_init_voltage_param[1][3]: row 69 bits 5-10 */
++	cpr_ivolt3_perfcl: ivolt3-perfcl@4228 {
++		reg = <0x4228 0x2>;
++		bits = <5 6>;
++	};
++
++	/* sdm660_kbss_init_voltage_param[1][4]: row 70 bits 42-47 */
++	cpr_ivolt4_perfcl: ivolt4-perfcl@4235 {
++		reg = <0x4235 0x1>;
++		bits = <2 6>;
++	};
++
++	/* sdm660_kbss_ro_sel_param[1][0]: row 68 bits 61-63, row 69 bits 0-0 */
++	cpr_rosel0_perfcl: rosel0-perfcl@4227 {
++		reg = <0x4227 0x2>;
++		bits = <5 4>;
++	};
++
++	/* sdm660_kbss_ro_sel_param[1][1]: row 69 bits 1-4 */
++	cpr_rosel1_perfcl: rosel1-perfcl@4228 {
++		reg = <0x4228 0x1>;
++		bits = <1 4>;
++	};
++
++	/* sdm660_kbss_ro_sel_param[1][2]: row 68 bits 57-60 */
++	cpr_rosel2_perfcl: rosel2-perfcl@4227 {
++		reg = <0x4227 0x1>;
++		bits = <1 4>;
++	};
++
++	/* sdm660_kbss_ro_sel_param[1][3]: row 68 bits 53-56 */
++	cpr_rosel3_perfcl: rosel3-perfcl@4226 {
++		reg = <0x4226 0x2>;
++		bits = <5 4>;
++	};
++
++	/* sdm660_kbss_ro_sel_param[1][4]: row 66 bits 14-17 */
++	cpr_rosel4_perfcl: rosel4-perfcl@4211 {
++		reg = <0x4211 0x2>;
++		bits = <6 4>;
++	};
++};
++
++/ {
++	/*
++	 * CPRh virtual corners, shared by both clusters.  qcom,opp-fuse-level
++	 * is <pwrcl perfcl>, from the vendor qcom,cpr-corner-fmax-map:
++	 * pwrcl <2 3 4 5 8>, perfcl <2 3 4 6 7>.  The vendor DT has no
++	 * per-corner open/closed-loop adjustment.
++	 */
++	cprh_opp_table: opp-table-cprh {
++		compatible = "operating-points-v2-qcom-level";
++
++		cprh_opp1: opp-1 {
++			opp-level = <1>;
++			qcom,opp-fuse-level = <1 1>;
++			qcom,opp-oloop-vadj = <0 0>;
++			qcom,opp-cloop-vadj = <0 0>;
++		};
++
++		cprh_opp2: opp-2 {
++			opp-level = <2>;
++			qcom,opp-fuse-level = <1 1>;
++			qcom,opp-oloop-vadj = <0 0>;
++			qcom,opp-cloop-vadj = <0 0>;
++		};
++
++		cprh_opp3: opp-3 {
++			opp-level = <3>;
++			qcom,opp-fuse-level = <2 2>;
++			qcom,opp-oloop-vadj = <0 0>;
++			qcom,opp-cloop-vadj = <0 0>;
++		};
++
++		cprh_opp4: opp-4 {
++			opp-level = <4>;
++			qcom,opp-fuse-level = <3 3>;
++			qcom,opp-oloop-vadj = <0 0>;
++			qcom,opp-cloop-vadj = <0 0>;
++		};
++
++		cprh_opp5: opp-5 {
++			opp-level = <5>;
++			qcom,opp-fuse-level = <4 4>;
++			qcom,opp-oloop-vadj = <0 0>;
++			qcom,opp-cloop-vadj = <0 0>;
++		};
++
++		cprh_opp6: opp-6 {
++			opp-level = <6>;
++			qcom,opp-fuse-level = <5 4>;
++			qcom,opp-oloop-vadj = <0 0>;
++			qcom,opp-cloop-vadj = <0 0>;
++		};
++
++		cprh_opp7: opp-7 {
++			opp-level = <7>;
++			qcom,opp-fuse-level = <5 5>;
++			qcom,opp-oloop-vadj = <0 0>;
++			qcom,opp-cloop-vadj = <0 0>;
++		};
++
++		cprh_opp8: opp-8 {
++			opp-level = <8>;
++			qcom,opp-fuse-level = <5 5>;
++			qcom,opp-oloop-vadj = <0 0>;
++			qcom,opp-cloop-vadj = <0 0>;
++		};
++	};
++};
