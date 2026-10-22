@@ -1,4 +1,4 @@
-From 1543df5424b812d511744cb84062e7e7b77bc1ea Mon Sep 17 00:00:00 2001
+From 99d5d913e4c91a29e4c09b093eadc5d0e8964591 Mon Sep 17 00:00:00 2001
 From: Fabricio Akio <fabricioakio@gmail.com>
 Date: Fri, 9 Oct 2026 17:49:30 -0300
 Subject: [PATCH 76/94] arm64: dts: qcom: sdm630: Add interconnect paths to the

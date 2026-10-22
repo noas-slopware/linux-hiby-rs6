@@ -1,4 +1,4 @@
-From d68f919e118df843350ac3a5a93c2cd511bb9b64 Mon Sep 17 00:00:00 2001
+From 31ae80db1f229cc6cd63d2e452a83c770fead524 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 12:19:27 +0900
 Subject: [PATCH 45/94] drm/msm/a5xx: say why the GPMU registers are only

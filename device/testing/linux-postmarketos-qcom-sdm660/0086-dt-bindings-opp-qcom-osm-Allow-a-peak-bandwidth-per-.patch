@@ -1,4 +1,4 @@
-From 198eb480926dfee1093bb228b12df202289cb225 Mon Sep 17 00:00:00 2001
+From 7c799ca000a4834bc1baa95bc1b2ae3c5fc7ed95 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 15:26:21 +0900
 Subject: [PATCH 86/94] dt-bindings: opp: qcom-osm: Allow a peak bandwidth per

@@ -1,4 +1,4 @@
-From 8952a90e6997d09606dfad7326e1688046759cb5 Mon Sep 17 00:00:00 2001
+From 0fb55f3c7577fb1ff6ea6ecfcaabe1d1b0c03107 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 17:48:36 +0900
 Subject: [PATCH 90/94] dt-bindings: clock: qcom,gcc-sdm660: Add the CXO2 input

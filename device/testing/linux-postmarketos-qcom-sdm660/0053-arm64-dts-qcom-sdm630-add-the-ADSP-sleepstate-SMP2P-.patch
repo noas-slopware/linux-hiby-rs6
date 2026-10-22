@@ -1,4 +1,4 @@
-From f5aae464ec261cad6128b0990a4a41db801c7f90 Mon Sep 17 00:00:00 2001
+From d3c4452316a9fb7897087d8d3f44e2bbc7b336b1 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 12:21:09 +0900
 Subject: [PATCH 53/94] arm64: dts: qcom: sdm630: add the ADSP sleepstate SMP2P

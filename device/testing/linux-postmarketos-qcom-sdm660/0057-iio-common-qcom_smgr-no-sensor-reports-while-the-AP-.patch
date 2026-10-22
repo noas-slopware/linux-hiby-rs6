@@ -1,4 +1,4 @@
-From f4e18cf60f2b1fdaf89d31c1be6fdd1341359b75 Mon Sep 17 00:00:00 2001
+From ec59f0aa7596a7315c78e3767f378503a46d0fcb Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 12:23:23 +0900
 Subject: [PATCH 57/94] iio: common: qcom_smgr: no sensor reports while the AP

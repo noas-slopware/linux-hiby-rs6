@@ -1,4 +1,4 @@
-From 8dd3137e9c8d920ea14b0bd055e39bca2dc3a131 Mon Sep 17 00:00:00 2001
+From c21693a93c1f061c1b420b31c65804819b208d99 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:02 +0900
 Subject: [PATCH 33/94] ASoC: qcom: sm8250: codec-clocked secondary MI2S

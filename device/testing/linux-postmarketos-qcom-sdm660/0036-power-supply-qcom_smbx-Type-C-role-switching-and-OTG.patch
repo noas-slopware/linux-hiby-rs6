@@ -1,4 +1,4 @@
-From 6392386400edbfc17385ae8cc64f068c0c75632e Mon Sep 17 00:00:00 2001
+From 666f0c9d929a08cc891d75376f9e4e05e982d916 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:02 +0900
 Subject: [PATCH 36/94] power: supply: qcom_smbx: Type-C role switching and OTG

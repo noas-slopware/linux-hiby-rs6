@@ -1,4 +1,4 @@
-From 9156d67a90ebd1524274e006c3ddb2f55f32837a Mon Sep 17 00:00:00 2001
+From e54d903bd048b00fb172050355b79689bc72f807 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:02 +0900
 Subject: [PATCH 35/94] regulator: qcom_smd: add qcom,rpm-exact-voltage

@@ -1,4 +1,4 @@
-From f878bf620d265d9b62af9fcf084922dfd4885719 Mon Sep 17 00:00:00 2001
+From 3dd5ebb7e02b102bc13d28cb10c0a9804ab67cd5 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 17:48:57 +0900
 Subject: [PATCH 92/94] arm64: dts: qcom: sdm630: Feed the GCC CLKREF clocks

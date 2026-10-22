@@ -1,4 +1,4 @@
-From 75f94abf02d317590d5891d059a91f9c47edd95f Mon Sep 17 00:00:00 2001
+From 1e0f2698672f4f0f5c648b9b4531b5c79e7223e2 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:01 +0900
 Subject: [PATCH 26/94] fs: don't charge do_file_open_root() lookups to the
@@ -11,7 +11,7 @@ for firmware. Its nameidata inherited the outer walk's total_link_count
 and gave it back, so every failed search-path attempt through a
 "/lib -> usr/lib" symlink leaked counts into the outer walk, and later
 lookups of nonexistent files failed with -ELOOP instead of -ENOENT
-(seen as a530_pm4.fw failing with -40 on postmarketOS). Start the walk at
+(seen as a530_pm4.fw failing with -40 on Nura). Start the walk at
 zero and restore the outer count afterwards.
 
 Assisted-by: Claude:claude-opus-5-5

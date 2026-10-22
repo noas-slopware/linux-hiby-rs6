@@ -1,4 +1,4 @@
-From 5ebbee593ead0344691cac1a7b4d8c79226731c3 Mon Sep 17 00:00:00 2001
+From 62b58ab28134f5b10de2c806e6812fe6af969ef1 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 17:48:36 +0900
 Subject: [PATCH 91/94] clk: qcom: gcc-sdm660: Fix parent for CLKREF clocks

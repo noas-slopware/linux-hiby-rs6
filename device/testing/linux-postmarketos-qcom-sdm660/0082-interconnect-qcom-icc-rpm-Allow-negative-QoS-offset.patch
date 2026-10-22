@@ -1,4 +1,4 @@
-From b5434d94f4958ba2886882ea6b65f08c0db14300 Mon Sep 17 00:00:00 2001
+From daf8aec06138fa90e7aaa3774f1ba468335937e3 Mon Sep 17 00:00:00 2001
 From: Konrad Dybcio <konrad.dybcio@linaro.org>
 Date: Mon, 19 Oct 2026 17:12:43 +0300
 Subject: [PATCH 82/94] interconnect: qcom: icc-rpm: Allow negative QoS offset

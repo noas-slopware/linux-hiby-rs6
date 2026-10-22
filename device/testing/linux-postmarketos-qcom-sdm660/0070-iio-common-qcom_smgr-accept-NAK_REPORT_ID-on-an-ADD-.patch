@@ -1,4 +1,4 @@
-From 83afb0a7905749a89bb0e37239510b4a155dad97 Mon Sep 17 00:00:00 2001
+From cb7abea6131023cd1ffdd4e493bf0e74d6999e30 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 12:59:55 +0900
 Subject: [PATCH 70/94] iio: common: qcom_smgr: accept NAK_REPORT_ID on an ADD

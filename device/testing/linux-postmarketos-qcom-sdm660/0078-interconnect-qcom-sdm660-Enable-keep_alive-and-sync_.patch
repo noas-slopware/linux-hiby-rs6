@@ -1,4 +1,4 @@
-From 536ef29597c4bb13b9c783f43d84d4f9bb7a05d6 Mon Sep 17 00:00:00 2001
+From f550073f8b70419353e68c26d3097b50611d9724 Mon Sep 17 00:00:00 2001
 From: Fabricio Akio <fabricioakio@gmail.com>
 Date: Fri, 9 Oct 2026 17:45:41 -0300
 Subject: [PATCH 78/94] interconnect: qcom: sdm660: Enable keep_alive and

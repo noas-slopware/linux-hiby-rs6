@@ -1,4 +1,4 @@
-From 045ab2183b0796f41edd6a1050396e523829715a Mon Sep 17 00:00:00 2001
+From c0046b9acddd1de8a0068478389fdcef490cccbf Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:03 +0900
 Subject: [PATCH 42/94] arm64: dts: qcom: add the HiBy RS6
@@ -79,7 +79,7 @@ index 000000000..45dff6bbf
 + *
 + * HiBy RS6 digital audio player. Based on sdm660-xiaomi-lavender-common.dtsi.
 + * Board facts come from the stock 1.80 device tree ("SDM 660 PM660 + PM660L +
-+ * RS6 MTP"); see docs/hardware.md in the porting repo.
++ * RS6 MTP"); see docs/rs6-hardware-map.md in the porting repo.
 + */
 +
 +/dts-v1/;

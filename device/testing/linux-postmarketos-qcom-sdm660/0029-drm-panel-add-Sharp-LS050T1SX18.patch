@@ -1,4 +1,4 @@
-From ff54eb80e14d7352ef396ae1e587f41a71b6a2b7 Mon Sep 17 00:00:00 2001
+From 6bb19f9dda4a82a8a2dc98a50ea76e796f354702 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:01 +0900
 Subject: [PATCH 29/94] drm/panel: add Sharp LS050T1SX18

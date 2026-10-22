@@ -1,4 +1,4 @@
-From d207d902ee943dc18c99db13c0ad57fd1efcb228 Mon Sep 17 00:00:00 2001
+From 7226f360f516bdd350833a5e986cca8a5222e09b Mon Sep 17 00:00:00 2001
 From: Arpit Saini <arpit.saini@oss.qualcomm.com>
 Date: Tue, 6 Oct 2026 18:43:53 +0530
 Subject: [PATCH 80/94] drm/msm/dsi: fix AHB clock staying enabled across

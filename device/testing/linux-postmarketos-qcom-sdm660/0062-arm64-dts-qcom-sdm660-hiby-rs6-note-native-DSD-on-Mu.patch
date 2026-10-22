@@ -1,4 +1,4 @@
-From 2f0b5b638a6b3c378c2ddbe3541a51ac4e570b79 Mon Sep 17 00:00:00 2001
+From 25a82d52ad136b0bfe88c321abc0543bc7d4272a Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 12:24:15 +0900
 Subject: [PATCH 62/94] arm64: dts: qcom: sdm660-hiby-rs6: note native DSD on

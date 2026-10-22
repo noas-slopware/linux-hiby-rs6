@@ -1,4 +1,4 @@
-From edf1d0a6f44ae2b6afb89b826565e9d2c73e66c9 Mon Sep 17 00:00:00 2001
+From 03c9b3fcd829fa893a0305d67b0e2006d29bc7d4 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:01 +0900
 Subject: [PATCH 31/94] ASoC: codecs: add the HiBy hm100 FPGA DAC

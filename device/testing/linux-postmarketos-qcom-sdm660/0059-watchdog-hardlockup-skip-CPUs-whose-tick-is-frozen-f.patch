@@ -1,4 +1,4 @@
-From 763984c34e180cd0275c01c0f5d36a59343713be Mon Sep 17 00:00:00 2001
+From 99167d484e153571d94af983fe5f849b93f88afd Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 12:23:46 +0900
 Subject: [PATCH 59/94] watchdog/hardlockup: skip CPUs whose tick is frozen for
