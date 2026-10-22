@@ -1,8 +1,7 @@
 # linux-hiby-rs6
 
 Mainline-based Linux and U-Boot for the HiBy RS6 digital audio player, with the userspace
-pieces, install tools and notes needed to run postmarketOS on it ("Nura" in the scripts and notes is
-the name of this port's postmarketOS image). The port was done by Noa
+pieces, install tools and notes needed to run Nura (formerly postmarketOS) on it. The port was done by Noa
 Himesaka. It is not affiliated with HiBy.
 
 ## The device
@@ -16,7 +15,7 @@ over the SoC's secondary MI2S port, plus an NJW1195A volume IC. Outputs: single-
 (LO), balanced (BAL, BAL-LO).
 
 The stock boot chain (XBL, ABL) is not unlocked, but it will boot an Android boot image from
-`boot_a`. U-Boot is chainloaded from there; U-Boot then boots the postmarketOS image with
+`boot_a`. U-Boot is chainloaded from there; U-Boot then boots the Nura image with
 extlinux from the eMMC.
 
 ## What works
@@ -25,7 +24,7 @@ As of 2026-10-22, on the author's unit, running the r29 build of exactly the pub
 
 - Boot: stock ABL -> U-Boot (in `boot_a`) -> extlinux -> Linux. Verified. U-Boot has an
   off-mode charging screen with battery digits (verified), and USB Mass Storage for flashing.
-  The boot uses postmarketOS's own splash; the screen blanks once when msm takes over from simpledrm.
+  The boot uses Nura's own splash; the screen blanks once when msm takes over from simpledrm.
 - Display, backlight (PWM on the PM660L LPG), touchscreen, GPU (Adreno 512 with freedreno, a soak
   test of 60 kmscube cycles ran clean). Verified. Mesa carries six a5xx patches (`patches/mesa/`) for the
   Adreno 512's rendering artifacts and Qt text. The firmware set ships the Qualcomm PFP 0x5ff11a (from
@@ -42,7 +41,7 @@ As of 2026-10-22, on the author's unit, running the r29 build of exactly the pub
 - Suspend: s2idle reaches VDD min. Verified with one 60 s `rtcwake -m freeze` (RPM vmin count 0 -> 4, the
   whole sleep), and 300 s sleeps ran uninterrupted with no ADSP wake storm and no hardlockup reports
   (`docs/suspend.md`).
-- Volume wheel, jack detection, USB networking (postmarketOS default 172.16.42.1), Wi-Fi
+- Volume wheel, jack detection, USB networking (Nura default 172.16.42.1), Wi-Fi
   (WCN3990/ath10k with HiBy's stock WLAN.HL.1.0.1.c2-00708 firmware;
   connected-scan timing: RTT maximum during scans fell from 898 to 220 ms; `docs/wifi.md`).
 - Bluetooth discovers other devices (a `Frame reassembly failed (-84)` error is still logged at boot).
@@ -69,7 +68,7 @@ tried and dropped; none of it is in these branches.
 | `main` | this README, `patches/`, `userspace/`, `tools/`, `LICENSES/` |
 | `docs` | install guide, hardware and reverse-engineering notes, RE tooling (`docs/re-tools/`) |
 | `firmware` | HiBy's stock firmware 2.10 file set (subset) plus the Xiaomi tulip a530 PFP, for the firmware package |
-| `pmos` | postmarketOS packages (`device/testing/*`, `main/boot-deploy`) for pmaports |
+| `pmos` | Nura packages (`device/testing/*`, `main/boot-deploy`) for pmaports |
 
 The branches are independent histories. Check them out side by side with `git worktree`.
 
@@ -91,7 +90,7 @@ The branches are independent histories. Check them out side by side with `git wo
 
 ## Building
 
-postmarketOS is built from the `pmos` branch with pmbootstrap: copy `device/testing/*` and `main/boot-deploy`
+Nura is built from the `pmos` branch with pmbootstrap: copy `device/testing/*` and `main/boot-deploy`
 into your pmaports checkout, select the device `hiby-rs6`, build `linux-postmarketos-qcom-sdm660`,
 `firmware-hiby-rs6`, `rs6-spdif` and `device-hiby-rs6`, and run `pmbootstrap install`. Details are in the README
 of the `pmos` branch. U-Boot is built from `patches/u-boot` as described in its README. The
@@ -101,7 +100,7 @@ kernel package applies `patches/linux` to a pinned sdm660-mainline commit.
 
 See `docs/install.md` on the `docs` branch. In short: back up the eMMC over EDL, write U-Boot to
 `boot_a`, activate slot A, then `tools/repartition-nura.sh` repartitions the eMMC and writes the
-postmarketOS boot and root images. **This removes stock Android; recovery is EDL with HiBy's burn
+Nura boot and root images. **This removes stock Android; recovery is EDL with HiBy's burn
 package or your own backup.** You need the firehose programmer from HiBy's 1.50 burn package,
 which is not in this repository.
 
@@ -129,7 +128,7 @@ PFP is added on top (see the branch README).
 - Alexey Minnekhanov and Dang Huynh: the lavender device tree the RS6 tree is based on.
 - Konrad Dybcio: the CPR3 binding properties the SDM660 bindings follow.
 - Stephan Gerhold: linux-mdss-dsi-panel-driver-generator, which produced the panel driver.
-- The sdm660-mainline project (https://github.com/sdm660-mainline), the postmarketOS project, and
+- The sdm660-mainline project (https://github.com/sdm660-mainline), the Nura project, and
   bkerler's `edl`.
 
 ## License

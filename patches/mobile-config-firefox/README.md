@@ -4,7 +4,7 @@ Upstream project: mobile-config-firefox, https://gitlab.postmarketos.org/postmar
 
 Apply to: **5.5.0** (the version the `mobile-config-firefox` package on the `pmos` branch builds). Upstream license: GPL-3.0-or-later.
 
-Make the postmarketOS Firefox mobile config usable on the RS6 (432 CSS px wide landscape-ish window at 2.5 dppx): extension popups wider than the window are zoomed to fit, and the toolbar, URL editing, home page and tab UI follow Firefox for Android (Fenix) on narrow windows, on Firefox 154 and 158.
+Make the Nura Firefox mobile config usable on the RS6 (432 CSS px wide landscape-ish window at 2.5 dppx): extension popups wider than the window are zoomed to fit, and the toolbar, URL editing, home page and tab UI follow Firefox for Android (Fenix) on narrow windows, on Firefox 154 and 158.
 
 Patches (in order):
 

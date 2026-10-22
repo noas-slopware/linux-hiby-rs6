@@ -12,7 +12,7 @@ repartition test) is on the `docs` branch in `docs/re-tools/`.
 - `make-firmware-tarball.sh`: builds the firmware set (see the `firmware` branch) from a 1.80 EDL zip and the OTAs.
 - `extract-hm100-blobs.py`: cuts the FPGA bitstreams and FIR table out of the stock kernel.
 - `edl-check.sh`: read-only EDL check (loader hash, GPT, slot flags).
-- `repartition-nura.sh`, `repartition-nura-ums.sh`, `lib/nura-gpt.sh`: repartition the eMMC for postmarketOS and write
+- `repartition-nura.sh`, `repartition-nura-ums.sh`, `lib/nura-gpt.sh`: repartition the eMMC for Nura and write
   the images, over EDL or over U-Boot USB Mass Storage.
 - `flash-nura-ums.sh`: write new boot/root images over U-Boot USB Mass Storage, partition table untouched.
 - `abslot.py`: show or switch the A/B slot flags on a raw eMMC (e.g. the U-Boot USB Mass Storage block device),

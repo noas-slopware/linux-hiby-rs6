@@ -17,7 +17,7 @@ git am /path/to/linux-hiby-rs6/patches/linux/0*.patch
 ```
 
 `git am` of the 94 files on that commit gives the same tree as the author's working branch (tree object
-`b06b9cbf9ec4d746b7b4c0924b879f5539be3359`). The kernel config used by the postmarketOS package is
+`b06b9cbf9ec4d746b7b4c0924b879f5539be3359`). The kernel config used by the Nura package is
 `config-postmarketos-qcom-sdm660.aarch64` in `device/testing/linux-postmarketos-qcom-sdm660/` on the `pmos`
 branch; the package builds exactly this series on this base.
 
