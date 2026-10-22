@@ -1,10 +1,10 @@
-# Reference: <https://postmarketos.org/devicepkg>
+# Reference: <https://nura.eco/devicepkg/>
 maintainer="Noa Himesaka <himesaka@noa.codes>"
 pkgname=device-hiby-rs6
 pkgdesc="HiBy RS6"
 pkgver=1
 pkgrel=24
-url="https://postmarketos.org"
+url="https://nura.eco"
 license="MIT"
 arch="aarch64"
 options="!check !archcheck"
@@ -164,7 +164,7 @@ _firefox() {
 }
 
 sha512sums="
-78c80d5a482c9dec04028cceb3411880c7ee27a6eaa0ceacd39892dc9b3511c62251772949ae3c16ec3674bece69e358ca505546f294cf54a3a42fcf0d0da2db  deviceinfo
+75b456548714fe19db94278ad79db720afd063689ebded38ed1a01dd7ae367d1f99deff9e38c37207ea60bf0b66ee41a2d0df984e9a3045cdef64c74907b3a94  deviceinfo
 20c49c33c9a887ad9c7c724de9047d9855e12c0a7b494beb8d60c2e584a174425d897d0afb875a204ac1ba841aca2c65df26eed9c5736ce99a6f4b516c6184a0  kernel-cmdline.conf
 06d23246adefaebdc8438d7d91b908ea6b164f4656d227b0d2a2891fa2d74d6fca586d88203440ce5693711a28aeedb0f335531e157bd3d2c54a2486509cf680  modules-initfs
 398a710166344fd4482837ecdaa37745f0789cb138702d39f2eda57c051611b0df259a2f4b0694183d6b24a8c44c9717fdc5cc21b83d335cc615a4eebbfef7fe  ucm-card.conf
