@@ -1,0 +1,2 @@
+mcfg_hw/generic/common/sdm660/la/ss/mcfg_hw.mbn
+mcfg_hw/generic/common/sdm660/la/7+7_mode/sr_dsds/mcfg_hw.mbn

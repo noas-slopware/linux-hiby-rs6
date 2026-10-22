@@ -1,0 +1,59 @@
+{
+    "list":[
+        {
+            "title":"Darwin Default",
+            "desc":"",
+            "path":"/mnt/sdcard/filter/1.flt"
+        },
+        {
+            "title":"Darwin 1",
+            "desc":"",
+            "path":"/mnt/sdcard/filter/2.flt"
+        },
+        {
+            "title":"Darwin 2",
+            "desc":"",
+            "path":"/mnt/sdcard/filter/3.flt"
+        },
+        {
+            "title":"Darwin 3",
+            "desc":"Darwin 4 - Raised-Cosine Rolloff Normal",
+            "path":"/mnt/sdcard/filter/raised-cosine-254-rolloff-normal.flt"
+        },
+        {
+            "title":"Darwin 4",
+            "desc":"Darwin 5 - Raised-Cosine Rolloff Square",
+            "path":"/mnt/sdcard/filter/raised-cosine-254-rolloff-square.flt"
+        },
+        {
+            "title":"Darwin 5",
+            "desc":"Darwin 6 - Raised-Cosine Rolloff 0.999 Square",
+            "path":"/mnt/sdcard/filter/raised-cosine-254-rolloff-999-square.flt"
+        },
+        {
+            "title":"Darwin 6",
+            "desc":"Darwin 7 - Raised-Cosine Rolloff 0.01 Square",
+            "path":"/mnt/sdcard/filter/raised-cosine-254-fast-rolloff-normal.flt"
+        },
+        {
+            "title":"Darwin 7",
+            "desc":"Darwin 8 - Raised-Cosine Rolloff 0.01 Square",
+            "path":"/mnt/sdcard/filter/raised-cosine-254-fast-rolloff-square.flt"
+        },
+        {
+            "title":"Darwin 8",
+            "desc":"Darwin 9 - Raised-Cosine Rolloff 0.5 Square",
+            "path":"/mnt/sdcard/filter/raised-cosine-254-slow-rolloff-normal.flt"
+        },
+        {
+            "title":"Darwin 9",
+            "desc":"Darwin 10 - Raised-Cosine Rolloff 0.5 Square",
+            "path":"/mnt/sdcard/filter/raised-cosine-254-slow-rolloff-square.flt"
+        },
+        {
+            "title":"Darwin 10",
+            "desc":"Darwin 18 - Nyquist 30 Rolloff Min Phase",
+            "path":"/mnt/sdcard/filter/nyquist-30-rolloff-minphase.flt"
+        }
+    ]
+}
