@@ -336,7 +336,7 @@ registry file.
 
 ### Packaging
 
-- pmOS: `firmware-hiby-rs6` carries `sensors/sns.reg` (the `firmware` branch;
+- Nura: `firmware-hiby-rs6` carries `sensors/sns.reg` (the `firmware` branch;
   `tools/make-firmware-tarball.sh` takes it from `persist.bin`, listed in MANIFEST.tsv). It
   installs it as `/usr/lib/firmware/qcom/sensors/sns.reg-hiby,rs6`. The kernel config
   already has `CONFIG_QRTR(_SMD)=m`, `CONFIG_QCOM_SNS_REG=m`, `CONFIG_IIO_QCOM_SMGR=m` and

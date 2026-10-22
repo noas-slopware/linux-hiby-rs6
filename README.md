@@ -41,7 +41,7 @@ in a live trace) or "on Nura".
 
 A flicker-free boot (U-Boot without a framebuffer clear, the kernel taking over ABL's display state, a
 Plymouth theme continuing the stock splash) was tried and dropped as too much to maintain. Its notes are
-not published; the boot uses postmarketOS's own splash, and the screen blanks once when msm takes over
+not published; the boot uses Nura's own splash, and the screen blanks once when msm takes over
 from simpledrm.
 
 ## RE tooling (docs/re-tools/)

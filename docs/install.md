@@ -1,6 +1,6 @@
-# Installing postmarketOS on the HiBy RS6 (whole-eMMC layout)
+# Installing Nura on the HiBy RS6 (whole-eMMC layout)
 
-This is the current flow. It replaces the stock Android system with a postmarketOS image
+This is the current flow. It replaces the stock Android system with a Nura image
 (called Nura here) that owns the whole user area of the eMMC, and puts U-Boot into `boot_a`.
 
 **There is no stock Android left afterwards and no stock slot to go back to.** Recovery is EDL
@@ -99,7 +99,7 @@ Expected first boot: U-Boot text console on the panel (simplefb), then extlinux 
 and the image. Volume up at power-on opens U-Boot's menu (there is no volume-down key except PON
 resin).
 
-USB networking comes up as the postmarketOS default: `ssh <user>@172.16.42.1` with the user and
+USB networking comes up as the Nura default: `ssh <user>@172.16.42.1` with the user and
 password you chose in `pmbootstrap install`.
 
 ## 5. Later updates

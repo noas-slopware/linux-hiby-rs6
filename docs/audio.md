@@ -1293,7 +1293,7 @@ verified on the unit.
 
 ### The rs6-spdif package, UCM and WirePlumber
 
-Package `device/testing/rs6-spdif` (postmarketOS, `pmos` branch), built with meson, MIT. It installs two
+Package `device/testing/rs6-spdif` (Nura, `pmos` branch), built with meson, MIT. It installs two
 ALSA plugins and `50-rs6-spdif.conf` into `alsa.conf.d`.
 
 **`rs6_spdif` (PCM plugin).** Applications open it at the audio rate fs: S16_LE, S24_LE or S32_LE, stereo,

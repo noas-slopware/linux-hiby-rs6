@@ -32,7 +32,7 @@ version is dword 1 of each file (the kernel skips dword 0).
 | `a530_pm4.fw` | 0x005ff063, 19572 B | 0x005ff066, 19652 B | HiBy stock 0x005ff066 |
 | `a530_pfp.fw` | 0x005ff08a, 16144 B | 0x005ff112, 16820 B | Xiaomi tulip 0x005ff11a |
 
-The tulip PFP is the file `qcom/a530_pfp.fw` from postmarketOS `vendor-xiaomi-tulip` (Xiaomi tulip, SDM660,
+The tulip PFP is the file `qcom/a530_pfp.fw` from Nura `vendor-xiaomi-tulip` (Xiaomi tulip, SDM660,
 vendor firmware):
 
     sha256 2a51c25b1f7299cb84c3685d3d1fb88bf0504494456345b2dfde32816e13bc8e
