@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>linux-hiby-rs6 apk repository</title>
+<style>
+  :root { color-scheme: light dark; --bg: #fff; --fg: #1d1d1f; --code: #f2f2f4; --link: #0b57d0; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #161618; --fg: #e8e8ea; --code: #26262a; --link: #8ab4f8; } }
+  body { background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; max-width: 46rem; margin: 2rem auto; padding: 0 16px; }
+  pre { background: var(--code); padding: 0.75rem 1rem; overflow-x: auto; border-radius: 6px; }
+  code { font-family: ui-monospace, monospace; font-size: 0.9em; }
+  a { color: var(--link); }
+</style>
+</head>
+<body>
+<h1>linux-hiby-rs6 apk repository</h1>
+<p>postmarketOS edge packages for the HiBy RS6 (aarch64), built by GitHub Actions from the
+<a href="https://github.com/noas-slopware/linux-hiby-rs6/tree/pmos"><code>pmos</code> branch</a> of
+<a href="https://github.com/noas-slopware/linux-hiby-rs6">linux-hiby-rs6</a>
+(commit <code>@PMOS_SHA@</code>).</p>
+<p>To use it on the RS6, as root:</p>
+<pre><code>wget -O /etc/apk/keys/@KEY_NAME@.pub @REPO_URL@/@KEY_NAME@.pub
+echo @REPO_URL@/edge &gt;&gt; /etc/apk/repositories
+apk update
+apk upgrade</code></pre>
+<p>Files: <a href="edge/aarch64/APKINDEX.tar.gz">edge/aarch64/APKINDEX.tar.gz</a>,
+<a href="edge/aarch64/packages.txt">package list</a>, <a href="@KEY_NAME@.pub">signing key</a>.</p>
+</body>
+</html>

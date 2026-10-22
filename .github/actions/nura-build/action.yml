@@ -1,0 +1,96 @@
+name: Build a group of Nura packages
+description: >
+  Set up pmbootstrap, fill its local repository with the published packages and this run's
+  earlier builds, build the given packages for aarch64 and upload them as the artifact
+  apks-<group>. Expects the workflow repository in the workspace root and the pmos branch in
+  $NURA_PMOS.
+
+inputs:
+  group:
+    description: job name, used for the cache keys and the artifact name
+    required: true
+  packages:
+    description: packages to build, in order
+    required: true
+  ccache-size:
+    description: ccache size limit
+    default: 1G
+  privkey:
+    description: repository signing key (PEM)
+    required: true
+  after-builds:
+    description: whether earlier jobs of this run uploaded packages to seed from
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Runner
+      shell: bash
+      run: nproc; free -g; df -h
+
+    - name: Restore ccache and distfiles
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          ${{ env.NURA_WORK }}/cache_ccache_aarch64
+          ${{ env.NURA_WORK }}/cache_distfiles
+        key: nura-${{ inputs.group }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: nura-${{ inputs.group }}-
+
+    - name: Set up pmbootstrap
+      shell: bash
+      env:
+        NURA_REPO_PRIVKEY: ${{ inputs.privkey }}
+        NURA_CCACHE_SIZE: ${{ inputs.ccache-size }}
+      run: |
+        .github/nura/setup.sh
+        # The restored caches belong to the runner user; in the chroots they are the pmos user's
+        # (uid 12345, group abuild = 300 for distfiles).
+        sudo mkdir -p "$NURA_WORK/cache_ccache_aarch64" "$NURA_WORK/cache_distfiles"
+        sudo chown -R 12345:12345 "$NURA_WORK/cache_ccache_aarch64"
+        sudo chown -R 12345:300 "$NURA_WORK/cache_distfiles"
+        sudo chmod -R g+w "$NURA_WORK/cache_distfiles"
+
+    - name: Download this run's packages
+      if: inputs.after-builds == 'true'
+      uses: actions/download-artifact@v4
+      with:
+        pattern: apks-*
+        merge-multiple: true
+        path: ${{ runner.temp }}/run-apks
+
+    - name: Seed the local repository
+      shell: bash
+      run: .github/nura/seed.sh "$NURA_REPO_URL/edge" "$RUNNER_TEMP/run-apks"
+
+    - name: Build ${{ inputs.packages }}
+      id: build
+      shell: bash
+      run: .github/nura/build.sh "$RUNNER_TEMP/out" ${{ inputs.packages }}
+
+    - name: Prepare caches for saving
+      if: always() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure')
+      shell: bash
+      run: |
+        pmbootstrap -y shutdown || true
+        sudo chmod -R a+rX "$NURA_WORK/cache_ccache_aarch64" "$NURA_WORK/cache_distfiles" || true
+        sudo du -sh "$NURA_WORK"/cache_* || true
+        df -h
+
+    - name: Save ccache and distfiles
+      if: always() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure')
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          ${{ env.NURA_WORK }}/cache_ccache_aarch64
+          ${{ env.NURA_WORK }}/cache_distfiles
+        key: nura-${{ inputs.group }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+    - name: Upload packages
+      uses: actions/upload-artifact@v4
+      with:
+        name: apks-${{ inputs.group }}
+        path: ${{ runner.temp }}/out/*.apk
+        if-no-files-found: error
+        retention-days: 7

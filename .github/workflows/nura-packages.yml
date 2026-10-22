@@ -1,0 +1,277 @@
+# Builds the postmarketOS (Nura) packages of the pmos branch for aarch64 with pmbootstrap, natively
+# on GitHub's arm64 runners, and publishes them as an apk repository on GitHub Pages:
+#   https://noas-slopware.github.io/linux-hiby-rs6/edge
+# Only packages whose APKBUILD version is not published yet are built (or all of them with
+# force). A push to pmos does not run this file by itself (push events use the workflow files of
+# the pushed commit); the pmos branch dispatches it with .github/workflows/nura-trigger.yml, and
+# the schedule catches anything missed.
+name: Nura packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild every package, even if the published version is current
+        type: boolean
+        default: false
+      pmos_ref:
+        description: Commit or branch of the pmos branch to build
+        type: string
+        default: pmos
+  schedule:
+    - cron: "17 3 * * *"
+  push:
+    branches: [ci]
+
+concurrency:
+  group: nura-packages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PMB_COMMIT: 7d23010a125ca7386fec4e390d14128b6c24d266 # pmbootstrap 3.12.1
+  PMAPORTS_COMMIT: 767b10462fb3f0cb591e2e04c20dd2ed4d6e2568 # pmaports main (edge), 2026-10-19
+  KEY_NAME: linux-hiby-rs6-6ad9f9de.rsa
+  NURA_REPO_URL: https://noas-slopware.github.io/linux-hiby-rs6
+  NURA_WORK: /home/runner/nura/work
+  NURA_TOOLS: /home/runner/nura/tools
+  NURA_PMOS: /home/runner/nura/pmos
+  NURA_FORCE: ${{ inputs.force || false }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      pmos_sha: ${{ steps.pmos.outputs.sha }}
+      any: ${{ steps.plan.outputs.any }}
+      versions: ${{ steps.plan.outputs.versions }}
+      build_linux: ${{ steps.plan.outputs.build_linux }}
+      pkgs_linux: ${{ steps.plan.outputs.pkgs_linux }}
+      build_mesa: ${{ steps.plan.outputs.build_mesa }}
+      pkgs_mesa: ${{ steps.plan.outputs.pkgs_mesa }}
+      build_base: ${{ steps.plan.outputs.build_base }}
+      pkgs_base: ${{ steps.plan.outputs.pkgs_base }}
+      build_qtbase: ${{ steps.plan.outputs.build_qtbase }}
+      pkgs_qtbase: ${{ steps.plan.outputs.pkgs_qtbase }}
+      build_device: ${{ steps.plan.outputs.build_device }}
+      pkgs_device: ${{ steps.plan.outputs.pkgs_device }}
+      build_kde: ${{ steps.plan.outputs.build_kde }}
+      pkgs_kde: ${{ steps.plan.outputs.pkgs_kde }}
+      build_dac: ${{ steps.plan.outputs.build_dac }}
+      pkgs_dac: ${{ steps.plan.outputs.pkgs_dac }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.pmos_ref || 'pmos' }}
+          path: pmos
+      - id: pmos
+        run: |
+          echo "sha=$(git -C pmos rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          mkdir -p "$(dirname "$NURA_PMOS")" "$(dirname "$NURA_WORK")" "$(dirname "$NURA_TOOLS")" && mv pmos "$NURA_PMOS"
+      - name: Set up pmbootstrap (no chroots)
+        run: .github/nura/setup.sh
+      - id: plan
+        run: |
+          force=()
+          [ "$NURA_FORCE" = true ] && force=(--force)
+          python3 -I .github/nura/plan.py --pmos "$NURA_PMOS" \
+            --index "$NURA_REPO_URL/edge/aarch64/APKINDEX.tar.gz" "${force[@]}"
+
+  # Every build job: checkout of this repository (scripts, public key) plus the pmos commit the
+  # plan looked at, then the nura-build action. A job runs when the plan has packages for it and
+  # none of the jobs it needs failed; "needs" lists every earlier group it builds against.
+  linux:
+    needs: plan
+    if: needs.plan.outputs.build_linux == 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with: { ref: "${{ needs.plan.outputs.pmos_sha }}", path: pmos }
+      - run: mkdir -p "$(dirname "$NURA_PMOS")" "$(dirname "$NURA_WORK")" "$(dirname "$NURA_TOOLS")" && mv pmos "$NURA_PMOS"
+      - uses: ./.github/actions/nura-build
+        with:
+          group: linux
+          packages: ${{ needs.plan.outputs.pkgs_linux }}
+          ccache-size: 3G
+          privkey: ${{ secrets.NURA_REPO_PRIVKEY }}
+          after-builds: "false"
+
+  mesa:
+    needs: plan
+    if: needs.plan.outputs.build_mesa == 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with: { ref: "${{ needs.plan.outputs.pmos_sha }}", path: pmos }
+      - run: mkdir -p "$(dirname "$NURA_PMOS")" "$(dirname "$NURA_WORK")" "$(dirname "$NURA_TOOLS")" && mv pmos "$NURA_PMOS"
+      - uses: ./.github/actions/nura-build
+        with:
+          group: mesa
+          packages: ${{ needs.plan.outputs.pkgs_mesa }}
+          ccache-size: 1500M
+          privkey: ${{ secrets.NURA_REPO_PRIVKEY }}
+          after-builds: "false"
+
+  base:
+    needs: plan
+    if: needs.plan.outputs.build_base == 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with: { ref: "${{ needs.plan.outputs.pmos_sha }}", path: pmos }
+      - run: mkdir -p "$(dirname "$NURA_PMOS")" "$(dirname "$NURA_WORK")" "$(dirname "$NURA_TOOLS")" && mv pmos "$NURA_PMOS"
+      - uses: ./.github/actions/nura-build
+        with:
+          group: base
+          packages: ${{ needs.plan.outputs.pkgs_base }}
+          ccache-size: 500M
+          privkey: ${{ secrets.NURA_REPO_PRIVKEY }}
+          after-builds: "false"
+
+  qtbase:
+    needs: [plan, mesa]
+    if: >-
+      always() && needs.plan.outputs.build_qtbase == 'true'
+      && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with: { ref: "${{ needs.plan.outputs.pmos_sha }}", path: pmos }
+      - run: mkdir -p "$(dirname "$NURA_PMOS")" "$(dirname "$NURA_WORK")" "$(dirname "$NURA_TOOLS")" && mv pmos "$NURA_PMOS"
+      - uses: ./.github/actions/nura-build
+        with:
+          group: qtbase
+          packages: ${{ needs.plan.outputs.pkgs_qtbase }}
+          ccache-size: 1500M
+          privkey: ${{ secrets.NURA_REPO_PRIVKEY }}
+
+  device:
+    needs: [plan, linux, base]
+    if: >-
+      always() && needs.plan.outputs.build_device == 'true'
+      && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with: { ref: "${{ needs.plan.outputs.pmos_sha }}", path: pmos }
+      - run: mkdir -p "$(dirname "$NURA_PMOS")" "$(dirname "$NURA_WORK")" "$(dirname "$NURA_TOOLS")" && mv pmos "$NURA_PMOS"
+      - uses: ./.github/actions/nura-build
+        with:
+          group: device
+          packages: ${{ needs.plan.outputs.pkgs_device }}
+          ccache-size: 500M
+          privkey: ${{ secrets.NURA_REPO_PRIVKEY }}
+
+  kde:
+    needs: [plan, mesa, base, qtbase]
+    if: >-
+      always() && needs.plan.outputs.build_kde == 'true'
+      && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with: { ref: "${{ needs.plan.outputs.pmos_sha }}", path: pmos }
+      - run: mkdir -p "$(dirname "$NURA_PMOS")" "$(dirname "$NURA_WORK")" "$(dirname "$NURA_TOOLS")" && mv pmos "$NURA_PMOS"
+      - uses: ./.github/actions/nura-build
+        with:
+          group: kde
+          packages: ${{ needs.plan.outputs.pkgs_kde }}
+          ccache-size: 1G
+          privkey: ${{ secrets.NURA_REPO_PRIVKEY }}
+
+  dac:
+    needs: [plan, linux, mesa, base, qtbase, device, kde]
+    if: >-
+      always() && needs.plan.outputs.build_dac == 'true'
+      && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with: { ref: "${{ needs.plan.outputs.pmos_sha }}", path: pmos }
+      - run: mkdir -p "$(dirname "$NURA_PMOS")" "$(dirname "$NURA_WORK")" "$(dirname "$NURA_TOOLS")" && mv pmos "$NURA_PMOS"
+      - uses: ./.github/actions/nura-build
+        with:
+          group: dac
+          packages: ${{ needs.plan.outputs.pkgs_dac }}
+          ccache-size: 500M
+          privkey: ${{ secrets.NURA_REPO_PRIVKEY }}
+
+  # Pages replaces the whole site on every deployment: start from what is published, add this
+  # run's packages, drop every version that is not the pmos branch's, index, sign, deploy.
+  publish:
+    needs: [plan, linux, mesa, base, qtbase, device, kde, dac]
+    if: >-
+      always() && needs.plan.outputs.any == 'true'
+      && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with: { ref: "${{ needs.plan.outputs.pmos_sha }}", path: pmos }
+      - run: mkdir -p "$(dirname "$NURA_PMOS")" "$(dirname "$NURA_WORK")" "$(dirname "$NURA_TOOLS")" && mv pmos "$NURA_PMOS"
+      - name: Set up pmbootstrap
+        env:
+          NURA_REPO_PRIVKEY: ${{ secrets.NURA_REPO_PRIVKEY }}
+        run: .github/nura/setup.sh
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: apks-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/run-apks
+      - name: Merge, prune and index
+        env:
+          VERSIONS: ${{ needs.plan.outputs.versions }}
+        run: |
+          .github/nura/seed.sh "$NURA_REPO_URL/edge" "$RUNNER_TEMP/run-apks"
+          repo=$NURA_WORK/packages/edge/aarch64
+          printf '%s' "$VERSIONS" > "$RUNNER_TEMP/versions.json"
+          python3 -I .github/nura/apkindex.py prune "$repo/APKINDEX.tar.gz" "$RUNNER_TEMP/versions.json" \
+            > "$RUNNER_TEMP/prune"
+          if [ -s "$RUNNER_TEMP/prune" ]; then
+            echo "dropping:"; cat "$RUNNER_TEMP/prune"
+            (cd "$repo" && xargs sudo rm -f < "$RUNNER_TEMP/prune")
+            pmbootstrap -y --details-to-stdout index
+          fi
+          site=$RUNNER_TEMP/site
+          mkdir -p "$site/edge/aarch64"
+          cp "$repo"/*.apk "$repo/APKINDEX.tar.gz" "$site/edge/aarch64/"
+          cp "keys/$KEY_NAME.pub" "$site/"
+          sed -e "s|@KEY_NAME@|$KEY_NAME|g" -e "s|@REPO_URL@|$NURA_REPO_URL|g" \
+            -e "s|@PMOS_SHA@|${{ needs.plan.outputs.pmos_sha }}|g" \
+            .github/nura/index.html > "$site/index.html"
+          python3 -I .github/nura/apkindex.py files "$site/edge/aarch64/APKINDEX.tar.gz" | sort > "$site/edge/aarch64/packages.txt"
+          du -sh "$site"
+          {
+            echo "## Published"
+            echo
+            echo "$(wc -l < "$site/edge/aarch64/packages.txt") packages, $(du -sh "$site" | cut -f1), pmos ${{ needs.plan.outputs.pmos_sha }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: ${{ runner.temp }}/site
+      - id: deploy
+        uses: actions/deploy-pages@v5
