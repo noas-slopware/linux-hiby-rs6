@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Offline model of how the stock RS6 XBL (1.80 == 1.50, BOOT.XF.1.4-00277-S660LZB-1) reads the
-# eMMC GPT, written from the Ghidra decompile in docs/xbl-gpt.md. Two independent parsers:
+# eMMC GPT, written from the Ghidra decompile in docs/boot-and-partitions.md. Two independent parsers:
 #   loader: XBL loader hotplug GPT parser (0x14046ce8, 0x14046d98, 0x14046ef0, 0x140472c8,
 #           partition nodes in 0x140465e0, lookup by type GUID in 0x140454f8)
 #   uefi:   XBL core PartitionDxe (edk2 Gpt.c: 0x25c0, 0x3008, 0x31b4, 0x3668), whose child

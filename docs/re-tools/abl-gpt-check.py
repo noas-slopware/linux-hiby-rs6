@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline model of what the RS6 stock ABL (LinuxLoader in abl_a, see docs/abl-gpt.md) does with
+"""Offline model of what the RS6 stock ABL (LinuxLoader in abl_a, see docs/boot-and-partitions.md) does with
 the eMMC GPT on a normal boot, applied to a disk image (sparse is fine). Reads only; the write-back
 is simulated in memory.
 

@@ -119,7 +119,7 @@ class Decoder:
                 db = "mute" if data == 0 else f"{31.5 - (data - 1) * 0.5:+.1f} dB"
                 return f"chip{chip} {what} = 0x{data:02x} ({db})"
             return f"chip{chip} {what} = 0x{data:02x}"
-        # hm100 frame: (reg << 10) | data[9:0] (docs/hm100-protocol.md)
+        # hm100 frame: (reg << 10) | data[9:0] (docs/audio.md)
         if word == 0x4C00:
             return "coef commit"
         reg, data = word >> 10, word & 0x3FF

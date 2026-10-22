@@ -1,6 +1,24 @@
-# HiBy RS6 hardware map (from downstream dtb96.dts)
+# HiBy RS6 hardware
 
-Source: `dtb96.dts`, the DTB #96 appended to the stock boot image, decompiled with dtc (msm-4.4, Android 9, SDM660 + PM660 + PM660L). Every `Lnnn` is a line in that file. Phandles were resolved by grepping `phandle = <0x..>`. GPIO numbers are decimal TLMM numbers unless a PMIC is named. A node counts as enabled when `status` is "okay"/"ok" or absent (downstream qcom convention), disabled otherwise. "unresolved" means the DTB does not say.
+The RS6's hardware as the stock device tree describes it, section by section (sections 0 to 12 and the
+TLMM GPIO summary), and the accelerometer, which is not in the device tree because the ADSP drives it
+(section 13). The audio chain behind the HiBy nodes of section 9 is in `docs/audio.md`.
+
+## Contents
+
+- [0. Regulator quick table](#0-regulator-quick-table-only-the-ones-consumers-below-reference)
+- [1. Display](#1-display-sharp-ls050t1sx18-1080p-video-dsi), [2. Touchscreen](#2-touchscreen),
+  [3. Storage](#3-storage), [4. USB](#4-usb), [5. Charging and battery](#5-charging-and-battery),
+  [6. LEDs](#6-leds), [7. Keys and other input](#7-keys-and-other-input), [8. Wireless](#8-wireless)
+- [9. Audio-adjacent and HiBy audio-platform pinctrl](#9-audio-adjacent-non-fpga-and-hiby-audio-platform-pinctrl)
+- [10. Memory](#10-memory), [11. BLSP instances](#11-blsp-instances-with-status-okay),
+  [12. Other HiBy-specific nodes](#12-other-hiby-specific-or-unusual-vendor-nodes)
+- [13. Accelerometer (auto-rotate)](#13-accelerometer-auto-rotate)
+- [TLMM GPIO usage summary](#tlmm-gpio-usage-summary)
+
+## Sources and conventions
+
+Device tree source: `dtb96.dts`, the DTB #96 appended to the stock boot image, decompiled with dtc (msm-4.4, Android 9, SDM660 + PM660 + PM660L). Every `Lnnn` is a line in that file. Phandles were resolved by grepping `phandle = <0x..>`. GPIO numbers are decimal TLMM numbers unless a PMIC is named. A node counts as enabled when `status` is "okay"/"ok" or absent (downstream qcom convention), disabled otherwise. "unresolved" means the DTB does not say.
 
 Conventions used below:
 - `ldoaN` rpm resources are PM660 (`pm660_lN`), `ldobN` are PM660L (`pm660l_lN`), `bobb` is `pm660l_bob`. Ranges are the downstream rpm-regulator min/max constraints in microvolts.
@@ -150,7 +168,7 @@ Which gauge actually feeds Android (PM660 fg-gen3 or cw2015) is unresolved: both
 | `ring_keys` (`ring-keys`, vendor driver) | the volume wheel: `clockwise-gpios = <&tlmm 42 0>`, `anticlockwise-gpios = <&tlmm 43 0>`, pinctrl `ring_key_active/suspend` 0x262/0x263 (L10224, L10240): gpio42, gpio43 function gpio, drive 2, bias-pull-up. Children `vol_down` code 0x72=114 direction 1, `vol_up` code 0x73=115 direction 2. Mapping of direction to cw/ccw is unresolved (a mainline `rotary-encoder` on gpio42/43 with `linux,axis` or key emulation is the usual substitute) | L16543-16563 |
 | PM660 PON | `qcom,power-on@800` (SID0) compatible `qcom,qpnp-power-on`, irqs kpdpwr, resin, resin-bark, kpdpwr-resin-bark, `qcom,pon-dbc-delay = 15625 us` (0x3d09), kpdpwr sw debounce, `qcom,system-reset`, store-hard-reset-reason. `pon_1`: type 0 (KPDPWR), pull-up, `linux,code = 0x74` = 116 KEY_POWER, support-reset 0, s1-timer 0x1a40 (6720 ms), s2-timer 2000 ms, s2-type 4. `pon_2`: type 1 (RESIN), pull-up, `linux,code = 0x72` = 114 KEY_VOLUMEDOWN, no reset | L2306-2331 |
 | PM660L PON | `qcom,power-on@800` (SID2): `qcom,secondary-pon-reset`, hard-reset-poweroff-type 4, no keys | L2878-2883 |
-| Accelerometer (KXTJ2-1009) | **not present** anywhere in the DT. No kxtj, kionix, accel, gyro, proximity, light, hall or compass node. Only `qcom,msm-ssc-sensors` stub (L16512). Unresolved whether the RS6 has an accelerometer at all | grep over whole file |
+| Accelerometer (KXTJ2-1009) | **not present** anywhere in the DT. No kxtj, kionix, accel, gyro, proximity, light, hall or compass node. Only `qcom,msm-ssc-sensors` stub (L16512). The RS6 does have one: the ADSP's sensor core drives it on its own I2C bus, see section 13 | grep over whole file |
 | Other input | `hiby,earpods_adc` is disabled (section 9) | L16624 |
 
 ## 8. Wireless
@@ -165,7 +183,7 @@ Which gauge actually feeds Android (PM660 fg-gen3 or cw2015) is unresolved: both
 
 ## 9. Audio-adjacent (non-FPGA) and HiBy audio-platform pinctrl
 
-Sound card in use: `sound` compatible `qcom,sdm660-asoc-snd`, model "sdm660-snd-card", **status okay** (`sound-tavil` L13934 is disabled). Codec set = `msm-stub-codec.1`, `msm-dig-codec`, PM660L `analog-codec@f000` (L3332, enabled; cdc-vdda-cp and cdc-vdd-pa = 0x88 = pm660_s4 (levels 1.9-2.05 V and 2.04 V), mic-bias = pm660l_l7 at 3088000 uV, mclk 9.6 MHz), `msm_sdw_codec`, ext-disp. Internal MI2S "sec" (dev-id 1, rx-lines 1, tx-lines 2, SDM is master: `qcom,msm-mi2s-master = <1 1 1 1>`) has pinctrl: `sec_mi2s_active` gpio24/gpio25 (SCK/WS, drive 8, bias-disable, output-high, L11766), `sec_mi2s_sd0` gpio26 (drive 8, bias-disable, L11802), `sec_mi2s_sd1` gpio27 (drive 8, bias-disable, L11837). Sleep: all pull-down, drive 2 (L11750, L11786, L11821). That is the likely serial audio link to the HM100 FPGA (consumer not stated in the DTB, so unresolved). `us-euro` mic swap pinctrl `wcd_gnd_mic_swap_active` = gpio63, drive 2, bias-disable, output-high (L10747). Refs: L13344-13353, L13964-13993.
+Sound card in use: `sound` compatible `qcom,sdm660-asoc-snd`, model "sdm660-snd-card", **status okay** (`sound-tavil` L13934 is disabled). Codec set = `msm-stub-codec.1`, `msm-dig-codec`, PM660L `analog-codec@f000` (L3332, enabled; cdc-vdda-cp and cdc-vdd-pa = 0x88 = pm660_s4 (levels 1.9-2.05 V and 2.04 V), mic-bias = pm660l_l7 at 3088000 uV, mclk 9.6 MHz), `msm_sdw_codec`, ext-disp. Internal MI2S "sec" (dev-id 1, rx-lines 1, tx-lines 2, the DT says SDM is master: `qcom,msm-mi2s-master = <1 1 1 1>`; the stock kernel zeroes these flags at probe and the FPGA is the clock master, see `docs/audio.md`) has pinctrl: `sec_mi2s_active` gpio24/gpio25 (SCK/WS, drive 8, bias-disable, output-high, L11766), `sec_mi2s_sd0` gpio26 (drive 8, bias-disable, L11802), `sec_mi2s_sd1` gpio27 (drive 8, bias-disable, L11837). Sleep: all pull-down, drive 2 (L11750, L11786, L11821). That is the likely serial audio link to the HM100 FPGA (consumer not stated in the DTB, so unresolved). `us-euro` mic swap pinctrl `wcd_gnd_mic_swap_active` = gpio63, drive 2, bias-disable, output-high (L10747). Refs: L13344-13353, L13964-13993.
 
 | Item | Details | Line |
 |---|---|---|
@@ -185,7 +203,7 @@ Sound card in use: `sound` compatible `qcom,sdm660-asoc-snd`, model "sdm660-snd-
 |  lpf_mute | `<&tlmm 61 0>` | L16619 |
 |  line_mute | `<&tlmm 76 0>` | L16620 |
 |  string "IOB..." entries | `lpf_pwr_en "IOB39A"`, `po_amp_en "IOB29A"`, `bal_amp_en "IOB27B"`, `pcm_dsd_sel "IOB35B"`, `iv_mute "IOB35A"`, `hp_mute "IOB29B"`: these are FPGA IO bank pin names (HM100), not SoC GPIOs | L16610-16621 |
-| `hiby,hm100` | compatible `hiby,hm100` (FPGA, protocol in `docs/hm100-protocol.md`), 5 pinctrl states 0x264-0x268 (L11666-L11730, hm100 group L11664): jtag_active gpio8/9/10/11/44 (drive 2, bias-disable); jtag_suspend same pins pull-down; `jtag_as_spi` gpio8, gpio11 function `blsp_spi3` (drive 6, bias-disable); ctrl_active gpio28, gpio68, gpio69, gpio70, gpio71 (drive 2, bias-disable, no consumer property for 68-71); ctrl_suspend gpio8-11 + gpio28 pull-down | L16565-16586 |
+| `hiby,hm100` | compatible `hiby,hm100` (FPGA, protocol in `docs/audio.md`), 5 pinctrl states 0x264-0x268 (L11666-L11730, hm100 group L11664): jtag_active gpio8/9/10/11/44 (drive 2, bias-disable); jtag_suspend same pins pull-down; `jtag_as_spi` gpio8, gpio11 function `blsp_spi3` (drive 6, bias-disable); ctrl_active gpio28, gpio68, gpio69, gpio70, gpio71 (drive 2, bias-disable, no consumer property for 68-71); ctrl_suspend gpio8-11 + gpio28 pull-down | L16565-16586 |
 |  hm100 gpios | `power-gpio` 55, `reset-gpio` 12, `share-spi-select` 13, `jtag-select` 44, spi-sdo 8, spi-clk 11, spi-cs 10, jtag-tdi 8, jtag-tdo 9, jtag-tck 11, jtag-tms 10 (all active high flag 0), flags `jtag-io-as-spi-io`, `jtag-spi-mode`. JTAG pins and SPI3 pins are the same four GPIOs (8-11) | L16573-16585 |
 | `hiby,hm100-codec` | compatible `hiby,hm100-codec`, empty ASoC codec stub | L16588-16590 |
 | `njw,njw1195a` | volume/mux chip (NJR NJW1195A, SPI-like 3-wire), `njw1195a,spi-share` flag, sdo gpio8, clk gpio11, cs gpio10 (shared with SPI3/JTAG). Pinctrl 0x269/0x26a (njw11195a group L10413, active L10415, suspend L10431) lists **gpio77, gpio34, gpio61**, drive 6, bias-disable in both states, which do not match the spi gpios (8/11/10), so the pinctrl group looks stale (gpio34 = lpf_sel, gpio61 = lpf_mute elsewhere) | L16592-16601 |
@@ -248,6 +266,105 @@ Mainline `sdm630.dtsi` (in the sdm660-mainline tree) already defines `blsp_i2c1`
 | pm660 gpios (SID0) enabled with config | pm660 pin2 (master-en 0), pin3 (output, pull 4=down 10 uA, src-sel 2), pin4 (input, vin 1), pin11 (input), pin13 (output, po_pwr_en). Consumers other than pin13 are unresolved (pin2 and pin3 double as ADC inputs `gpio2_adc1`/`gpio3_adc0` L2613-2633) | L2351-2448 |
 | pm660l gpios (SID2) enabled | pin3 (output, no pull), pin4 (input), pin6 (output, src-sel 2), pin7 (input, vol_up key), pin8 (output, lp5562 enable). Consumers of 3, 4, 6 unresolved | L2914-2976 |
 | Vendor leftovers enabled but irrelevant | `qcom,mdss_dsi_ctrl1`, DP, flash LED, haptic, smb2 DC path, camera/venus etc. | |
+
+## 13. Accelerometer (auto-rotate)
+
+The RS6's G-sensor (Kionix KXTJ2-1009, per HiBy's spec page) is not on any Linux I2C bus.
+The Snapdragon Sensor Core inside the ADSP drives it, and Linux reads it over QMI. All the
+kernel code is already in the sdm660-mainline tree. The only missing piece was the sensor
+registry file.
+
+### How it works
+
+1. The ADSP boots (`qcom_q6v5_pas`). Its remoteproc adds the `qcom_common.sns-reg.N`
+   auxiliary device. `qcom_sns_reg` loads `qcom/sensors/sns.reg-hiby,rs6` and serves it as
+   QMI service 0x10f (Sensor Registry) on the APSS.
+2. The ADSP's Sensor Manager (SMGR) reads its config groups from that service. Then it
+   probes the sensors listed in the registry and publishes QMI service 0x100 instance 50
+   (SMGR). Without the registry no SMGR service appears, which was Nura's state before the registry file
+   was packaged.
+3. The QRTR bus turns service 0x100 into a device with modalias `qrtr:100:3201`, so udev
+   loads `qcom_smgr`. That driver adds a `qcom-smgr-accel` platform device, which loads
+   `qcom_smgr_accel` and creates the IIO device `qcom-smgr-accel`. It has buffer-only
+   channels and no trigger. Values are 1/65536 m/s², and `in_mount_matrix` converts SMGR's
+   frame to the IIO one.
+4. iio-sensor-proxy (3.9 handles buffers without a trigger) tags it `iio-buffer-accel`.
+   KWin rotates the screen, because `autoRotation` is `InTabletMode` and Plasma Mobile is
+   always in tablet mode.
+
+### Evidence
+
+- This is the SMGR stack, not SEE. The ADSP image has 399 `sns_smgr_*`/`sns_rh_*`/`sns_sam_*`
+  strings and no `sns_client`, `sns_suid` or `pb_decode`. The vendor partition ships the
+  SMGR-era `libsensor1.so`, `libsensor_reg.so` and `sensors.ssc.so`. Stock ran only
+  `sensors.qti` (the registry server); `sscrpcd` is "Only for SLPI" in
+  `init.qcom.sensors.sh`. The dsp partition has no sensor modules, so SMGR is static in
+  `adsp.mdt`.
+- Today's QRTR services on ADSP node 5 are 0x33, 0xf, 0x42, 0x118, 0x132, 0x107, 0x108,
+  0x301, 0x1001, 0x2b and 0x18. There is no 0x100. dmesg shows `qcom_sns_reg` failing with
+  `-ENOENT` on `sns.reg-hiby,rs6`.
+- In the registry (stock `persist:/sensors/sns.reg`, 25468 bytes), group 2690 (SSI SMGR
+  cfg, file offset 0x1700) has slot 0 = KXTJ2. Its fields are UUID
+  `629d45ef8abb474a8dbc2d309af3d123`, off_to_idle 100000, idle_to_ready 20000, i2c_bus 3,
+  reg_group 1000, cal_grp 0, gpio1/gpio2 0xffff (polled, no IRQ), sensor_id 0,
+  I2C address 0x0e, data_type 1, sens_default 1, flags 0, vdd 0x83, vddio 0x8e. The axis
+  map (group 1000 @0x0a00) is -2, 1, 3. This matches the `:hardware sdm660` block of
+  `vendor/etc/sensors/sensor_def_qcomdev.conf` ("SSI SMGR Cfg 0 [ACCEL] KXTJ2"). Slots 1-3
+  still hold the QRD's ICM20608, BMM150 and STK3311; SMGR drops whichever doesn't answer.
+- The ADSP has a driver for it. All four registry UUIDs appear in the ADSP image's
+  driver table (KXTJ2 at blob offset 0x43aaab), next to the `KXCJK`/`KIONIX` info strings.
+- "i2c_bus 3" is the ADSP's own sensor QUP, not BLSP1 QUP3. In the sensor PD's DAL
+  config, `I2CDRV_I2C_3` has CHIP_BUS_INDEX 2, CHIP_BLOCK_OFFSET 0x437000 (with
+  `LPASS_SENSOR_BLSP_QUP0..2`) and LPASS_PLL_SRC_FREQ 99.84 MHz. Its SDA/SCL are DAL GPIO
+  configs 0x1c021/0x1c031, which is GPIO 2/3, function 1, on the LPASS TLMM. Linux
+  configures neither pin; `lpi_tlmm` only uses 18-26. BLSP1 QUP3's pins (gpio10/11) belong
+  to the hm100 bit-bang, and stock left `i2c@c177000` disabled.
+
+### Options
+
+- Kernel SMGR client (`qcom_sns_reg` + `qcom_smgr*`, Yassine Oudjana's v2 series plus
+  Alexey Minnekhanov's in-kernel registry server). This one is chosen. It is the same
+  route msm8996 scorpio uses (`firmware-xiaomi-scorpio` installs
+  `qcom/sensors/sns.reg-xiaomi,scorpio`).
+- libssc / iio-sensor-proxy's `ssc-*` drivers don't work here. They speak SEE (protobuf
+  over QMI), and this ADSP has no SEE at all. The stock udev rule already tags
+  `fastrpc-adsp` as `ssc-light ssc-compass`, and on this boot iio-sensor-proxy exited with
+  "No sensors or missing kernel drivers".
+- Linux owning the bus with `kxcjk-1013` isn't possible. The bus is a QUP inside LPASS's
+  sensor block, clocked from the LPASS PLL. Mainline has no driver for those clocks or
+  that QUP, and the ADSP owns them while it runs.
+
+### Packaging
+
+- pmOS: `firmware-hiby-rs6` carries `sensors/sns.reg` (the `firmware` branch;
+  `tools/make-firmware-tarball.sh` takes it from `persist.bin`, listed in MANIFEST.tsv). It
+  installs it as `/usr/lib/firmware/qcom/sensors/sns.reg-hiby,rs6`. The kernel config
+  already has `CONFIG_QRTR(_SMD)=m`, `CONFIG_QCOM_SNS_REG=m`, `CONFIG_IIO_QCOM_SMGR=m` and
+  `CONFIG_IIO_QCOM_SMGR_ACCEL=m`. iio-sensor-proxy comes with Plasma Mobile. No DT change.
+- Arch Linux Ports: the same file at the same path in the firmware package, the same
+  kernel options, and `iio-sensor-proxy` from the repos. Nothing here depends on the libc.
+- Kernel: "iio: common: qcom_smgr: fix sampling_frequency" in `patches/linux`. `qcom_smgr` ignored a
+  written `in_accel_sampling_frequency`, because buffering always used the default rate (highest native, capped by SMGR's max).
+  `read_avail` also handed the IIO core a stack array. Both are fixed there. The later SMGR patches
+  (default rate, buffering, no reports while the AP sleeps) are described in `docs/suspend.md`.
+
+### Still to check on the device
+
+- On the running RS6 (no reboot), bind `qcom_sns_reg` with the registry, wait for
+  `qrtr:100:3201` and read samples; that also shows SMGR's max rate. Then start iio-sensor-proxy and check `monitor-sensor`.
+- Orientation. SMGR applies the registry axis map (-2,1,3, the QRD value HiBy kept), and
+  the driver's matrix does the rest. Held upright in portrait, iio-sensor-proxy must say
+  "normal". If it doesn't, fix it with an `ACCEL_MOUNT_MATRIX` hwdb entry in
+  device-hiby-rs6.
+- After a reboot, check that KWin follows when iio-sensor-proxy starts
+  after the session. The fastrpc-adsp rule starts it at boot, before SMGR is up, and it
+  exits.
+- Suspend: settled in `docs/suspend.md` (Part 1). Stock tells the ADSP when the AP sleeps
+  through the outbound smp2p entry `sleepstate` (remote-pid 2, `qcom,smp2pgpio-sleepstate-out`,
+  stock DT). Mainline had no such driver, and with the accel buffer enabled through s2idle SMGR
+  kept sending reports and waking the AP about 240 times per second; the series now drives
+  `sleepstate` and stops the reports, and the GLINK IRQ counts in /proc/interrupts across a
+  suspend are the check.
 
 ## TLMM GPIO usage summary
 

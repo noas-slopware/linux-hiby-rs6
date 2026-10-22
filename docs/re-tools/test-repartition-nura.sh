@@ -3,9 +3,9 @@
 # your own RS6's eMMC (gpt_main0.bin from the 1.80 EDL dump zip: the real 68-entry table), given
 # in NURA_GPTDUMP. The backup array is put at the end of the disk (TOTAL-18), not
 # where ABL rewrites it, so the run also proves the scripts move it; a second UMS run starts from
-# TOTAL-33, where HiBy's factory package puts it (docs/abl-gpt.md). Every result goes through
+# TOTAL-33, where HiBy's factory package puts it (docs/boot-and-partitions.md). Every result goes through
 # abl-gpt-check.py and xbl-gpt-check.py, the offline models of the stock ABL and XBL
-# (docs/abl-gpt.md, docs/xbl-gpt.md), which live next to this script.
+# (docs/boot-and-partitions.md), which live next to this script.
 # The scripts under test live on the main branch: NURA_TOOLS=<checkout of main>/tools
 # (default: ../../tools relative to this file, i.e. both branches merged into one tree).
 # Usage: NURA_GPTDUMP=gpt_main0.bin [NURA_TOOLS=...] docs/re-tools/test-repartition-nura.sh [scratch dir]

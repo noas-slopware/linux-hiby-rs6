@@ -60,7 +60,7 @@ cp .ci/*.sh .output/ && cp -r .ci/bootimg_params .output/ && cd .output && ./boo
 
 The result is `.output/boot-uboot-sdm660-hiby-rs6.img` (boot image header v1, the RS6 DTB appended,
 the load addresses of the stock `boot_a`). U-Boot's boot image carries the cmdline `uboot2nd`; the
-stock ABL builds `root=` from the `system_<slot>` entry regardless (see `docs/abl-gpt.md`).
+stock ABL builds `root=` from the `system_<slot>` entry regardless (see `docs/boot-and-partitions.md`).
 
 ## 3. Build the image
 
@@ -120,7 +120,7 @@ password you chose in `pmbootstrap install`.
 
 If the screen stays black or it bootloops: ABL does not fall back by itself. A slot marked
 successful boots with no retry countdown, and an inactive slot never qualifies for fallback
-(`docs/abl-gpt.md` section 3). Before the repartition you can go back to stock with
+(`docs/boot-and-partitions.md`, "Slot attributes"). Before the repartition you can go back to stock with
 `edl setactiveslot b --loader=$RS6_LOADER`. After it, slot B points at the old stock kernel with
 a 1 MiB dummy as its system partition and ABL never leaves it: only EDL gets the unit back.
 `edl getactiveslot` fails on this unit (sector-size quirk); read the active slot from the
@@ -146,7 +146,7 @@ attributes (the script compares each one before writing).
 
 The table has to satisfy the stock Qualcomm ABL, not just sgdisk (a table that only looked fine
 to Linux dropped every boot into fastboot). The rules below are decompiled from the stock ABL;
-addresses and evidence are in `docs/abl-gpt.md`:
+addresses and evidence are in `docs/boot-and-partitions.md`:
 
 - **system_a and system_b must exist.** ABL builds `root=/dev/mmcblk0pN` from the
   `system_<slot>` entry on every boot (U-Boot's boot.img cmdline has no `root=`) and fails
@@ -156,7 +156,7 @@ addresses and evidence are in `docs/abl-gpt.md`:
 - **No holes.** XBL skips empty entries and hands ABL one handle per remaining entry, so a
   hole shifts every later handle; ABL numbers `mmcblk0pN` and writes slot attributes back
   by handle position, on every boot, so after a hole both point at the wrong entries
-  (docs/xbl-gpt.md). On the first attempt everything after a hole went missing (misc, keystore,
+  (`docs/boot-and-partitions.md`). On the first attempt everything after a hole went missing (misc, keystore,
   devcfg, frp, vbmeta, nura_root), and bkerler edl stops at a hole too. Never
   `sgdisk -d` without refilling the slot. The stock table holds exactly 68 entries; the
   layout uses all 68, so there is no room for another entry.
