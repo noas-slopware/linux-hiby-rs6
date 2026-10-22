@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MIT
-# Reference encoder by the RS6 S/PDIF analysis (docs/spdif-dsd.md 9.1), unchanged except for
-# the __main__ guard: Hal is a transliteration of the stock HAL's spdif_core_process_data
-# (0x65aac) instruction listing, iec() an IEC 60958 encoder written from the spec (V=U=C=0).
-# HAL spdif_core_process_data (0x65aac, from the instruction listing) vs. an IEC 60958 encoder
-# written from the spec, then the q6asm S32 pair path. Prints test vectors.
+# Reference encoder by the RS6 S/PDIF analysis (docs/audio.md, "The coax stream format"),
+# unchanged except for the __main__ guard: Hal is a transliteration of the stock HAL's
+# spdif_core_process_data (0x65aac) instruction listing, iec() an IEC 60958 encoder written from
+# the spec (V=U=C=0). HAL spdif_core_process_data (0x65aac, from the instruction listing) vs. an
+# IEC 60958 encoder written from the spec, then the q6asm S32 pair path. Prints test vectors.
 import random
 PRE = [0xe8, 0xe2, 0xe4, 0x17, 0x1d, 0x1b]          # 0xb6eb8: B M W for level 0, then level 1
 

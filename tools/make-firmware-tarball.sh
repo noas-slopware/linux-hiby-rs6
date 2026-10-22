@@ -123,7 +123,7 @@ done
 # Sensor registry the ADSP's Sensor Manager (SMGR) asks the APSS for over QMI (service 0x10f)
 # before it brings up any sensor; stock sensors.qti served /persist/sensors/sns.reg, on Nura
 # the kernel's qcom_sns_reg does (as qcom/sensors/sns.reg-hiby,rs6). Group 2690 holds the
-# KXTJ2 accelerometer: SSC I2C bus 3, address 0x0e, polled. docs/sensors.md (docs branch)
+# KXTJ2 accelerometer: SSC I2C bus 3, address 0x0e, polled. docs/hardware.md (docs branch)
 debugfs -R "dump /sensors/sns.reg $T/sensors/sns.reg" "$W/persist.bin" 2>/dev/null
 [ "$(stat -c %s "$T/sensors/sns.reg")" -gt $((0x6200)) ]
 src sensors/sns.reg "persist /sensors/sns.reg (written by stock sensors.qti)" "$DUMPVER (dump; no OTA touches persist)"
@@ -153,7 +153,7 @@ for k in pcm:FS_gw1n9c_data dsd:FS_gw1n9c_dsd_data; do
 done
 
 # Darwin filters, as stock Settings shows them: Settings.apk assets/filter.json (order and
-# titles, kept as is) plus the .flt files it lists (docs/darwin-filters.md on the docs branch)
+# titles, kept as is) plus the .flt files it lists (docs/audio.md on the docs branch)
 debugfs -R "dump /system/priv-app/Settings/Settings.apk $W/Settings.apk" "$W/system_b.bin" 2>/dev/null
 rm -f "$W/system_b.bin"
 python3 -I - "$W/Settings.apk" "$T/darwin" <<'PY'

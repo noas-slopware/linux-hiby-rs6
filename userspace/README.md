@@ -14,7 +14,7 @@ Distribution-neutral sources and configuration for the RS6. The `pmos` branch pa
 | `firefox/` | `firefox-v4l2-fix.c` (LD_PRELOAD shim), `firefox-hiby-rs6` (wrapper), `.desktop`, `.js` (prefs), `-env.conf`, `-plasma-env.sh` | Venus V4L2 hardware decoding in Firefox |
 | `system/` | udev rules, tmpfiles, logind and shutdown drop-ins, `nura-swap.service`, `kernel-cmdline.conf`, `modules-initfs`, `99-flashlight.rules` | see `pmos` branch `device-hiby-rs6/APKBUILD` |
 | | `kwinrc` | `/etc/xdg/kwinrc` (desktop-only KWin effects off) |
-| `spdif/` | meson project: `pcm_rs6_spdif.c` (ALSA PCM plugin `rs6_spdif`, IEC 60958 biphase-mark encoder for the coax output), `ctl_rs6_jack.c` (ALSA control plugin `rs6_jack`: "SPDIF Jack" and "DAC Jack" from the kernel's Output Target), `50-rs6-spdif.conf`, tests | packaged as `rs6-spdif`; see `docs/spdif-dsd.md` on the `docs` branch |
+| `spdif/` | meson project: `pcm_rs6_spdif.c` (ALSA PCM plugin `rs6_spdif`, IEC 60958 biphase-mark encoder for the coax output), `ctl_rs6_jack.c` (ALSA control plugin `rs6_jack`: "SPDIF Jack" and "DAC Jack" from the kernel's Output Target), `50-rs6-spdif.conf`, tests | packaged as `rs6-spdif`; see `docs/audio.md` on the `docs` branch |
 | `touchboost/` | `rs6-touchboost.c`, `.service` | touch-triggered CPU/GPU boost daemon |
 | `vt-lock/` | `rs6-vt-lock.c`, `.service` | locks VT switching once the session is up |
 | `rs6-dac-plasma/` | CMake project | Plasma System Settings page, DAC quick setting and a rotate quick setting (KDE Frameworks 6) |

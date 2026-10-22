@@ -22,7 +22,7 @@ for n in nura_boot nura_root system_a system_b misc boot_a boot_b; do
 	[ -n "$(num $n)" ] || { echo "no $n entry; stopping"; exit 1; }
 done
 # No holes: XBL skips empty entries, so every later partition handle shifts by one and ABL's
-# position-based mmcblk0pN and attribute write-back hit the wrong entries (docs/xbl-gpt.md on the docs branch)
+# position-based mmcblk0pN and attribute write-back hit the wrong entries (docs/boot-and-partitions.md on the docs branch)
 last=$(awk 'f && NF { n = $1 } /^Number/ { f = 1 } END { print n }' <<< "$P")
 used=$(awk 'f && NF { c++ } /^Number/ { f = 1 } END { print c }' <<< "$P")
 [ "$last" = "$used" ] || { echo "GPT has holes ($used entries, last is $last); stopping"; exit 1; }

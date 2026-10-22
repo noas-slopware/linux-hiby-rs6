@@ -16,7 +16,7 @@
 # attributes back by entry position, so five freed slots become the four Nura entries plus a
 # 1 MiB dummy system_a (sector 34), and a 1 MiB dummy system_b fills the last free slot of the
 # 68-entry table (0x220020000). No holes; the backup array stays at TOTAL-33, where ABL
-# rewrites it. misc is zeroed (U-Boot leaves bootonce-bootloader there). See docs/abl-gpt.md (docs branch).
+# rewrites it. misc is zeroed (U-Boot leaves bootonce-bootloader there). See docs/boot-and-partitions.md (docs branch).
 # Layout and checks live in tools/lib/nura-gpt.sh (shared with repartition-nura-ums.sh).
 # The GPT is edited offline (sgdisk on a sparse image carrying the dumped primary + backup
 # GPT) and written back sector-exact; the result is printed and checked before writing.

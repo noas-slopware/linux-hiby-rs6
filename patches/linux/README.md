@@ -41,7 +41,7 @@ branch; the package builds exactly this series on this base.
   suspended, and the hardlockup detector skipping CPUs whose tick is frozen in s2idle. `docs/suspend.md`.
 - 0060-0068, 0073-0075: audio: native DSD on the q6asm S32-as-S16-pairs path, the hm100 S/PDIF (coax) target
   when nothing is plugged in, a read-only Output Target control, DSD mute handling, PCM and DSD offered only at
-  the DAC's rates. `docs/spdif-dsd.md`.
+  the DAC's rates. `docs/audio.md`.
 - 0069: ath10k connected-scan timing while a vdev is up. `docs/wifi.md`.
 - 0076-0094: interconnect and clocks for VDD min in s2idle: BLSP I2C/SPI interconnect paths and keep_alive /
   sync_state for the SDM660 NoCs (Fabricio Akio), the video core clock no longer always on (Fabricio Akio), the

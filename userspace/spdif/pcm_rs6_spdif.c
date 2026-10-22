@@ -4,19 +4,19 @@
  *
  * The RS6 DAC FPGA only forwards the I2S data line to its S/PDIF pin; the stock HAL did the
  * IEC 60958 biphase-mark coding in software, and so does this plugin (contract:
- * docs/spdif-dsd.md 9.1). Applications open it at the audio rate fs (S16_LE, S24_LE or S32_LE,
- * stereo); it opens the card's playback PCM at S32_LE, 2 channels, 2 x fs and writes four
- * BMC words per audio frame. Bit-perfect: no resampling, no dither, no volume. S32 input
- * loses bits 7:0 because a subframe carries 24 bits.
+ * docs/audio.md, "The coax stream format"). Applications open it at the audio rate fs
+ * (S16_LE, S24_LE or S32_LE, stereo); it opens the card's playback PCM at S32_LE, 2 channels,
+ * 2 x fs and writes four BMC words per audio frame. Bit-perfect: no resampling, no dither, no
+ * volume. S32 input loses bits 7:0 because a subframe carries 24 bits.
  *
  * The kernel latches "this stream is S/PDIF cells" when the PCM opens, from the read-only
- * "Output Target" control (9.4). So the plugin opens the card PCM only while Output Target
- * reads Spdif, re-reads it after the open, and closes the card PCM as soon as the target
- * changes (a jack plugged in), leaving the device to the analog output. While it has no card
- * PCM ("detached": target elsewhere, or the device still busy) it keeps time on
- * CLOCK_MONOTONIC and discards the data, and it reattaches when it can, so neither aplay nor
- * PipeWire sees an error. The card PCM is opened at the first data, never while an
- * application only probes the configuration.
+ * "Output Target" control (docs/audio.md, "Mainline: the Output Target control"). So the plugin
+ * opens the card PCM only while Output Target reads Spdif, re-reads it after the open, and
+ * closes the card PCM as soon as the target changes (a jack plugged in), leaving the device to
+ * the analog output. While it has no card PCM ("detached": target elsewhere, or the device
+ * still busy) it keeps time on CLOCK_MONOTONIC and discards the data, and it reattaches when it
+ * can, so neither aplay nor PipeWire sees an error. The card PCM is opened at the first data,
+ * never while an application only probes the configuration.
  *
  * Config:
  *   pcm.name { type rs6_spdif

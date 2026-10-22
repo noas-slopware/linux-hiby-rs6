@@ -38,7 +38,7 @@ As of 2026-10-22, on the author's unit, running the r29 build of exactly the pub
   bitstreams, FIR tables and Darwin filters from the `firmware` branch.
 - Coaxial S/PDIF (USB-C coax): with nothing plugged in the driver selects the stock Spdif target, and the
   `rs6-spdif` ALSA plugin encodes IEC 60958 biphase-mark cells in software. Implemented; not verified on the
-  unit (`docs/spdif-dsd.md`).
+  unit (`docs/audio.md`).
 - Suspend: s2idle reaches VDD min. Verified with one 60 s `rtcwake -m freeze` (RPM vmin count 0 -> 4, the
   whole sleep), and 300 s sleeps ran uninterrupted with no ADSP wake storm and no hardlockup reports
   (`docs/suspend.md`).
@@ -55,7 +55,7 @@ As of 2026-10-22, on the author's unit, running the r29 build of exactly the pub
   each part was verified on the unit is not recorded in these notes.
 - Accelerometer (auto-rotate) through the ADSP's SMGR: wired up (sensor registry in the
   `firmware` branch, `qcom_smgr` fixes in the series), checklist of what is still to be checked is in
-  `docs/sensors.md` on the `docs` branch.
+  `docs/hardware.md` (section 13) on the `docs` branch.
 
 Known problems: the WLAN firmware holds TX frames for a beacon interval about every 1.3 s (unexplained).
 

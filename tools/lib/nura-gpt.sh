@@ -5,7 +5,7 @@
 # is appended, so the stock 68-entry table ends up with every slot filled (XBL hands ABL one
 # handle per entry and ABL writes slot attributes back by position; bkerler edl stops at the
 # first empty entry) and the two names ABL looks up on every boot still present.
-# The rules come from the stock ABL, decompiled: docs/abl-gpt.md (docs branch).
+# The rules come from the stock ABL, decompiled: docs/boot-and-partitions.md (docs branch).
 #   #N_SA (stock system_a) -> nura_boot   1 GiB at 0x034000000
 #   #N_SB (stock system_b) -> nura_swap1  to 0x218000000 (exclusive)
 #   #N_VA (stock vendor_a) -> nura_swap2  at 0x234000000
