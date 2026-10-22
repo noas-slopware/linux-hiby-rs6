@@ -1,0 +1,2041 @@
+From e2a37475676cacba89859680e6151258ec04720b Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 00:33:38 +0900
+Subject: [PATCH] Add a Subsonic/OpenSubsonic (Navidrome) music source
+
+Imports the songs of a Subsonic compatible server into the collection so
+they show up in the Albums, Artists and Tracks views and can be played
+and queued like local files.
+
+- SubsonicListener lists the server (search3 with an empty query on
+  OpenSubsonic servers, getAlbumList2 + getAlbum otherwise) and feeds
+  DatabaseInterface::insertTracksList/removeTracksList like the file
+  indexer. Tracks are only removed after a complete listing, so an
+  offline server keeps its tracks.
+- Tracks are stored with a credential free stream URL
+  (rest/stream.view?id=..&format=raw, never transcoded); token
+  authentication (md5(password + salt), API 1.13.0+) is added with a
+  fresh salt when the URL is played.
+- Cover art is served by an image://subsonic/ provider (getCoverArt,
+  cached on disk) and exported to MPRIS as an authenticated URL. A
+  runnable on the provider's pool fetches the cover and hands it to the
+  response through a queued connection, so the response emits finished()
+  on the pixmap reader thread that owns and deletes it; responses whose
+  delegate scrolled away skip the download.
+- Plays are scrobbled (now playing on start, submission on finish).
+- Playback errors of remote tracks no longer remove them from the
+  database, and the local file indexer leaves non local URLs alone.
+- Settings: server URL, user name and password.
+---
+ src/CMakeLists.txt                            |  13 +-
+ src/abstractfile/abstractfilelisting.cpp      |   6 +
+ src/audiowrapper_libvlc.cpp                   |  15 +-
+ src/audiowrapper_qtmultimedia.cpp             |  10 +-
+ src/elisa_core.kcfg                           |  13 +
+ src/elisaapplication.cpp                      |   8 +
+ .../elisaconfigurationdialog.cpp              |  60 ++
+ .../elisaconfigurationdialog.h                |  64 ++
+ src/main.cpp                                  |   4 +
+ src/mpris2/mediaplayer2player.cpp             |   6 +-
+ src/musiclistenersmanager.cpp                 |  69 ++-
+ src/musiclistenersmanager.h                   |   6 +
+ src/qml/SettingsForm.qml                      |  61 ++
+ src/subsonic/subsonicapi.cpp                  | 227 +++++++
+ src/subsonic/subsonicapi.h                    |  95 +++
+ src/subsonic/subsonicimageprovider.cpp        | 231 ++++++++
+ src/subsonic/subsonicimageprovider.h          |  31 +
+ src/subsonic/subsoniclistener.cpp             | 558 ++++++++++++++++++
+ src/subsonic/subsoniclistener.h               | 136 +++++
+ 19 files changed, 1603 insertions(+), 10 deletions(-)
+ create mode 100644 src/subsonic/subsonicapi.cpp
+ create mode 100644 src/subsonic/subsonicapi.h
+ create mode 100644 src/subsonic/subsonicimageprovider.cpp
+ create mode 100644 src/subsonic/subsonicimageprovider.h
+ create mode 100644 src/subsonic/subsoniclistener.cpp
+ create mode 100644 src/subsonic/subsoniclistener.h
+
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 852d57b..507ebde 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -41,6 +41,9 @@ set(elisaLib_SOURCES
+     viewslistdata.cpp
+     viewconfigurationdata.cpp
+     localFileConfiguration/elisaconfigurationdialog.cpp
++    subsonic/subsonicapi.cpp
++    subsonic/subsoniclistener.cpp
++    subsonic/subsonicimageprovider.cpp
+ )
+ 
+ set(elisaLib_INCLUDEDIRS
+@@ -49,6 +52,7 @@ set(elisaLib_INCLUDEDIRS
+     ${CMAKE_CURRENT_SOURCE_DIR}/file
+     ${CMAKE_CURRENT_SOURCE_DIR}/localFileConfiguration
+     ${CMAKE_CURRENT_SOURCE_DIR}/models
++    ${CMAKE_CURRENT_SOURCE_DIR}/subsonic
+ )
+ 
+ ecm_qt_declare_logging_category(elisaLib_SOURCES
+@@ -107,6 +111,13 @@ ecm_qt_declare_logging_category(elisaLib_SOURCES
+     DEFAULT_SEVERITY Info
+     )
+ 
++ecm_qt_declare_logging_category(elisaLib_SOURCES
++    HEADER "subsonic/subsonicLogging.h"
++    IDENTIFIER "orgKdeElisaSubsonic"
++    CATEGORY_NAME "org.kde.elisa.subsonic"
++    DEFAULT_SEVERITY Info
++    )
++
+ ecm_qt_declare_logging_category(elisaLib_SOURCES
+     HEADER "powerManagementLogging.h"
+     IDENTIFIER "orgKdeElisaPowerManagement"
+@@ -235,7 +246,7 @@ target_link_libraries(elisaLib
+     LINK_PUBLIC
+     Qt::Multimedia Qt::Qml KF6::ConfigGui
+     LINK_PRIVATE
+-    Qt::Core Qt::Quick Qt::Sql Qt::Widgets Qt::Concurrent
++    Qt::Core Qt::Quick Qt::Sql Qt::Widgets Qt::Concurrent Qt::Network
+     KF6::I18n KF6::CoreAddons
+     KF6::ConfigCore
+     KF6::ColorScheme
+diff --git a/src/abstractfile/abstractfilelisting.cpp b/src/abstractfile/abstractfilelisting.cpp
+index 049837f..c19cc5b 100644
+--- a/src/abstractfile/abstractfilelisting.cpp
++++ b/src/abstractfile/abstractfilelisting.cpp
+@@ -294,6 +294,12 @@ void AbstractFileListing::executeInit(const QHash<QUrl, QDateTime> &allFiles)
+     for (const auto &pathInfo : allFiles.asKeyValueRange()) {
+         const auto &pathToBeIndexed = pathInfo.first;
+         const auto &lastModified = pathInfo.second;
++
++        // remote tracks (e.g. from a Subsonic server) are managed by their own listener
++        if (!pathToBeIndexed.isLocalFile()) {
++            continue;
++        }
++
+         bool indexThisPath = std::any_of(d->mAllRootPaths.cbegin(), d->mAllRootPaths.cend(),
+                                          [&](const auto &rootPath) {
+             return QUrl::fromLocalFile(rootPath).isParentOf(pathToBeIndexed);
+diff --git a/src/audiowrapper_libvlc.cpp b/src/audiowrapper_libvlc.cpp
+index c73cea1..c29561b 100644
+--- a/src/audiowrapper_libvlc.cpp
++++ b/src/audiowrapper_libvlc.cpp
+@@ -10,6 +10,7 @@
+ 
+ #include "vlcLogging.h"
+ #include "powermanagementinterface.h"
++#include "subsonic/subsonicapi.h"
+ 
+ #include <QAudio>
+ #include <QDir>
+@@ -68,6 +69,8 @@ public:
+ 
+     bool mHasSavedPosition = false;
+ 
++    QUrl mSource;
++
+     void vlcEventCallback(const struct libvlc_event_t *p_event);
+ 
+     void mediaIsEnded();
+@@ -168,8 +171,8 @@ QUrl AudioWrapper::source() const
+         return {};
+     }
+     if (d->mMedia) {
+-        auto filePath = QString::fromUtf8(libvlc_media_get_mrl(d->mMedia));
+-        return QUrl::fromUserInput(filePath);
++        // the canonical URL, not the MRL that may carry credentials
++        return d->mSource;
+     }
+     return {};
+ }
+@@ -233,6 +236,8 @@ void AudioWrapper::setVolume(qreal volume)
+ 
+ void AudioWrapper::setSource(const QUrl &source)
+ {
++    d->mSource = source;
++
+     if (source.isLocalFile()) {
+         qCDebug(orgKdeElisaPlayerVlc) << "AudioWrapper::setSource reading local resource";
+ #if LIBVLC_VERSION_MAJOR >= 4
+@@ -242,10 +247,12 @@ void AudioWrapper::setSource(const QUrl &source)
+ #endif
+     } else {
+         qCDebug(orgKdeElisaPlayerVlc) << "AudioWrapper::setSource reading remote resource";
++        // Subsonic stream URLs get their authentication parameters only here
++        const auto location = SubsonicApi::playableUrl(source).toString(QUrl::FullyEncoded).toUtf8();
+ #if LIBVLC_VERSION_MAJOR >= 4
+-        d->mMedia = libvlc_media_new_location(source.url().toUtf8().constData());
++        d->mMedia = libvlc_media_new_location(location.constData());
+ #else
+-        d->mMedia = libvlc_media_new_location(d->mInstance, source.url().toUtf8().constData());
++        d->mMedia = libvlc_media_new_location(d->mInstance, location.constData());
+ #endif
+     }
+ 
+diff --git a/src/audiowrapper_qtmultimedia.cpp b/src/audiowrapper_qtmultimedia.cpp
+index c2135d7..9ecac38 100644
+--- a/src/audiowrapper_qtmultimedia.cpp
++++ b/src/audiowrapper_qtmultimedia.cpp
+@@ -8,6 +8,7 @@
+ #include "powermanagementinterface.h"
+ 
+ #include "qtMultimediaLogging.h"
++#include "subsonic/subsonicapi.h"
+ 
+ #include <QAudio>
+ #include <QAudioDevice>
+@@ -41,6 +42,8 @@ public:
+     bool mQueuedStatusUpdate = false;
+ 
+     QMediaDevices mMediaDevices;
++
++    QUrl mSource;
+ };
+ 
+ AudioWrapper::AudioWrapper(QObject *parent) : QObject(parent), d(std::make_unique<AudioWrapperPrivate>())
+@@ -83,7 +86,7 @@ qreal AudioWrapper::volume() const
+ 
+ QUrl AudioWrapper::source() const
+ {
+-    return d->mPlayer.source();
++    return d->mSource;
+ }
+ 
+ QMediaPlayer::Error AudioWrapper::error() const
+@@ -139,10 +142,11 @@ void AudioWrapper::setSource(const QUrl &source)
+ 
+     // HACK workaround for https://bugreports.qt.io/browse/QTBUG-121355
+     // Playing the same source when at EndOfMedia causes the player to instantly jump the end
+-    if (d->mPlayer.mediaStatus() == QMediaPlayer::EndOfMedia && d->mPlayer.source() == source) {
++    if (d->mPlayer.mediaStatus() == QMediaPlayer::EndOfMedia && d->mSource == source) {
+         d->mPlayer.setPosition(0);
+     } else {
+-        d->mPlayer.setSource(source);
++        d->mSource = source;
++        d->mPlayer.setSource(SubsonicApi::playableUrl(source));
+     }
+ }
+ 
+diff --git a/src/elisa_core.kcfg b/src/elisa_core.kcfg
+index 48009e0..b9f1597 100644
+--- a/src/elisa_core.kcfg
++++ b/src/elisa_core.kcfg
+@@ -44,6 +44,19 @@
+     </default>
+   </entry>
+   </group>
++  <group name="Subsonic">
++   <entry key="SubsonicEnabled" type="Bool" >
++    <default>
++      false
++    </default>
++   </entry>
++   <entry key="SubsonicServerUrl" type="String" >
++   </entry>
++   <entry key="SubsonicUserName" type="String" >
++   </entry>
++   <entry key="SubsonicPassword" type="String" >
++   </entry>
++  </group>
+   <group name="Playlist">
+    <entry key="AlwaysUseAbsolutePlaylistPaths" type="Bool" >
+    <default>
+diff --git a/src/elisaapplication.cpp b/src/elisaapplication.cpp
+index 8bb0514..f5f5b50 100644
+--- a/src/elisaapplication.cpp
++++ b/src/elisaapplication.cpp
+@@ -16,6 +16,7 @@
+ #include "managemediaplayercontrol.h"
+ #include "manageheaderbar.h"
+ #include "databaseinterface.h"
++#include "subsonic/subsonicapi.h"
+ 
+ #include "elisa_settings.h"
+ #include <KAuthorized>
+@@ -97,6 +98,7 @@ ElisaApplication::ElisaApplication(QObject *parent) : QObject(parent), d(std::ma
+     Elisa::ElisaConfiguration::instance(configurationFileName);
+     Elisa::ElisaConfiguration::self()->load();
+     Elisa::ElisaConfiguration::self()->save();
++    SubsonicApi::setSettings(SubsonicApi::settingsFromConfiguration());
+     d->mSchemes = KColorSchemeManager::instance();
+ 
+     d->mConfigFileWatcher.addPath(Elisa::ElisaConfiguration::self()->config()->name());
+@@ -325,6 +327,8 @@ void ElisaApplication::configChanged()
+     currentConfiguration->load();
+     currentConfiguration->read();
+ 
++    SubsonicApi::setSettings(SubsonicApi::settingsFromConfiguration());
++
+     Q_EMIT showNowPlayingBackgroundChanged();
+     Q_EMIT showProgressOnTaskBarChanged();
+     Q_EMIT showSystemTrayIconChanged();
+@@ -432,6 +436,10 @@ void ElisaApplication::initializePlayer()
+                      d->mMusicManager->viewDatabase(), &DatabaseInterface::trackHasStartedPlaying);
+     QObject::connect(d->mAudioControl.get(), &ManageAudioPlayer::finishedPlayingTrack,
+                      d->mMusicManager->viewDatabase(), &DatabaseInterface::trackHasFinishedPlaying);
++    QObject::connect(d->mAudioControl.get(), &ManageAudioPlayer::startedPlayingTrack,
++                     d->mMusicManager.get(), &MusicListenersManager::trackHasStartedPlaying);
++    QObject::connect(d->mAudioControl.get(), &ManageAudioPlayer::finishedPlayingTrack,
++                     d->mMusicManager.get(), &MusicListenersManager::trackHasFinishedPlaying);
+     QObject::connect(d->mAudioControl.get(), &ManageAudioPlayer::updateData, d->mMediaPlayList.get(), &MediaPlayList::setData);
+ 
+     QObject::connect(d->mMediaPlayListProxyModel.get(), &MediaPlayListProxyModel::ensurePlay, d->mAudioControl.get(), &ManageAudioPlayer::ensurePlay);
+diff --git a/src/localFileConfiguration/elisaconfigurationdialog.cpp b/src/localFileConfiguration/elisaconfigurationdialog.cpp
+index 9b47574..fbaa69c 100644
+--- a/src/localFileConfiguration/elisaconfigurationdialog.cpp
++++ b/src/localFileConfiguration/elisaconfigurationdialog.cpp
+@@ -79,6 +79,10 @@ void ElisaConfigurationDialog::save()
+     Elisa::ElisaConfiguration::setPlayAtStartup(mPlayAtStartup);
+     Elisa::ElisaConfiguration::setScanAtStartup(mScanAtStartup);
+     Elisa::ElisaConfiguration::setUseFavoriteStyleRatings(mUseFavoriteStyleRatings);
++    Elisa::ElisaConfiguration::setSubsonicEnabled(mSubsonicEnabled);
++    Elisa::ElisaConfiguration::setSubsonicServerUrl(mSubsonicServerUrl.trimmed());
++    Elisa::ElisaConfiguration::setSubsonicUserName(mSubsonicUserName.trimmed());
++    Elisa::ElisaConfiguration::setSubsonicPassword(mSubsonicPassword);
+ 
+     Elisa::ElisaConfiguration::setEmbeddedView(Elisa::ElisaConfiguration::EnumEmbeddedView::NoView);
+     switch (mEmbeddedView)
+@@ -241,6 +245,50 @@ void ElisaConfigurationDialog::setUseFavoriteStyleRatings(bool useFavoriteStyleR
+     setDirty();
+ }
+ 
++void ElisaConfigurationDialog::setSubsonicEnabled(bool subsonicEnabled)
++{
++    if (mSubsonicEnabled == subsonicEnabled) {
++        return;
++    }
++    mSubsonicEnabled = subsonicEnabled;
++    Q_EMIT subsonicEnabledChanged();
++
++    setDirty();
++}
++
++void ElisaConfigurationDialog::setSubsonicServerUrl(const QString &subsonicServerUrl)
++{
++    if (mSubsonicServerUrl == subsonicServerUrl) {
++        return;
++    }
++    mSubsonicServerUrl = subsonicServerUrl;
++    Q_EMIT subsonicServerUrlChanged();
++
++    setDirty();
++}
++
++void ElisaConfigurationDialog::setSubsonicUserName(const QString &subsonicUserName)
++{
++    if (mSubsonicUserName == subsonicUserName) {
++        return;
++    }
++    mSubsonicUserName = subsonicUserName;
++    Q_EMIT subsonicUserNameChanged();
++
++    setDirty();
++}
++
++void ElisaConfigurationDialog::setSubsonicPassword(const QString &subsonicPassword)
++{
++    if (mSubsonicPassword == subsonicPassword) {
++        return;
++    }
++    mSubsonicPassword = subsonicPassword;
++    Q_EMIT subsonicPasswordChanged();
++
++    setDirty();
++}
++
+ void ElisaConfigurationDialog::removeMusicLocation(const QString &location)
+ {
+     mRootPath.removeAll(location);
+@@ -270,6 +318,18 @@ void ElisaConfigurationDialog::configChanged()
+     mUseFavoriteStyleRatings = Elisa::ElisaConfiguration::useFavoriteStyleRatings();
+     Q_EMIT useFavoriteStyleRatingsChanged();
+ 
++    mSubsonicEnabled = Elisa::ElisaConfiguration::subsonicEnabled();
++    Q_EMIT subsonicEnabledChanged();
++
++    mSubsonicServerUrl = Elisa::ElisaConfiguration::subsonicServerUrl();
++    Q_EMIT subsonicServerUrlChanged();
++
++    mSubsonicUserName = Elisa::ElisaConfiguration::subsonicUserName();
++    Q_EMIT subsonicUserNameChanged();
++
++    mSubsonicPassword = Elisa::ElisaConfiguration::subsonicPassword();
++    Q_EMIT subsonicPasswordChanged();
++
+     mAlwaysUseAbsolutePlaylistPaths = Elisa::ElisaConfiguration::alwaysUseAbsolutePlaylistPaths();
+     Q_EMIT alwaysUseAbsolutePlaylistPathsChanged();
+ 
+diff --git a/src/localFileConfiguration/elisaconfigurationdialog.h b/src/localFileConfiguration/elisaconfigurationdialog.h
+index ff7385b..6f147c5 100644
+--- a/src/localFileConfiguration/elisaconfigurationdialog.h
++++ b/src/localFileConfiguration/elisaconfigurationdialog.h
+@@ -83,6 +83,26 @@ class ELISALIB_EXPORT ElisaConfigurationDialog : public QObject
+                WRITE setUseFavoriteStyleRatings
+                NOTIFY useFavoriteStyleRatingsChanged)
+ 
++    Q_PROPERTY(bool subsonicEnabled
++               READ subsonicEnabled
++               WRITE setSubsonicEnabled
++               NOTIFY subsonicEnabledChanged)
++
++    Q_PROPERTY(QString subsonicServerUrl
++               READ subsonicServerUrl
++               WRITE setSubsonicServerUrl
++               NOTIFY subsonicServerUrlChanged)
++
++    Q_PROPERTY(QString subsonicUserName
++               READ subsonicUserName
++               WRITE setSubsonicUserName
++               NOTIFY subsonicUserNameChanged)
++
++    Q_PROPERTY(QString subsonicPassword
++               READ subsonicPassword
++               WRITE setSubsonicPassword
++               NOTIFY subsonicPasswordChanged)
++
+ public:
+ 
+     static ElisaConfigurationDialog *create(QQmlEngine *engine, QJSEngine *scriptEngine)
+@@ -154,6 +174,26 @@ public:
+         return mUseFavoriteStyleRatings;
+     }
+ 
++    [[nodiscard]] bool subsonicEnabled() const
++    {
++        return mSubsonicEnabled;
++    }
++
++    [[nodiscard]] QString subsonicServerUrl() const
++    {
++        return mSubsonicServerUrl;
++    }
++
++    [[nodiscard]] QString subsonicUserName() const
++    {
++        return mSubsonicUserName;
++    }
++
++    [[nodiscard]] QString subsonicPassword() const
++    {
++        return mSubsonicPassword;
++    }
++
+     Q_INVOKABLE void removeMusicLocation(const QString &location);
+ 
+ 
+@@ -183,6 +223,14 @@ Q_SIGNALS:
+ 
+     void useFavoriteStyleRatingsChanged();
+ 
++    void subsonicEnabledChanged();
++
++    void subsonicServerUrlChanged();
++
++    void subsonicUserNameChanged();
++
++    void subsonicPasswordChanged();
++
+ public Q_SLOTS:
+ 
+     void setRootPath(const QStringList &rootPath);
+@@ -211,6 +259,14 @@ public Q_SLOTS:
+ 
+     void setUseFavoriteStyleRatings(bool useFavoriteStyleRatings);
+ 
++    void setSubsonicEnabled(bool subsonicEnabled);
++
++    void setSubsonicServerUrl(const QString &subsonicServerUrl);
++
++    void setSubsonicUserName(const QString &subsonicUserName);
++
++    void setSubsonicPassword(const QString &subsonicPassword);
++
+ private Q_SLOTS:
+ 
+     void configChanged();
+@@ -239,6 +295,14 @@ private:
+ 
+     bool mUseFavoriteStyleRatings = false;
+ 
++    bool mSubsonicEnabled = false;
++
++    QString mSubsonicServerUrl;
++
++    QString mSubsonicUserName;
++
++    QString mSubsonicPassword;
++
+     ElisaUtils::PlayListEntryType mEmbeddedView = ElisaUtils::Unknown;
+ 
+     int mInitialViewIndex = 2;
+diff --git a/src/main.cpp b/src/main.cpp
+index 4af1257..fc1843e 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -8,6 +8,8 @@
+ #include "elisa-version.h"
+ 
+ #include "colorschemepreviewimageprovider.h"
++#include "subsonic/subsonicimageprovider.h"
++#include "subsonic/subsonicapi.h"
+ #include "elisaapplication.h"
+ #include "elisa_settings.h"
+ 
+@@ -175,6 +177,8 @@ int main(int argc, char *argv[])
+ 
+     engine.addImageProvider(QStringLiteral("colorScheme"), new ColorSchemePreviewImageProvider);
+ 
++    engine.addImageProvider(QString{SubsonicApi::imageProviderId}, new SubsonicImageProvider);
++
+     KLocalization::setupLocalizedContext(&engine);
+ 
+     QList<QUrl> urls;
+diff --git a/src/mpris2/mediaplayer2player.cpp b/src/mpris2/mediaplayer2player.cpp
+index e5f47b6..6459e00 100644
+--- a/src/mpris2/mediaplayer2player.cpp
++++ b/src/mpris2/mediaplayer2player.cpp
+@@ -16,6 +16,7 @@
+ #include "managemediaplayercontrol.h"
+ #include "manageheaderbar.h"
+ #include "audiowrapper.h"
++#include "subsonic/subsonicapi.h"
+ 
+ #if KFFileMetaData_FOUND
+ #include <KFileMetaData/ExtractorCollection>
+@@ -423,7 +424,10 @@ QVariantMap MediaPlayer2Player::getMetadataOfCurrentTrack()
+         result[QStringLiteral("xesam:albumArtist")] = QStringList{m_manageHeaderBar->albumArtist().toString()};
+     }
+     if (!m_manageHeaderBar->image().isEmpty() && !m_manageHeaderBar->image().toString().isEmpty()) {
+-        if (m_manageHeaderBar->image().scheme() == QStringLiteral("image")) {
++        if (const auto subsonicCover = SubsonicApi::coverArtDownloadUrl(m_manageHeaderBar->image()); !subsonicCover.isEmpty()) {
++            // image://subsonic/ only works inside Elisa, hand out an authenticated getCoverArt URL
++            result[QStringLiteral("mpris:artUrl")] = subsonicCover.toString(QUrl::FullyEncoded);
++        } else if (m_manageHeaderBar->image().scheme() == QStringLiteral("image")) {
+             // adding a special case for image:// URLs that are only valid because Elisa installs a special handler for them
+             // converting those URL to data URLs with embedded image data
+ #if KFFileMetaData_FOUND
+diff --git a/src/musiclistenersmanager.cpp b/src/musiclistenersmanager.cpp
+index 1983e37..944367e 100644
+--- a/src/musiclistenersmanager.cpp
++++ b/src/musiclistenersmanager.cpp
+@@ -22,6 +22,8 @@
+ #include "mediaplaylist.h"
+ #include "file/filelistener.h"
+ #include "file/localfilelisting.h"
++#include "subsonic/subsonicapi.h"
++#include "subsonic/subsoniclistener.h"
+ #include "trackslistener.h"
+ #include "elisaapplication.h"
+ #include "elisa_settings.h"
+@@ -51,6 +53,12 @@ public:
+ 
+     FileListener mFileListener;
+ 
++    SubsonicListener mSubsonicListener;
++
++    SubsonicApi::Settings mPreviousSubsonicSettings;
++
++    bool mSubsonicSettingsApplied = false;
++
+ #ifdef Q_OS_ANDROID
+     AndroidMusicListener mAndroidMusicListener;
+ #endif
+@@ -106,6 +114,26 @@ MusicListenersManager::MusicListenersManager(QObject *parent)
+ 
+     d->mDatabaseInterface.moveToThread(&d->mDatabaseThread);
+ 
++    d->mSubsonicListener.moveToThread(&d->mListenerThread);
++    connect(&d->mSubsonicListener, &SubsonicListener::tracksList,
++            &d->mDatabaseInterface, &DatabaseInterface::insertTracksList);
++    connect(&d->mSubsonicListener, &SubsonicListener::removedTracksList,
++            &d->mDatabaseInterface, &DatabaseInterface::removeTracksList);
++    connect(&d->mSubsonicListener, &SubsonicListener::askRestoredTracks,
++            &d->mDatabaseInterface, &DatabaseInterface::askRestoredTracks);
++    connect(&d->mDatabaseInterface, &DatabaseInterface::restoredTracks,
++            &d->mSubsonicListener, &SubsonicListener::setIndexedTracks);
++    connect(&d->mDatabaseInterface, &DatabaseInterface::cleanedDatabase,
++            &d->mSubsonicListener, &SubsonicListener::databaseCleaned);
++    connect(this, &MusicListenersManager::refreshDatabase,
++            &d->mSubsonicListener, &SubsonicListener::refresh);
++    connect(this, &MusicListenersManager::applicationIsTerminating,
++            &d->mSubsonicListener, &SubsonicListener::applicationAboutToQuit, Qt::DirectConnection);
++    connect(&d->mSubsonicListener, &SubsonicListener::indexingStarted,
++            this, &MusicListenersManager::monitorStartingListeners);
++    connect(&d->mSubsonicListener, &SubsonicListener::indexingFinished,
++            this, &MusicListenersManager::monitorEndingListeners);
++
+     const auto &localDataPaths = QStandardPaths::standardLocations(QStandardPaths::AppDataLocation);
+     auto databaseFileName = QString();
+     if (!localDataPaths.isEmpty()) {
+@@ -234,7 +262,10 @@ void MusicListenersManager::playBackError(const QUrl &sourceInError, QMediaPlaye
+     qCDebug(orgKdeElisaIndexersManager) << "MusicListenersManager::playBackError" << sourceInError;
+ 
+     if (playerError == QMediaPlayer::ResourceError) {
+-        Q_EMIT removeTracksInError({sourceInError});
++        // a remote server being offline must not remove its tracks from the collection
++        if (!SubsonicApi::isStreamUrl(sourceInError)) {
++            Q_EMIT removeTracksInError({sourceInError});
++        }
+ 
+         if (sourceInError.isLocalFile()) {
+             Q_EMIT displayTrackError(sourceInError.toLocalFile());
+@@ -292,6 +323,8 @@ void MusicListenersManager::configChanged()
+     currentConfiguration->load();
+     currentConfiguration->read();
+ 
++    updateSubsonicConfiguration();
++
+     bool configurationHasChanged = false;
+ 
+     auto inputRootPath = currentConfiguration->rootPath();
+@@ -352,6 +385,40 @@ void MusicListenersManager::configChanged()
+ 
+ }
+ 
++void MusicListenersManager::updateSubsonicConfiguration()
++{
++    const auto subsonicSettings = SubsonicApi::settingsFromConfiguration();
++    SubsonicApi::setSettings(subsonicSettings);
++
++    if (d->mSubsonicSettingsApplied && subsonicSettings == d->mPreviousSubsonicSettings) {
++        return;
++    }
++
++    const bool firstConfiguration = !d->mSubsonicSettingsApplied;
++    d->mSubsonicSettingsApplied = true;
++    d->mPreviousSubsonicSettings = subsonicSettings;
++
++    // at startup only list an enabled server; later, any change (including
++    // disabling the source) refreshes the imported tracks
++    if (!firstConfiguration || subsonicSettings.isUsable()) {
++        QMetaObject::invokeMethod(&d->mSubsonicListener, &SubsonicListener::refresh, Qt::QueuedConnection);
++    }
++}
++
++void MusicListenersManager::trackHasStartedPlaying(const QUrl &fileName, const QDateTime &time)
++{
++    QMetaObject::invokeMethod(&d->mSubsonicListener, [this, fileName, time]() {
++        d->mSubsonicListener.trackStartedPlaying(fileName, time);
++    }, Qt::QueuedConnection);
++}
++
++void MusicListenersManager::trackHasFinishedPlaying(const QUrl &fileName, const QDateTime &time)
++{
++    QMetaObject::invokeMethod(&d->mSubsonicListener, [this, fileName, time]() {
++        d->mSubsonicListener.trackFinishedPlaying(fileName, time);
++    }, Qt::QueuedConnection);
++}
++
+ void MusicListenersManager::increaseImportedTracksCount(const DataTypes::ListTrackDataType &allTracks)
+ {
+     d->mImportedTracksCount += allTracks.size();
+diff --git a/src/musiclistenersmanager.h b/src/musiclistenersmanager.h
+index c3de955..a17f6e6 100644
+--- a/src/musiclistenersmanager.h
++++ b/src/musiclistenersmanager.h
+@@ -143,6 +143,10 @@ public Q_SLOTS:
+ 
+     void updateSingleFileMetaData(const QUrl &url, DataTypes::ColumnsRoles role, const QVariant &data);
+ 
++    void trackHasStartedPlaying(const QUrl &fileName, const QDateTime &time);
++
++    void trackHasFinishedPlaying(const QUrl &fileName, const QDateTime &time);
++
+ private Q_SLOTS:
+ 
+     void configChanged();
+@@ -161,6 +165,8 @@ private:
+ 
+     void startLocalFileSystemIndexing();
+ 
++    void updateSubsonicConfiguration();
++
+     void startAndroidIndexing();
+ 
+     auto initializeRootPath();
+diff --git a/src/qml/SettingsForm.qml b/src/qml/SettingsForm.qml
+index 6cfe1f3..4357dfd 100644
+--- a/src/qml/SettingsForm.qml
++++ b/src/qml/SettingsForm.qml
+@@ -385,6 +385,67 @@ ColumnLayout {
+                 font: Kirigami.Theme.smallFont
+             }
+         }
++
++        // Subsonic / Navidrome server
++        // ===========================
++
++        Item {
++            Kirigami.FormData.isSection: true
++        }
++
++        QQC2.CheckBox {
++            id: subsonicEnabledCheckBox
++
++            Kirigami.FormData.label: KI18n.i18nc("@title:group", "Music server:")
++
++            Layout.fillWidth: true
++
++            text: KI18n.i18nc("@option:check", "Add music from a Navidrome or Subsonic server")
++
++            checked: ElisaConfigurationDialog.subsonicEnabled
++            onToggled: ElisaConfigurationDialog.subsonicEnabled = checked
++            Accessible.onToggleAction: onToggled
++            Accessible.onPressAction: onToggled
++        }
++
++        QQC2.TextField {
++            Kirigami.FormData.label: KI18n.i18nc("@label:textbox", "Server address:")
++
++            enabled: subsonicEnabledCheckBox.checked
++            placeholderText: "https://music.example.org"
++            inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText
++
++            text: ElisaConfigurationDialog.subsonicServerUrl
++            onTextChanged: ElisaConfigurationDialog.subsonicServerUrl = text
++        }
++
++        QQC2.TextField {
++            Kirigami.FormData.label: KI18n.i18nc("@label:textbox", "User name:")
++
++            enabled: subsonicEnabledCheckBox.checked
++            inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText
++
++            text: ElisaConfigurationDialog.subsonicUserName
++            onTextChanged: ElisaConfigurationDialog.subsonicUserName = text
++        }
++
++        Kirigami.PasswordField {
++            Kirigami.FormData.label: KI18n.i18nc("@label:textbox", "Password:")
++
++            enabled: subsonicEnabledCheckBox.checked
++
++            text: ElisaConfigurationDialog.subsonicPassword
++            onTextChanged: ElisaConfigurationDialog.subsonicPassword = text
++        }
++
++        QQC2.Label {
++            Layout.fillWidth: true
++            Layout.maximumWidth: Kirigami.Units.gridUnit * 16
++            visible: subsonicEnabledCheckBox.checked
++            text: KI18n.i18nc("@info:tooltip", "Tracks are streamed in their original format, never transcoded. The password is stored unencrypted in Elisa's configuration file.")
++            wrapMode: Text.Wrap
++            font: Kirigami.Theme.smallFont
++        }
+     }
+ 
+     // Music locations list
+diff --git a/src/subsonic/subsonicapi.cpp b/src/subsonic/subsonicapi.cpp
+new file mode 100644
+index 0000000..26ef6db
+--- /dev/null
++++ b/src/subsonic/subsonicapi.cpp
+@@ -0,0 +1,227 @@
++/*
++   SPDX-FileCopyrightText: 2026 (c) Noa Himesaka <himesaka@noa.codes>
++
++   SPDX-License-Identifier: LGPL-3.0-or-later
++ */
++
++#include "subsonicapi.h"
++
++#include "elisa_settings.h"
++
++#include <QCryptographicHash>
++#include <QMutex>
++#include <QMutexLocker>
++#include <QRandomGenerator>
++
++using namespace Qt::StringLiterals;
++
++namespace
++{
++
++QMutex &settingsMutex()
++{
++    static QMutex mutex;
++    return mutex;
++}
++
++SubsonicApi::Settings &currentSettings()
++{
++    static SubsonicApi::Settings settings;
++    return settings;
++}
++
++const QString restPathSegment = u"/rest/"_s;
++
++QString basePath(const QUrl &serverUrl)
++{
++    auto path = serverUrl.path();
++    while (path.endsWith(u'/')) {
++        path.chop(1);
++    }
++    return path;
++}
++
++// QUrlQuery leaves '+' and other sub-delimiters alone, which servers decode as
++// form encoding. Fully percent-encode every value we send.
++void addItem(QUrlQuery &query, const QString &key, const QString &value)
++{
++    query.addQueryItem(key, QString::fromLatin1(QUrl::toPercentEncoding(value)));
++}
++
++QString randomSalt()
++{
++    QByteArray salt(8, Qt::Uninitialized);
++    QRandomGenerator::system()->generate(salt.begin(), salt.end());
++    return QString::fromLatin1(salt.toHex());
++}
++
++bool sameServerAuthority(const QUrl &url, const QUrl &serverUrl)
++{
++    return url.scheme() == serverUrl.scheme() && url.host().compare(serverUrl.host(), Qt::CaseInsensitive) == 0
++        && url.port(url.scheme() == u"https"_s ? 443 : 80) == serverUrl.port(serverUrl.scheme() == u"https"_s ? 443 : 80);
++}
++
++}
++
++bool SubsonicApi::Settings::isUsable() const
++{
++    return enabled && serverUrl.isValid() && !serverUrl.host().isEmpty() && (serverUrl.scheme() == u"http"_s || serverUrl.scheme() == u"https"_s)
++        && !userName.isEmpty();
++}
++
++void SubsonicApi::setSettings(const Settings &settings)
++{
++    QMutexLocker locker(&settingsMutex());
++    currentSettings() = settings;
++}
++
++SubsonicApi::Settings SubsonicApi::settings()
++{
++    QMutexLocker locker(&settingsMutex());
++    return currentSettings();
++}
++
++SubsonicApi::Settings SubsonicApi::settingsFromConfiguration()
++{
++    Settings result;
++    result.enabled = Elisa::ElisaConfiguration::subsonicEnabled();
++    result.serverUrl = normalizedServerUrl(Elisa::ElisaConfiguration::subsonicServerUrl());
++    result.userName = Elisa::ElisaConfiguration::subsonicUserName();
++    result.password = Elisa::ElisaConfiguration::subsonicPassword();
++    return result;
++}
++
++QUrl SubsonicApi::normalizedServerUrl(const QString &userInput)
++{
++    const auto trimmed = userInput.trimmed();
++    if (trimmed.isEmpty()) {
++        return {};
++    }
++
++    auto url = QUrl::fromUserInput(trimmed);
++    if (!trimmed.contains(u"://"_s)) {
++        // fromUserInput() defaults to http, prefer TLS when the user gave no scheme
++        url.setScheme(u"https"_s);
++    }
++    url.setQuery(QString{});
++    url.setFragment(QString{});
++    url.setUserInfo(QString{});
++
++    auto path = basePath(url);
++    // accept a pasted ".../rest" or ".../rest/ping.view" URL too
++    const auto restIndex = path.indexOf(u"/rest"_s);
++    if (restIndex >= 0 && (path.size() == restIndex + 5 || path.at(restIndex + 5) == u'/')) {
++        path.truncate(restIndex);
++    }
++    url.setPath(path);
++
++    return url;
++}
++
++QUrl SubsonicApi::methodUrl(const QUrl &serverUrl, QLatin1StringView method, const QUrlQuery &query)
++{
++    auto url = serverUrl;
++    url.setPath(basePath(serverUrl) + restPathSegment + method + u".view"_s);
++    url.setQuery(query);
++    return url;
++}
++
++QUrl SubsonicApi::authenticated(const QUrl &url, const Settings &settings, bool json)
++{
++    auto query = QUrlQuery{url};
++    const auto salt = randomSalt();
++    const auto token = QCryptographicHash::hash(QByteArray{settings.password.toUtf8() + salt.toLatin1()}, QCryptographicHash::Md5).toHex();
++
++    addItem(query, u"u"_s, settings.userName);
++    addItem(query, u"t"_s, QString::fromLatin1(token));
++    addItem(query, u"s"_s, salt);
++    addItem(query, u"v"_s, QString{apiVersion});
++    addItem(query, u"c"_s, QString{clientName});
++    if (json) {
++        addItem(query, u"f"_s, u"json"_s);
++    }
++
++    auto result = url;
++    result.setQuery(query);
++    return result;
++}
++
++QUrl SubsonicApi::streamUrl(const QUrl &serverUrl, const QString &songId)
++{
++    QUrlQuery query;
++    addItem(query, u"id"_s, songId);
++    addItem(query, u"format"_s, u"raw"_s);
++    return methodUrl(serverUrl, "stream"_L1, query);
++}
++
++bool SubsonicApi::isStreamUrl(const QUrl &url)
++{
++    if (url.scheme() != u"http"_s && url.scheme() != u"https"_s) {
++        return false;
++    }
++
++    return url.path().endsWith(u"/rest/stream.view"_s) && QUrlQuery{url}.hasQueryItem(u"id"_s);
++}
++
++bool SubsonicApi::belongsToServer(const QUrl &url, const QUrl &serverUrl)
++{
++    if (!serverUrl.isValid() || serverUrl.host().isEmpty()) {
++        return false;
++    }
++
++    return sameServerAuthority(url, serverUrl) && url.path().startsWith(basePath(serverUrl) + restPathSegment);
++}
++
++QString SubsonicApi::songId(const QUrl &streamUrl)
++{
++    return QUrlQuery{streamUrl}.queryItemValue(u"id"_s, QUrl::FullyDecoded);
++}
++
++QUrl SubsonicApi::playableUrl(const QUrl &url)
++{
++    if (!isStreamUrl(url)) {
++        return url;
++    }
++
++    const auto current = settings();
++    if (!current.isUsable() || !belongsToServer(url, current.serverUrl)) {
++        return url;
++    }
++
++    return authenticated(url, current);
++}
++
++QUrl SubsonicApi::coverImageUrl(const QString &coverArtId)
++{
++    if (coverArtId.isEmpty()) {
++        return {};
++    }
++
++    return QUrl{u"image://"_s + imageProviderId + u'/' + QString::fromLatin1(QUrl::toPercentEncoding(coverArtId))};
++}
++
++QUrl SubsonicApi::coverArtDownloadUrl(const QUrl &coverImageUrl, int size)
++{
++    if (coverImageUrl.scheme() != u"image"_s || coverImageUrl.host() != imageProviderId) {
++        return {};
++    }
++
++    const auto current = settings();
++    if (!current.isUsable()) {
++        return {};
++    }
++
++    const auto coverArtId = QUrl::fromPercentEncoding(coverImageUrl.path(QUrl::FullyEncoded).mid(1).toLatin1());
++    return coverArtDownloadUrl(coverArtId, current, size);
++}
++
++QUrl SubsonicApi::coverArtDownloadUrl(const QString &coverArtId, const Settings &settings, int size)
++{
++    QUrlQuery query;
++    addItem(query, u"id"_s, coverArtId);
++    if (size > 0) {
++        addItem(query, u"size"_s, QString::number(size));
++    }
++
++    return authenticated(methodUrl(settings.serverUrl, "getCoverArt"_L1, query), settings);
++}
+diff --git a/src/subsonic/subsonicapi.h b/src/subsonic/subsonicapi.h
+new file mode 100644
+index 0000000..c850824
+--- /dev/null
++++ b/src/subsonic/subsonicapi.h
+@@ -0,0 +1,95 @@
++/*
++   SPDX-FileCopyrightText: 2026 (c) Noa Himesaka <himesaka@noa.codes>
++
++   SPDX-License-Identifier: LGPL-3.0-or-later
++ */
++
++#ifndef SUBSONICAPI_H
++#define SUBSONICAPI_H
++
++#include "elisaLib_export.h"
++
++#include <QString>
++#include <QUrl>
++#include <QUrlQuery>
++
++/**
++ * Helpers for the Subsonic / OpenSubsonic REST API (Navidrome, Gonic, ...).
++ *
++ * Tracks are stored in the database with a canonical stream URL that carries
++ * no credentials (http(s)://server/rest/stream.view?id=<id>&format=raw), so the
++ * database key stays stable. Authentication (token = md5(password + salt),
++ * API 1.13.0+) is added with a fresh salt every time a URL is actually used.
++ */
++namespace SubsonicApi
++{
++
++struct ELISALIB_EXPORT Settings {
++    bool enabled = false;
++    QUrl serverUrl;
++    QString userName;
++    QString password;
++
++    [[nodiscard]] bool isUsable() const;
++
++    bool operator==(const Settings &other) const = default;
++};
++
++/** API version sent as the v parameter. Token authentication needs 1.13.0 or later. */
++inline constexpr QLatin1StringView apiVersion{"1.16.1"};
++
++/** Client name sent as the c parameter. */
++inline constexpr QLatin1StringView clientName{"Elisa"};
++
++/** Id of the QML image provider serving cover art: image://subsonic/<coverArt id> */
++inline constexpr QLatin1StringView imageProviderId{"subsonic"};
++
++/** Number of songs requested per search3 page */
++inline constexpr int songPageSize = 500;
++
++/** Process-wide copy of the current settings, safe to read from any thread. */
++ELISALIB_EXPORT void setSettings(const Settings &settings);
++ELISALIB_EXPORT Settings settings();
++
++/** Reads the settings from Elisa's configuration. Call from the main thread only. */
++ELISALIB_EXPORT Settings settingsFromConfiguration();
++
++/** Normalizes user input like "music.example.org/navidrome/" to https://music.example.org/navidrome */
++ELISALIB_EXPORT QUrl normalizedServerUrl(const QString &userInput);
++
++/** URL of a REST method, without authentication parameters. */
++ELISALIB_EXPORT QUrl methodUrl(const QUrl &serverUrl, QLatin1StringView method, const QUrlQuery &query = {});
++
++/** Adds u, t, s, v and c (and f=json if requested) with a new random salt. */
++ELISALIB_EXPORT QUrl authenticated(const QUrl &url, const Settings &settings, bool json = false);
++
++/** Canonical (credential-free) stream URL of a song. format=raw disables server side transcoding. */
++ELISALIB_EXPORT QUrl streamUrl(const QUrl &serverUrl, const QString &songId);
++
++/** True for canonical stream URLs of any Subsonic server. */
++ELISALIB_EXPORT bool isStreamUrl(const QUrl &url);
++
++/** True if url is a REST URL of the given server. */
++ELISALIB_EXPORT bool belongsToServer(const QUrl &url, const QUrl &serverUrl);
++
++/** Song id of a canonical stream URL. */
++ELISALIB_EXPORT QString songId(const QUrl &streamUrl);
++
++/**
++ * URL to hand to the audio backend: stream URLs of the configured server get
++ * fresh authentication parameters, anything else is returned unchanged.
++ */
++ELISALIB_EXPORT QUrl playableUrl(const QUrl &url);
++
++/** URL used for the album cover in the database: image://subsonic/<coverArt id> */
++ELISALIB_EXPORT QUrl coverImageUrl(const QString &coverArtId);
++
++/** Authenticated getCoverArt URL for an image://subsonic/ URL (empty if not one). */
++ELISALIB_EXPORT QUrl coverArtDownloadUrl(const QUrl &coverImageUrl, int size = 0);
++
++/** Authenticated getCoverArt URL for a cover art id. */
++ELISALIB_EXPORT QUrl coverArtDownloadUrl(const QString &coverArtId, const Settings &settings, int size = 0);
++
++}
++
++#endif // SUBSONICAPI_H
+diff --git a/src/subsonic/subsonicimageprovider.cpp b/src/subsonic/subsonicimageprovider.cpp
+new file mode 100644
+index 0000000..f248988
+--- /dev/null
++++ b/src/subsonic/subsonicimageprovider.cpp
+@@ -0,0 +1,231 @@
++/*
++   SPDX-FileCopyrightText: 2026 (c) Noa Himesaka <himesaka@noa.codes>
++
++   SPDX-License-Identifier: LGPL-3.0-or-later
++ */
++
++#include "subsonicimageprovider.h"
++
++#include "subsonic/subsonicLogging.h"
++#include "subsonicapi.h"
++
++#include <QCryptographicHash>
++#include <QDir>
++#include <QEventLoop>
++#include <QFile>
++#include <QImage>
++#include <QNetworkAccessManager>
++#include <QNetworkReply>
++#include <QNetworkRequest>
++#include <QRunnable>
++#include <QSaveFile>
++#include <QStandardPaths>
++
++#include <atomic>
++#include <memory>
++
++using namespace Qt::StringLiterals;
++
++namespace
++{
++
++constexpr int transferTimeout = 30000;
++
++/**
++ * Fetches one cover on a thread of the provider's pool and reports it with
++ * done(). Owned and deleted by the pool (autoDelete).
++ *
++ * It is deliberately not the QQuickImageResponse itself: the pixmap reader
++ * deletes a response as soon as it has handled finished(), on its own
++ * thread. A response that emits finished() from a pool thread is still
++ * inside QMetaObject::activate() when that happens.
++ */
++class SubsonicCoverJob : public QObject, public QRunnable
++{
++    Q_OBJECT
++
++public:
++    SubsonicCoverJob(QString coverArtId, const QSize &requestedSize, std::shared_ptr<const std::atomic_bool> cancelled)
++        : mCoverArtId(std::move(coverArtId))
++        , mRequestedSize(requestedSize)
++        , mCancelled(std::move(cancelled))
++    {
++    }
++
++    void run() override
++    {
++        QImage image;
++        load(image);
++        Q_EMIT done(image, mErrorMessage);
++    }
++
++Q_SIGNALS:
++    void done(const QImage &image, const QString &errorMessage);
++
++private:
++    void load(QImage &image)
++    {
++        // the delegate that asked for it is gone already (fast scrolling)
++        if (mCancelled->load()) {
++            mErrorMessage = u"Cancelled"_s;
++            return;
++        }
++
++        const auto settings = SubsonicApi::settings();
++        const int size = std::max(mRequestedSize.width(), mRequestedSize.height());
++
++        const auto cacheFileName = cachePath(settings, size);
++        QByteArray imageData;
++
++        QFile cacheFile(cacheFileName);
++        if (!cacheFileName.isEmpty() && cacheFile.open(QIODevice::ReadOnly)) {
++            imageData = cacheFile.readAll();
++        }
++
++        if (imageData.isEmpty()) {
++            if (mCancelled->load()) {
++                mErrorMessage = u"Cancelled"_s;
++                return;
++            }
++
++            imageData = download(settings, size);
++            if (!imageData.isEmpty() && !cacheFileName.isEmpty()) {
++                QDir().mkpath(QFileInfo(cacheFileName).absolutePath());
++                QSaveFile saveFile(cacheFileName);
++                if (saveFile.open(QIODevice::WriteOnly)) {
++                    saveFile.write(imageData);
++                    saveFile.commit();
++                }
++            }
++        }
++
++        if (imageData.isEmpty()) {
++            if (mErrorMessage.isEmpty()) {
++                mErrorMessage = u"No cover art for "_s + mCoverArtId;
++            }
++            return;
++        }
++
++        image = QImage::fromData(imageData);
++        if (image.isNull()) {
++            mErrorMessage = u"Invalid cover art image for "_s + mCoverArtId;
++            return;
++        }
++
++        if (size > 0 && (image.width() > size || image.height() > size)) {
++            image = image.scaled(size, size, Qt::KeepAspectRatio, Qt::SmoothTransformation);
++        }
++    }
++
++    QString cachePath(const SubsonicApi::Settings &settings, int size) const
++    {
++        const auto cacheRoot = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
++        if (cacheRoot.isEmpty() || !settings.serverUrl.isValid()) {
++            return {};
++        }
++
++        const auto key = QCryptographicHash::hash(QByteArray{settings.serverUrl.toEncoded() + '\n' + mCoverArtId.toUtf8() + '\n' + QByteArray::number(size)},
++                                                  QCryptographicHash::Sha1)
++                             .toHex();
++        return cacheRoot + u"/subsonic-covers/"_s + QString::fromLatin1(key);
++    }
++
++    QByteArray download(const SubsonicApi::Settings &settings, int size)
++    {
++        if (!settings.isUsable()) {
++            mErrorMessage = u"Subsonic server is not configured"_s;
++            return {};
++        }
++
++        QNetworkAccessManager networkManager;
++        QNetworkRequest request(SubsonicApi::coverArtDownloadUrl(mCoverArtId, settings, size));
++        request.setTransferTimeout(transferTimeout);
++        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
++
++        QEventLoop loop;
++        auto reply = networkManager.get(request);
++        QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
++        loop.exec();
++
++        QByteArray result;
++        const auto contentType = reply->header(QNetworkRequest::ContentTypeHeader).toString();
++        if (reply->error() != QNetworkReply::NoError) {
++            mErrorMessage = reply->errorString();
++            qCDebug(orgKdeElisaSubsonic()) << "getCoverArt failed for" << mCoverArtId << reply->errorString();
++        } else if (contentType.startsWith(u"application/json"_s) || contentType.startsWith(u"text/xml"_s) || contentType.startsWith(u"application/xml"_s)) {
++            // a subsonic-response error document instead of an image
++            mErrorMessage = u"Server returned an error for cover art "_s + mCoverArtId;
++        } else {
++            result = reply->readAll();
++        }
++
++        delete reply;
++        return result;
++    }
++
++    QString mCoverArtId;
++    QSize mRequestedSize;
++    std::shared_ptr<const std::atomic_bool> mCancelled;
++    QString mErrorMessage;
++};
++
++/**
++ * Lives in the pixmap reader thread that called requestImageResponse() and
++ * emits finished() only from there, after the job's result arrived through
++ * a queued connection.
++ */
++class SubsonicImageResponse : public QQuickImageResponse
++{
++    Q_OBJECT
++
++public:
++    SubsonicImageResponse(const QString &coverArtId, const QSize &requestedSize, QThreadPool &pool)
++    {
++        auto job = new SubsonicCoverJob(coverArtId, requestedSize, mCancelled);
++        connect(job, &SubsonicCoverJob::done, this, &SubsonicImageResponse::handleDone, Qt::QueuedConnection);
++        pool.start(job);
++    }
++
++    [[nodiscard]] QQuickTextureFactory *textureFactory() const override
++    {
++        return QQuickTextureFactory::textureFactoryForImage(mImage);
++    }
++
++    [[nodiscard]] QString errorString() const override
++    {
++        return mErrorMessage;
++    }
++
++    void cancel() override
++    {
++        // the job still reports back, so finished() is emitted in any case
++        mCancelled->store(true);
++    }
++
++private:
++    void handleDone(const QImage &image, const QString &errorMessage)
++    {
++        mImage = image;
++        mErrorMessage = errorMessage;
++        Q_EMIT finished();
++    }
++
++    std::shared_ptr<std::atomic_bool> mCancelled = std::make_shared<std::atomic_bool>(false);
++    QImage mImage;
++    QString mErrorMessage;
++};
++
++}
++
++SubsonicImageProvider::SubsonicImageProvider()
++    : QQuickAsyncImageProvider()
++{
++    mPool.setMaxThreadCount(4);
++}
++
++QQuickImageResponse *SubsonicImageProvider::requestImageResponse(const QString &id, const QSize &requestedSize)
++{
++    return new SubsonicImageResponse(QUrl::fromPercentEncoding(id.toUtf8()), requestedSize, mPool);
++}
++
++#include "subsonicimageprovider.moc"
+diff --git a/src/subsonic/subsonicimageprovider.h b/src/subsonic/subsonicimageprovider.h
+new file mode 100644
+index 0000000..29ae752
+--- /dev/null
++++ b/src/subsonic/subsonicimageprovider.h
+@@ -0,0 +1,31 @@
++/*
++   SPDX-FileCopyrightText: 2026 (c) Noa Himesaka <himesaka@noa.codes>
++
++   SPDX-License-Identifier: LGPL-3.0-or-later
++ */
++
++#ifndef SUBSONICIMAGEPROVIDER_H
++#define SUBSONICIMAGEPROVIDER_H
++
++#include "elisaLib_export.h"
++
++#include <QQuickAsyncImageProvider>
++#include <QThreadPool>
++
++/**
++ * Serves image://subsonic/<coverArt id> by calling getCoverArt on the
++ * configured server with fresh token authentication. Downloaded images are
++ * kept in the cache directory so browsing works when the server is offline.
++ */
++class ELISALIB_EXPORT SubsonicImageProvider : public QQuickAsyncImageProvider
++{
++public:
++    SubsonicImageProvider();
++
++    QQuickImageResponse *requestImageResponse(const QString &id, const QSize &requestedSize) override;
++
++private:
++    QThreadPool mPool;
++};
++
++#endif // SUBSONICIMAGEPROVIDER_H
+diff --git a/src/subsonic/subsoniclistener.cpp b/src/subsonic/subsoniclistener.cpp
+new file mode 100644
+index 0000000..a288e7d
+--- /dev/null
++++ b/src/subsonic/subsoniclistener.cpp
+@@ -0,0 +1,558 @@
++/*
++   SPDX-FileCopyrightText: 2026 (c) Noa Himesaka <himesaka@noa.codes>
++
++   SPDX-License-Identifier: LGPL-3.0-or-later
++ */
++
++#include "subsoniclistener.h"
++
++#include "subsonic/subsonicLogging.h"
++
++#include <QJsonArray>
++#include <QJsonDocument>
++#include <QJsonParseError>
++#include <QNetworkAccessManager>
++#include <QNetworkReply>
++#include <QNetworkRequest>
++#include <QTime>
++#include <QUrlQuery>
++
++using namespace Qt::StringLiterals;
++
++namespace
++{
++
++constexpr int transferTimeout = 30000;
++
++constexpr int albumListPageSize = 500;
++
++constexpr int maximumParallelAlbumRequests = 4;
++
++QString firstNonEmpty(std::initializer_list<QString> values)
++{
++    for (const auto &value : values) {
++        if (!value.isEmpty()) {
++            return value;
++        }
++    }
++    return {};
++}
++
++QString joinedArtistNames(const QJsonValue &artists)
++{
++    QStringList names;
++    const auto artistArray = artists.toArray();
++    for (const auto &artist : artistArray) {
++        const auto name = artist.toObject().value("name"_L1).toString();
++        if (!name.isEmpty()) {
++            names.push_back(name);
++        }
++    }
++    return names.join(u", "_s);
++}
++
++}
++
++SubsonicListener::SubsonicListener(QObject *parent)
++    : QObject(parent)
++{
++}
++
++SubsonicListener::~SubsonicListener() = default;
++
++DataTypes::TrackDataType
++SubsonicListener::trackFromSong(const QJsonObject &song, const QUrl &serverUrl, const QString &albumArtistFallback, const QString &coverArtFallback)
++{
++    DataTypes::TrackDataType track;
++
++    const auto id = song.value("id"_L1).toString();
++    const auto mediaType = song.value("type"_L1).toString();
++    if (id.isEmpty() || song.value("isDir"_L1).toBool() || song.value("isVideo"_L1).toBool() || mediaType == u"video"_s || mediaType == u"podcast"_s) {
++        return track;
++    }
++
++    const auto title = song.value("title"_L1).toString();
++    const auto artist = firstNonEmpty({song.value("displayArtist"_L1).toString(), song.value("artist"_L1).toString()});
++    const auto album = song.value("album"_L1).toString();
++    const auto albumArtist =
++        firstNonEmpty({song.value("displayAlbumArtist"_L1).toString(), joinedArtistNames(song.value("albumArtists"_L1)), albumArtistFallback, artist});
++
++    track[DataTypes::ResourceRole] = SubsonicApi::streamUrl(serverUrl, id);
++    track[DataTypes::ElementTypeRole] = ElisaUtils::Track;
++    track[DataTypes::TitleRole] = title.isEmpty() ? id : title;
++    track[DataTypes::DurationRole] = QTime::fromMSecsSinceStartOfDay(std::max(0, song.value("duration"_L1).toInt()) * 1000);
++    track[DataTypes::RatingRole] = std::clamp(song.value("userRating"_L1).toInt() * 2, 0, 10);
++    track[DataTypes::HasEmbeddedCover] = false;
++
++    if (!artist.isEmpty()) {
++        track[DataTypes::ArtistRole] = artist;
++    }
++    if (!album.isEmpty()) {
++        track[DataTypes::AlbumRole] = album;
++    }
++    if (!albumArtist.isEmpty()) {
++        track[DataTypes::AlbumArtistRole] = albumArtist;
++    }
++    if (const auto trackNumber = song.value("track"_L1).toInt(); trackNumber > 0) {
++        track[DataTypes::TrackNumberRole] = trackNumber;
++    }
++    if (const auto discNumber = song.value("discNumber"_L1).toInt(); discNumber > 0) {
++        track[DataTypes::DiscNumberRole] = discNumber;
++    }
++    if (const auto year = song.value("year"_L1).toInt(); year > 0) {
++        track[DataTypes::YearRole] = year;
++    }
++    if (const auto genre = song.value("genre"_L1).toString(); !genre.isEmpty()) {
++        track[DataTypes::GenreRole] = genre;
++    }
++    if (const auto composer = song.value("displayComposer"_L1).toString(); !composer.isEmpty()) {
++        track[DataTypes::ComposerRole] = composer;
++    }
++    if (const auto comment = song.value("comment"_L1).toString(); !comment.isEmpty()) {
++        track[DataTypes::CommentRole] = comment;
++    }
++    if (const auto bitRate = song.value("bitRate"_L1).toInt(); bitRate > 0) {
++        // the API reports kbit/s, Elisa stores bit/s
++        track[DataTypes::BitRateRole] = bitRate * 1000;
++    }
++    if (const auto sampleRate = song.value("samplingRate"_L1).toInt(); sampleRate > 0) {
++        track[DataTypes::SampleRateRole] = sampleRate;
++    }
++    if (const auto channels = song.value("channelCount"_L1).toInt(); channels > 0) {
++        track[DataTypes::ChannelsRole] = channels;
++    }
++
++    const auto coverArt = firstNonEmpty({song.value("coverArt"_L1).toString(), coverArtFallback});
++    if (!coverArt.isEmpty()) {
++        track[DataTypes::ImageUrlRole] = SubsonicApi::coverImageUrl(coverArt);
++    }
++
++    const auto created = QDateTime::fromString(song.value("created"_L1).toString(), Qt::ISODateWithMs);
++    if (created.isValid()) {
++        track[DataTypes::FileModificationTime] = created;
++    }
++
++    return track;
++}
++
++QNetworkAccessManager *SubsonicListener::networkManager()
++{
++    // created lazily so that it lives in the listener thread
++    if (!mNetworkManager) {
++        mNetworkManager = new QNetworkAccessManager(this);
++    }
++    return mNetworkManager;
++}
++
++void SubsonicListener::get(const SubsonicApi::Settings &settings,
++                           QLatin1StringView method,
++                           const QUrlQuery &query,
++                           const JsonHandler &onSuccess,
++                           const ErrorHandler &onError)
++{
++    const auto url = SubsonicApi::authenticated(SubsonicApi::methodUrl(settings.serverUrl, method, query), settings, true);
++
++    QNetworkRequest request(url);
++    request.setTransferTimeout(transferTimeout);
++    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
++
++    auto reply = networkManager()->get(request);
++    const auto methodName = QString{method};
++
++    connect(reply, &QNetworkReply::finished, this, [this, reply, methodName, onSuccess, onError]() {
++        reply->deleteLater();
++
++        if (mStopRequested) {
++            return;
++        }
++
++        if (reply->error() != QNetworkReply::NoError) {
++            onError(methodName + u": "_s + reply->errorString());
++            return;
++        }
++
++        QJsonParseError parseError;
++        const auto document = QJsonDocument::fromJson(reply->readAll(), &parseError);
++        if (parseError.error != QJsonParseError::NoError) {
++            onError(methodName + u": invalid JSON: "_s + parseError.errorString());
++            return;
++        }
++
++        const auto response = document.object().value("subsonic-response"_L1).toObject();
++        if (response.value("status"_L1).toString() != u"ok"_s) {
++            const auto error = response.value("error"_L1).toObject();
++            onError(methodName + u": error "_s + QString::number(error.value("code"_L1).toInt()) + u" "_s + error.value("message"_L1).toString());
++            return;
++        }
++
++        onSuccess(response);
++    });
++}
++
++void SubsonicListener::refresh()
++{
++    if (mStopRequested) {
++        return;
++    }
++
++    const auto settings = SubsonicApi::settings();
++
++    if (!settings.isUsable()) {
++        // stop any running listing
++        ++mSyncGeneration;
++        if (mSyncRunning) {
++            mSyncRunning = false;
++            Q_EMIT indexingFinished();
++        }
++        mRefreshQueued = false;
++
++        if (!settings.enabled) {
++            // the source was switched off: drop what it imported
++            mLastCompleteListing.clear();
++            if (mHaveDatabaseSnapshot) {
++                applyRemovals();
++            } else {
++                mDiffPending = true;
++                Q_EMIT askRestoredTracks();
++            }
++        }
++        return;
++    }
++
++    if (mSyncRunning) {
++        mRefreshQueued = true;
++        return;
++    }
++
++    mSyncSettings = settings;
++    startSync();
++}
++
++void SubsonicListener::setIndexedTracks(const QHash<QUrl, QDateTime> &allTracks)
++{
++    mKnownTracks.clear();
++    for (auto it = allTracks.keyBegin(); it != allTracks.keyEnd(); ++it) {
++        if (SubsonicApi::isStreamUrl(*it)) {
++            mKnownTracks.insert(*it);
++        }
++    }
++    mHaveDatabaseSnapshot = true;
++
++    if (mDiffPending) {
++        mDiffPending = false;
++        applyRemovals();
++    } else if (!SubsonicApi::settings().enabled && !mKnownTracks.isEmpty()) {
++        mLastCompleteListing.clear();
++        applyRemovals();
++    }
++}
++
++void SubsonicListener::databaseCleaned()
++{
++    mKnownTracks.clear();
++    mLastCompleteListing.clear();
++    mHaveDatabaseSnapshot = true;
++    mDiffPending = false;
++
++    if (mSyncRunning) {
++        // tracks inserted so far are gone, start over
++        mSyncRunning = false;
++        ++mSyncGeneration;
++        Q_EMIT indexingFinished();
++    }
++
++    refresh();
++}
++
++void SubsonicListener::startSync()
++{
++    ++mSyncGeneration;
++    mSyncRunning = true;
++    mSyncFailed = false;
++    mFetchedTracks.clear();
++    mPendingAlbumIds.clear();
++    mAlbumRequestsInFlight = 0;
++
++    qCInfo(orgKdeElisaSubsonic()) << "listing" << mSyncSettings.serverUrl.toDisplayString();
++
++    Q_EMIT indexingStarted();
++
++    const auto generation = mSyncGeneration;
++    get(
++        mSyncSettings,
++        "ping"_L1,
++        {},
++        [this, generation](const QJsonObject &response) {
++            if (generation != mSyncGeneration) {
++                return;
++            }
++            if (response.value("openSubsonic"_L1).toBool()) {
++                // OpenSubsonic servers must return everything for an empty search3 query
++                fetchSongsPage(0);
++            } else {
++                fetchAlbumListPage(0);
++            }
++        },
++        [this, generation](const QString &message) {
++            if (generation != mSyncGeneration) {
++                return;
++            }
++            qCWarning(orgKdeElisaSubsonic()) << "server not reachable, keeping the existing tracks:" << message;
++            finishSync(false);
++        });
++}
++
++void SubsonicListener::fetchSongsPage(int offset)
++{
++    QUrlQuery query;
++    query.addQueryItem(u"query"_s, QString{});
++    query.addQueryItem(u"artistCount"_s, u"0"_s);
++    query.addQueryItem(u"albumCount"_s, u"0"_s);
++    query.addQueryItem(u"songCount"_s, QString::number(SubsonicApi::songPageSize));
++    query.addQueryItem(u"songOffset"_s, QString::number(offset));
++
++    const auto generation = mSyncGeneration;
++    get(
++        mSyncSettings,
++        "search3"_L1,
++        query,
++        [this, generation, offset](const QJsonObject &response) {
++            if (generation != mSyncGeneration) {
++                return;
++            }
++
++            const auto songs = response.value("searchResult3"_L1).toObject().value("song"_L1).toArray();
++            if (offset == 0 && songs.isEmpty()) {
++                qCInfo(orgKdeElisaSubsonic()) << "empty search3 listing, falling back to album listing";
++                fetchAlbumListPage(0);
++                return;
++            }
++
++            DataTypes::ListTrackDataType tracks;
++            tracks.reserve(songs.size());
++            for (const auto &song : songs) {
++                auto track = trackFromSong(song.toObject(), mSyncSettings.serverUrl);
++                if (track.isValid()) {
++                    tracks.push_back(std::move(track));
++                }
++            }
++            addTracks(tracks);
++
++            if (songs.isEmpty()) {
++                finishSync(true);
++            } else {
++                // continue until an empty page: servers may cap the page size
++                fetchSongsPage(offset + static_cast<int>(songs.size()));
++            }
++        },
++        [this, generation](const QString &message) {
++            if (generation != mSyncGeneration) {
++                return;
++            }
++            qCWarning(orgKdeElisaSubsonic()) << "listing failed:" << message;
++            finishSync(false);
++        });
++}
++
++void SubsonicListener::fetchAlbumListPage(int offset)
++{
++    QUrlQuery query;
++    query.addQueryItem(u"type"_s, u"alphabeticalByName"_s);
++    query.addQueryItem(u"size"_s, QString::number(albumListPageSize));
++    query.addQueryItem(u"offset"_s, QString::number(offset));
++
++    const auto generation = mSyncGeneration;
++    get(
++        mSyncSettings,
++        "getAlbumList2"_L1,
++        query,
++        [this, generation, offset](const QJsonObject &response) {
++            if (generation != mSyncGeneration) {
++                return;
++            }
++
++            const auto albums = response.value("albumList2"_L1).toObject().value("album"_L1).toArray();
++            for (const auto &album : albums) {
++                const auto albumId = album.toObject().value("id"_L1).toString();
++                if (!albumId.isEmpty()) {
++                    mPendingAlbumIds.push_back(albumId);
++                }
++            }
++
++            if (albums.isEmpty()) {
++                fetchNextAlbums();
++            } else {
++                fetchAlbumListPage(offset + static_cast<int>(albums.size()));
++            }
++        },
++        [this, generation](const QString &message) {
++            if (generation != mSyncGeneration) {
++                return;
++            }
++            qCWarning(orgKdeElisaSubsonic()) << "album listing failed:" << message;
++            finishSync(false);
++        });
++}
++
++void SubsonicListener::fetchNextAlbums()
++{
++    while (mAlbumRequestsInFlight < maximumParallelAlbumRequests && !mPendingAlbumIds.isEmpty()) {
++        const auto albumId = mPendingAlbumIds.takeFirst();
++        ++mAlbumRequestsInFlight;
++
++        QUrlQuery query;
++        query.addQueryItem(u"id"_s, QString::fromLatin1(QUrl::toPercentEncoding(albumId)));
++
++        const auto generation = mSyncGeneration;
++        get(
++            mSyncSettings,
++            "getAlbum"_L1,
++            query,
++            [this, generation](const QJsonObject &response) {
++                if (generation != mSyncGeneration) {
++                    return;
++                }
++                --mAlbumRequestsInFlight;
++
++                const auto album = response.value("album"_L1).toObject();
++                const auto albumArtist = firstNonEmpty({album.value("displayArtist"_L1).toString(), album.value("artist"_L1).toString()});
++                const auto coverArt = album.value("coverArt"_L1).toString();
++                const auto songs = album.value("song"_L1).toArray();
++
++                DataTypes::ListTrackDataType tracks;
++                tracks.reserve(songs.size());
++                for (const auto &song : songs) {
++                    auto track = trackFromSong(song.toObject(), mSyncSettings.serverUrl, albumArtist, coverArt);
++                    if (track.isValid()) {
++                        tracks.push_back(std::move(track));
++                    }
++                }
++                addTracks(tracks);
++
++                fetchNextAlbums();
++            },
++            [this, generation](const QString &message) {
++                if (generation != mSyncGeneration) {
++                    return;
++                }
++                --mAlbumRequestsInFlight;
++                mSyncFailed = true;
++                qCWarning(orgKdeElisaSubsonic()) << "album failed:" << message;
++
++                fetchNextAlbums();
++            });
++    }
++
++    if (mPendingAlbumIds.isEmpty() && mAlbumRequestsInFlight == 0) {
++        finishSync(!mSyncFailed);
++    }
++}
++
++void SubsonicListener::addTracks(const DataTypes::ListTrackDataType &tracks)
++{
++    if (tracks.isEmpty() || mStopRequested) {
++        return;
++    }
++
++    for (const auto &track : tracks) {
++        mFetchedTracks.insert(track.resourceURI());
++    }
++
++    Q_EMIT tracksList(tracks);
++}
++
++void SubsonicListener::finishSync(bool complete)
++{
++    if (!mSyncRunning) {
++        return;
++    }
++    mSyncRunning = false;
++
++    qCInfo(orgKdeElisaSubsonic()) << "listing finished:" << mFetchedTracks.size() << "tracks" << (complete ? "" : "(incomplete)");
++
++    if (complete) {
++        mLastCompleteListing = mFetchedTracks;
++        if (mHaveDatabaseSnapshot) {
++            applyRemovals();
++        } else {
++            mDiffPending = true;
++            Q_EMIT askRestoredTracks();
++        }
++    }
++
++    Q_EMIT indexingFinished();
++
++    if (mRefreshQueued) {
++        mRefreshQueued = false;
++        refresh();
++    }
++}
++
++void SubsonicListener::applyRemovals()
++{
++    QList<QUrl> removedTracks;
++    for (const auto &track : std::as_const(mKnownTracks)) {
++        if (!mLastCompleteListing.contains(track)) {
++            removedTracks.push_back(track);
++        }
++    }
++
++    mKnownTracks = mLastCompleteListing;
++
++    if (!removedTracks.isEmpty() && !mStopRequested) {
++        qCInfo(orgKdeElisaSubsonic()) << "removing" << removedTracks.size() << "tracks no longer on the server";
++        Q_EMIT removedTracksList(removedTracks);
++    }
++}
++
++void SubsonicListener::trackStartedPlaying(const QUrl &url, const QDateTime &time)
++{
++    if (!SubsonicApi::isStreamUrl(url)) {
++        return;
++    }
++
++    // also emitted when resuming from pause: keep the first start time
++    if (!mPlayStartTimes.contains(url)) {
++        mPlayStartTimes.insert(url, time);
++    }
++    scrobble(url, time, false);
++}
++
++void SubsonicListener::trackFinishedPlaying(const QUrl &url, const QDateTime &time)
++{
++    if (!SubsonicApi::isStreamUrl(url)) {
++        return;
++    }
++
++    const auto startTime = mPlayStartTimes.take(url);
++    scrobble(url, startTime.isValid() ? startTime : time, true);
++}
++
++void SubsonicListener::scrobble(const QUrl &url, const QDateTime &time, bool submission)
++{
++    const auto settings = SubsonicApi::settings();
++    if (!settings.isUsable() || !SubsonicApi::belongsToServer(url, settings.serverUrl) || mStopRequested) {
++        return;
++    }
++
++    QUrlQuery query;
++    query.addQueryItem(u"id"_s, QString::fromLatin1(QUrl::toPercentEncoding(SubsonicApi::songId(url))));
++    query.addQueryItem(u"time"_s, QString::number(time.toMSecsSinceEpoch()));
++    query.addQueryItem(u"submission"_s, submission ? u"true"_s : u"false"_s);
++
++    get(
++        settings,
++        "scrobble"_L1,
++        query,
++        [](const QJsonObject &) { },
++        [submission](const QString &message) {
++            qCWarning(orgKdeElisaSubsonic()) << (submission ? "scrobble" : "now playing") << "failed:" << message;
++        });
++}
++
++void SubsonicListener::applicationAboutToQuit()
++{
++    mStopRequested = true;
++}
++
++#include "moc_subsoniclistener.cpp"
+diff --git a/src/subsonic/subsoniclistener.h b/src/subsonic/subsoniclistener.h
+new file mode 100644
+index 0000000..d88dadd
+--- /dev/null
++++ b/src/subsonic/subsoniclistener.h
+@@ -0,0 +1,136 @@
++/*
++   SPDX-FileCopyrightText: 2026 (c) Noa Himesaka <himesaka@noa.codes>
++
++   SPDX-License-Identifier: LGPL-3.0-or-later
++ */
++
++#ifndef SUBSONICLISTENER_H
++#define SUBSONICLISTENER_H
++
++#include "elisaLib_export.h"
++
++#include "datatypes.h"
++#include "subsonicapi.h"
++
++#include <QDateTime>
++#include <QHash>
++#include <QJsonObject>
++#include <QObject>
++#include <QSet>
++#include <QUrl>
++
++#include <atomic>
++#include <functional>
++#include <memory>
++
++class QNetworkAccessManager;
++class QNetworkReply;
++
++/**
++ * Imports the songs of a Subsonic / OpenSubsonic server (e.g. Navidrome) into
++ * Elisa's database, the same way the local file indexer does: it emits
++ * tracksList() and removedTracksList() which are connected to
++ * DatabaseInterface::insertTracksList() and DatabaseInterface::removeTracksList().
++ *
++ * Lives in the listener thread. Network failures never remove tracks: tracks
++ * are only removed after a complete listing of the server succeeded.
++ */
++class ELISALIB_EXPORT SubsonicListener : public QObject
++{
++    Q_OBJECT
++
++public:
++    explicit SubsonicListener(QObject *parent = nullptr);
++
++    ~SubsonicListener() override;
++
++    /** Converts one song (Child) object of the API to Elisa's track data. */
++    static DataTypes::TrackDataType
++    trackFromSong(const QJsonObject &song, const QUrl &serverUrl, const QString &albumArtistFallback = {}, const QString &coverArtFallback = {});
++
++Q_SIGNALS:
++
++    void tracksList(const DataTypes::ListTrackDataType &tracks);
++
++    void removedTracksList(const QList<QUrl> &removedTracks);
++
++    void askRestoredTracks();
++
++    void indexingStarted();
++
++    void indexingFinished();
++
++public Q_SLOTS:
++
++    /** Lists the whole server again (uses SubsonicApi::settings()). */
++    void refresh();
++
++    /** Snapshot of all tracks known by the database. */
++    void setIndexedTracks(const QHash<QUrl, QDateTime> &allTracks);
++
++    /** The database was cleared (hard rescan). */
++    void databaseCleaned();
++
++    void trackStartedPlaying(const QUrl &url, const QDateTime &time);
++
++    void trackFinishedPlaying(const QUrl &url, const QDateTime &time);
++
++    void applicationAboutToQuit();
++
++private:
++    using JsonHandler = std::function<void(const QJsonObject &response)>;
++    using ErrorHandler = std::function<void(const QString &message)>;
++
++    QNetworkAccessManager *networkManager();
++
++    void
++    get(const SubsonicApi::Settings &settings, QLatin1StringView method, const QUrlQuery &query, const JsonHandler &onSuccess, const ErrorHandler &onError);
++
++    void startSync();
++
++    void fetchSongsPage(int offset);
++
++    void fetchAlbumListPage(int offset);
++
++    void fetchNextAlbums();
++
++    void addTracks(const DataTypes::ListTrackDataType &tracks);
++
++    void finishSync(bool complete);
++
++    void applyRemovals();
++
++    void scrobble(const QUrl &url, const QDateTime &time, bool submission);
++
++    QNetworkAccessManager *mNetworkManager = nullptr;
++
++    SubsonicApi::Settings mSyncSettings;
++
++    QSet<QUrl> mKnownTracks;
++
++    QSet<QUrl> mFetchedTracks;
++
++    QSet<QUrl> mLastCompleteListing;
++
++    QStringList mPendingAlbumIds;
++
++    QHash<QUrl, QDateTime> mPlayStartTimes;
++
++    int mSyncGeneration = 0;
++
++    int mAlbumRequestsInFlight = 0;
++
++    bool mHaveDatabaseSnapshot = false;
++
++    bool mDiffPending = false;
++
++    bool mSyncRunning = false;
++
++    bool mSyncFailed = false;
++
++    bool mRefreshQueued = false;
++
++    std::atomic_bool mStopRequested = false;
++};
++
++#endif // SUBSONICLISTENER_H

@@ -1,0 +1,52 @@
+From: Noa Himesaka <himesaka@noa.codes>
+Subject: [PATCH] Open mobile drawers after the tap that asked for them
+
+On a touchscreen the button emits clicked() on the touch release, the
+drawer opens, and the mouse release Qt synthesizes for the same tap then
+lands outside the still-zero-width drawer. Kirigami modal drawers use
+CloseOnReleaseOutside, so they close again at once and the sidebar and
+playlist buttons appear dead (KDE bug 521070). Open them from
+Qt.callLater() so the tap is fully delivered first.
+---
+--- a/src/qml/ContextView.qml
++++ b/src/qml/ContextView.qml
+@@ -77,7 +77,7 @@
+                 visible: Kirigami.Settings.isMobile
+                 text: KI18n.i18nc("@action:button", "Open sidebar")
+                 icon.name: "open-menu-symbolic"
+-                onClicked: mainWindow.globalDrawer.open()
++                onClicked: Qt.callLater(() => mainWindow.globalDrawer.open())
+             }
+ 
+             Kirigami.Heading {
+@@ -136,7 +136,7 @@
+                     if (topItem.isWidescreen) {
+                         contentView.showPlaylist = !contentView.showPlaylist;
+                     } else {
+-                        playlistDrawer.open();
++                        Qt.callLater(() => playlistDrawer.open());
+                     }
+                 }
+             }
+--- a/src/qml/mobile/MobileTrackPlayer.qml
++++ b/src/qml/mobile/MobileTrackPlayer.qml
+@@ -395,7 +395,7 @@
+                     Layout.maximumWidth: height
+                     Layout.preferredWidth: height
+                     text: KI18n.i18nc("@action:button", "Show Playlist")
+-                    onClicked: playlistDrawer.open()
++                    onClicked: Qt.callLater(() => playlistDrawer.open())
+                     icon.name: "view-media-playlist"
+                     icon.color: "white"
+                 }
+--- a/src/qml/NavigationActionBar.qml
++++ b/src/qml/NavigationActionBar.qml
+@@ -243,7 +243,7 @@
+                     visible: Kirigami.Settings.isMobile
+                     text: KI18n.i18nc("@action:button", "Open sidebar")
+                     icon.name: "open-menu-symbolic"
+-                    onClicked: mainWindow.globalDrawer.open()
++                    onClicked: Qt.callLater(() => mainWindow.globalDrawer.open())
+                 }
+                 FlatButtonWithToolTip {
+                     id: goPreviousButton

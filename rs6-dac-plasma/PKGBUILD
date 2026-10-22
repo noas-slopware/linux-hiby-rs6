@@ -1,0 +1,45 @@
+# Maintainer: Noa Himesaka <himesaka@noa.codes>
+#
+# HiBy RS6 DAC controls for Plasma Mobile: System Settings page, DAC quick setting and a rotate
+# quick setting (KDE Frameworks 6). Source: userspace/rs6-dac-plasma on the main branch of
+# noas-slopware/linux-hiby-rs6, already laid out as CMake expects (the pmos package keeps the files
+# flat and lays them out in prepare()).
+
+pkgname=rs6-dac-plasma
+pkgver=1.0
+pkgrel=1
+pkgdesc='HiBy RS6 DAC controls for Plasma Mobile: System Settings page and quick settings'
+url='https://github.com/noas-slopware/linux-hiby-rs6'
+arch=(aarch64)
+license=(MIT)
+depends=(
+  alsa-lib
+  glibc
+  hiby-rs6-audio
+  kcmutils
+  kcoreaddons
+  kde-cli-tools
+  kirigami
+  kirigami-addons
+  libkscreen
+  libstdc++
+  plasma-mobile
+  qt6-base
+  qt6-declarative
+)
+makedepends=(cmake extra-cmake-modules)
+# senpai branch (default) of noas-slopware/linux-hiby-rs6
+_rs6commit=f773f4acc90f1d6d55795f943593466c07b6276d
+source=("linux-hiby-rs6-$_rs6commit.tar.gz::https://github.com/noas-slopware/linux-hiby-rs6/archive/$_rs6commit.tar.gz")
+sha256sums=('360c953e8eb687629077ed6a368f0a4b7fe2b463a5217a1bc618a90a407971fc')
+
+build() {
+  cmake -B build -S linux-hiby-rs6-$_rs6commit/userspace/rs6-dac-plasma \
+    -DCMAKE_BUILD_TYPE=None \
+    -DCMAKE_INSTALL_PREFIX=/usr
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}

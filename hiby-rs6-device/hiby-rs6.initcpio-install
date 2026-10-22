@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# mkinitcpio install hook (hiby-rs6-boot): the RS6 modules the initramfs needs, listed in
+# /usr/share/hiby-rs6/modules-initfs (userspace/system/modules-initfs on main, the same list
+# Nura's mkinitfs uses): display, panel, backlight, charger, battery; plus f2fs for the root
+# filesystem (a module in Arch's config). Storage (SDHCI-MSM, mmc_block) and ext4 are built in.
+
+build() {
+    local m
+    while read -r m; do
+        case $m in ''|'#'*) continue ;; esac
+        add_module "$m"
+    done < /usr/share/hiby-rs6/modules-initfs
+    add_module f2fs
+}
+
+help() {
+    cat <<HELPEOF
+Adds the HiBy RS6 early modules (msm, panel, backlight, charger, fuel gauge).
+HELPEOF
+}

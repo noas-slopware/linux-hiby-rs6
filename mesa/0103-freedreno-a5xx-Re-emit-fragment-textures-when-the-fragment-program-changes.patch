@@ -1,0 +1,41 @@
+From 7322c700317d964b332950d9284f77d6e2ff3b59 Mon Sep 17 00:00:00 2001
+From: Fabricio Akio <fabricioakio@gmail.com>
+Date: Tue, 20 Oct 2026 00:02:53 -0300
+Subject: [PATCH 3/4] freedreno/a5xx: Re-emit fragment textures when the
+ fragment program changes
+
+A scissored glClear between two draws that sample the same texture is
+drawn by the GL frontend as a quad with its own shaders. The second
+draw then gets no texture state, as its bindings did not change. On
+A508 with hardware binning it then samples the wrong texture state in
+some bins; without binning it draws correctly.
+
+Emit the fragment stage's textures whenever its program changes too.
+Qualcomm's driver on A508 re-sent the fragment textures on every
+fragment program change in a recorded frame of the same application.
+
+Fixes: 07e1233c615 ("freedreno: Enable Adreno 508, 509 and 512")
+Assisted-by: LLM
+Signed-off-by: Fabricio Akio <fabricioakio@gmail.com>
+---
+ src/gallium/drivers/freedreno/a5xx/fd5_emit.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/drivers/freedreno/a5xx/fd5_emit.c b/src/gallium/drivers/freedreno/a5xx/fd5_emit.c
+index d890de4..403a10d 100644
+--- a/src/gallium/drivers/freedreno/a5xx/fd5_emit.c
++++ b/src/gallium/drivers/freedreno/a5xx/fd5_emit.c
+@@ -829,7 +829,9 @@ fd5_emit_state(struct fd_context *ctx, struct fd_ringbuffer *ring,
+       OUT_RING(ring, ctx->tex[MESA_SHADER_VERTEX].num_textures);
+    }
+ 
+-   if (ctx->dirty_shader[MESA_SHADER_FRAGMENT] & FD_DIRTY_SHADER_TEX) {
++   /* With binning, a draw after a program change can sample wrong textures. */
++   if (ctx->dirty_shader[MESA_SHADER_FRAGMENT] &
++       (FD_DIRTY_SHADER_TEX | FD_DIRTY_SHADER_PROG)) {
+       needs_border |=
+          emit_textures(ctx, ring, SB4_FS_TEX, &ctx->tex[MESA_SHADER_FRAGMENT]);
+    }
+-- 
+2.56.0
+

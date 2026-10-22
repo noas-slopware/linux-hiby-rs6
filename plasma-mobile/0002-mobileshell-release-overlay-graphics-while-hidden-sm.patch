@@ -1,0 +1,148 @@
+From 371fef1a72b5a145de047e49c9bb79239f9a6b96 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 20:09:28 +0900
+Subject: [PATCH] mobileshell: release overlay graphics while hidden, smaller
+ texture atlases
+
+A QQuickWindow keeps its scene graph and graphics context while hidden
+(persistentGraphics and persistentSceneGraph default to true), including a
+texture atlas Qt Quick sizes to the next power of two of the window: 2048x2048,
+16 MiB of GPU memory, for a 1080x1920 window. The volume OSD, the volume
+change popup, the notification popup layer and the applet overlay are hidden
+nearly all the time but kept all of it. Add ShellUtil.releaseGraphicsWhenHidden()
+and use it for them, so they drop it while hidden and rebuild it when shown.
+
+Also cap Qt Quick's atlases at 1024x1024 in the session (QSG_ATLAS_WIDTH and
+QSG_ATLAS_HEIGHT): the shell's full-screen windows used a fraction of their
+16 MiB atlases. Images that don't fit get a texture of their own.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ bin/startplasmamobile.in                            |  5 +++++
+ .../notifications/NotificationPopupManager.qml      |  5 ++++-
+ .../qml/popups/volumeosd/VolumeChangedPopup.qml     |  1 +
+ .../mobileshell/qml/popups/volumeosd/VolumeOSD.qml  |  1 +
+ components/mobileshell/shellutil.cpp                | 13 +++++++++++++
+ components/mobileshell/shellutil.h                  |  7 +++++++
+ shell/contents/applet/CompactApplet.qml             |  2 ++
+ 7 files changed, 33 insertions(+), 1 deletion(-)
+
+diff --git a/bin/startplasmamobile.in b/bin/startplasmamobile.in
+index 9c4c994..4656574 100755
+--- a/bin/startplasmamobile.in
++++ b/bin/startplasmamobile.in
+@@ -12,6 +12,11 @@ export EGL_PLATFORM=wayland
+ 
+ export QT_QUICK_CONTROLS_STYLE=org.kde.breeze
+ export QT_ENABLE_GLYPH_CACHE_WORKAROUND=1
++# Qt Quick sizes each window's texture atlas to the next power of two of the window size:
++# 2048x2048 (16 MiB of GPU memory) for every full-screen 1080x1920 window. Most of it stays
++# empty in the shell; images that don't fit get their own texture instead.
++export QSG_ATLAS_WIDTH=1024
++export QSG_ATLAS_HEIGHT=1024
+ export QT_QUICK_CONTROLS_MOBILE=true
+ export PLASMA_INTEGRATION_USE_PORTAL=1
+ export PLASMA_PLATFORM=phone:handset
+diff --git a/components/mobileshell/qml/popups/notifications/NotificationPopupManager.qml b/components/mobileshell/qml/popups/notifications/NotificationPopupManager.qml
+index 0e8f68e..4247424 100644
+--- a/components/mobileshell/qml/popups/notifications/NotificationPopupManager.qml
++++ b/components/mobileshell/qml/popups/notifications/NotificationPopupManager.qml
+@@ -111,7 +111,10 @@ Window {
+         }
+     }
+ 
+-    Component.onCompleted: ShellUtil.setInputTransparent(notificationPopupManager, true)
++    Component.onCompleted: {
++        ShellUtil.setInputTransparent(notificationPopupManager, true);
++        ShellUtil.releaseGraphicsWhenHidden(notificationPopupManager);
++    }
+ 
+     Binding {
+         target: MobileShellState.ShellDBusClient
+diff --git a/components/mobileshell/qml/popups/volumeosd/VolumeChangedPopup.qml b/components/mobileshell/qml/popups/volumeosd/VolumeChangedPopup.qml
+index ab77a27..fa3fdb6 100644
+--- a/components/mobileshell/qml/popups/volumeosd/VolumeChangedPopup.qml
++++ b/components/mobileshell/qml/popups/volumeosd/VolumeChangedPopup.qml
+@@ -77,6 +77,7 @@ Window {
+     }
+ 
+     Component.onCompleted: {
++        MobileShell.ShellUtil.releaseGraphicsWhenHidden(window);
+         window.close();
+         visible = false;
+     }
+diff --git a/components/mobileshell/qml/popups/volumeosd/VolumeOSD.qml b/components/mobileshell/qml/popups/volumeosd/VolumeOSD.qml
+index dbb2fce..c8b41e7 100644
+--- a/components/mobileshell/qml/popups/volumeosd/VolumeOSD.qml
++++ b/components/mobileshell/qml/popups/volumeosd/VolumeOSD.qml
+@@ -61,6 +61,7 @@ Window {
+     }
+ 
+     Component.onCompleted: {
++        MobileShell.ShellUtil.releaseGraphicsWhenHidden(window);
+         window.close();
+         visible = false;
+     }
+diff --git a/components/mobileshell/shellutil.cpp b/components/mobileshell/shellutil.cpp
+index a036cb8..a7cf4b4 100644
+--- a/components/mobileshell/shellutil.cpp
++++ b/components/mobileshell/shellutil.cpp
+@@ -95,6 +95,19 @@ void ShellUtil::launchApp(const QString &storageId)
+     job->start();
+ }
+ 
++void ShellUtil::releaseGraphicsWhenHidden(QQuickWindow *window)
++{
++    if (!window) {
++        return;
++    }
++
++    // Both default to true: a hidden QQuickWindow keeps its scene graph and graphics
++    // context, including a texture atlas sized to the window (2048x2048, 16 MiB, for a
++    // 1080x1920 one), for as long as the window exists.
++    window->setPersistentGraphics(false);
++    window->setPersistentSceneGraph(false);
++}
++
+ void ShellUtil::setInputTransparent(QQuickWindow *window, bool transparent)
+ {
+     if (!window) {
+diff --git a/components/mobileshell/shellutil.h b/components/mobileshell/shellutil.h
+index 2b6f56a..770d63c 100644
+--- a/components/mobileshell/shellutil.h
++++ b/components/mobileshell/shellutil.h
+@@ -72,6 +72,13 @@ public:
+      */
+     Q_INVOKABLE void setInputTransparent(QQuickWindow *window, bool transparent);
+ 
++    /**
++     * Let the window drop its graphics resources (scene graph, texture atlas, render
++     * targets) while it is hidden, and rebuild them when it is shown again. For overlays
++     * that are hidden most of the time.
++     */
++    Q_INVOKABLE void releaseGraphicsWhenHidden(QQuickWindow *window);
++
+     /**
+      * Set the window layer
+      */
+diff --git a/shell/contents/applet/CompactApplet.qml b/shell/contents/applet/CompactApplet.qml
+index f57f9e4..2edb271 100644
+--- a/shell/contents/applet/CompactApplet.qml
++++ b/shell/contents/applet/CompactApplet.qml
+@@ -12,6 +12,7 @@ import org.kde.ksvg 1.0 as KSvg
+ import org.kde.kquickcontrolsaddons 2.0
+ import org.kde.plasma.plasmoid 2.0
+ import org.kde.plasma.private.nanoshell 2.0 as NanoShell
++import org.kde.plasma.private.mobileshell as MobileShell
+ import org.kde.kirigami as Kirigami
+ 
+ Item {
+@@ -115,6 +116,7 @@ Item {
+     NanoShell.FullScreenOverlay {
+         id: expandedOverlay
+         color: Qt.rgba(0, 0, 0, 0.6)
++        Component.onCompleted: MobileShell.ShellUtil.releaseGraphicsWhenHidden(expandedOverlay)
+         visible: plasmoidItem?.expanded && fullRepresentation
+         width: Screen.width
+         height: Screen.height

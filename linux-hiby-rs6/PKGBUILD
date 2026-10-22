@@ -1,0 +1,271 @@
+# Maintainer: Noa Himesaka <himesaka@noa.codes>
+# Based on Arch Linux Ports' linux (bschnei/linux, branch aarch64, df552a59d849: linux 7.2.11.arch1-1 on
+# arch.bens.haus; Jan Alexander Steffens (heftig) for Arch's linux).
+#
+# Kernel for the HiBy RS6: sdm660-mainline qcom-sdm660-7.2.y at _commit plus the 94-patch series from
+# patches/linux on the main branch of noas-slopware/linux-hiby-rs6.
+# Config: Arch Linux Ports' aarch64 config (config.aarch64, verbatim) + config-rs6.fragment (what the RS6
+# needs; made by mkfragment.py from the Nura RS6 config, see its header). Built with GCC like Arch's linux
+# (the Nura package used LLVM; the series has not been built with GCC before).
+#
+# Packaged like Arch's linux (main, -headers, -dtbs; no -docs). One deviation: /usr/lib/modules/$kver/vmlinuz
+# is Image.gz, which the RS6's U-Boot boots via extlinux (as on Nura), not the EFI zboot image
+# (`make image_name` = vmlinuz.efi with CONFIG_EFI_ZBOOT=y).
+
+pkgbase=linux-hiby-rs6
+pkgver=7.2.3
+pkgrel=1
+pkgdesc='Linux for the HiBy RS6 (sdm660-mainline + RS6 series)'
+url='https://github.com/noas-slopware/linux-hiby-rs6'
+arch=(aarch64)
+license=(GPL-2.0-only)
+makedepends=(
+  bc
+  binutils
+  cpio
+  gettext
+  glibc
+  libelf
+  libgcc
+  openssl
+  pahole
+  perl
+  python
+  rust
+  rust-bindgen
+  rust-src
+  tar
+  xxhash
+  xz
+  zlib
+  zstd
+)
+options=(
+  !debug
+  !strip
+)
+_commit=dd1ed52c8ceef4f16715118ed0252fe75adbe71d   # sdm660-mainline qcom-sdm660-7.2.y (Linux 7.2.3)
+# senpai branch (default) of noas-slopware/linux-hiby-rs6
+_rs6commit=f773f4acc90f1d6d55795f943593466c07b6276d
+_srcname=linux-$_commit
+source=(
+  "linux-sdm660-$_commit.tar.gz::https://github.com/sdm660-mainline/linux/archive/$_commit.tar.gz"
+  "linux-hiby-rs6-$_rs6commit.tar.gz::https://github.com/noas-slopware/linux-hiby-rs6/archive/$_rs6commit.tar.gz"
+  config.aarch64
+  config-rs6.fragment
+  # upstream 10a47fb67340 (7.3): the tools/ build includes the arm64 UAPI headers, which use __u128
+  # since linux-api-headers 7.3
+  0001-tools-linux-types.h-Add-128-bit-integer-types-for-arm64-UAPI-structures.patch
+)
+sha512sums=('b56636f4d7429e971a70c1b7237fda4d5795fbe422c01f6fc6038220c2e831bf4479bd411b5e04e4db45de4fb8ec15a9e0e312b6479e2067709062af3dfd6997'
+            'b7ce99f8a91c928bc4d56850e4636d82d333b3a54f0e366ae6d4523cf902f639330773857543e8b56cbc5333351eb79fe4dffec3ba33655c2a24e8f7b1774e13'
+            '2488702652cc0c0bc5a75b8668c4ff143d64724cf661a65b1e8171901687db8d78b51d02b540b30fa6ae96334516bc550d60100254e5ef8175e8bab53e0ac8b7'
+            '3b1ceee97270cdef38babbefe9755b0cd0a48f0e27f58e2cdab7d1138cf5182f6ec8e24301c2effe27c9f96b83066b4a472b1bd4243006b139b977325b997709'
+            '64e12f60d00f80912aa92a91ff1081a5703efd3ab0df2f539c1d505329844caa8b0180c34b4c9e1fa1bc59e632605cf44c7fd5a87b433803f9b42a4f9f9a0e43')
+
+export KBUILD_BUILD_HOST=archlinux
+export KBUILD_BUILD_USER=$pkgbase
+export KBUILD_BUILD_TIMESTAMP="$(date -Ru${SOURCE_DATE_EPOCH:+d @$SOURCE_DATE_EPOCH})"
+
+prepare() {
+  cd $_srcname
+
+  echo "Setting version..."
+  echo "-$pkgrel" > localversion.10-pkgrel
+  echo "${pkgbase#linux}" > localversion.20-pkgname
+
+  local p
+  for p in "$srcdir"/linux-hiby-rs6-$_rs6commit/patches/linux/0*.patch; do
+    echo "Applying ${p##*/}..."
+    patch -Np1 < "$p"
+  done
+  echo "Applying 0001-tools-linux-types.h-Add-128-bit-integer-types-for-arm64-UAPI-structures.patch..."
+  patch -Np1 < ../0001-tools-linux-types.h-Add-128-bit-integer-types-for-arm64-UAPI-structures.patch
+
+  echo "Setting config..."
+  cp ../config.aarch64 .config
+  scripts/kconfig/merge_config.sh -m .config ../config-rs6.fragment
+  make olddefconfig
+  diff -u ../config.aarch64 .config || :
+
+  make -s kernelrelease > version
+  echo "Prepared $pkgbase version $(<version)"
+}
+
+build() {
+  cd $_srcname
+  make all Image.gz
+  make -C tools/bpf/bpftool vmlinux.h feature-clang-bpf-co-re=1
+}
+
+_package() {
+  pkgdesc="The $pkgdesc kernel and modules"
+  depends=(
+    coreutils
+    initramfs
+    kmod
+  )
+  optdepends=(
+    "$pkgbase-dtbs: device tree binaries (hiby-rs6-boot needs the RS6 one)"
+    "$pkgbase-headers: headers and scripts for building modules"
+    'firmware-hiby-rs6: RS6 firmware (GPU, DSPs, Wi-Fi, Bluetooth, DAC bitstreams)'
+    'wireless-regdb: to set the correct wireless channels of your country'
+  )
+  provides=(
+    KSMBD-MODULE
+    NTSYNC-MODULE
+    VIRTUALBOX-GUEST-MODULES
+    WIREGUARD-MODULE
+  )
+  replaces=(
+    virtualbox-guest-modules-arch
+    wireguard-arch
+  )
+
+  cd $_srcname
+  local modulesdir="$pkgdir/usr/lib/modules/$(<version)"
+
+  echo "Installing boot image..."
+  # Image.gz for U-Boot's booti (see the header), at the path mkinitcpio and systemd expect
+  install -Dm644 arch/arm64/boot/Image.gz "$modulesdir/vmlinuz"
+
+  # Used by mkinitcpio to name the kernel
+  echo "$pkgbase" | install -Dm644 /dev/stdin "$modulesdir/pkgbase"
+
+  echo "Installing modules..."
+  ZSTD_CLEVEL=19 make INSTALL_MOD_PATH="$pkgdir/usr" INSTALL_MOD_STRIP=1 \
+    DEPMOD=/doesnt/exist modules_install  # Suppress depmod
+
+  # remove build link
+  rm "$modulesdir"/build
+}
+
+_package-headers() {
+  pkgdesc="Headers and scripts for building modules for the $pkgdesc kernel"
+  depends=(
+    binutils
+    glibc
+    libelf
+    libgcc
+    openssl
+    pahole
+    xxhash
+    zlib
+    zstd
+  )
+  provides=(LINUX-HEADERS)
+
+  cd $_srcname
+  local builddir="$pkgdir/usr/lib/modules/$(<version)/build"
+  local karch=arm64
+
+  echo "Installing build files..."
+  install -Dt "$builddir" -m644 .config Makefile Module.symvers System.map \
+    localversion.* version vmlinux tools/bpf/bpftool/vmlinux.h
+  install -Dt "$builddir/kernel" -m644 kernel/Makefile
+  install -Dt "$builddir/arch/$karch" -m644 arch/$karch/Makefile
+  cp -t "$builddir" -a scripts
+  ln -srt "$builddir" "$builddir/scripts/gdb/vmlinux-gdb.py"
+
+  if [[ $(scripts/config -s CONFIG_HAVE_STACK_VALIDATION) = y ]]; then
+    install -Dt "$builddir/tools/objtool" tools/objtool/objtool
+  fi
+
+  if [[ $(scripts/config -s CONFIG_DEBUG_INFO_BTF_MODULES) = y ]]; then
+    install -Dt "$builddir/tools/bpf/resolve_btfids" tools/bpf/resolve_btfids/resolve_btfids
+  fi
+
+  echo "Installing headers..."
+  cp -t "$builddir" -a include
+  cp -t "$builddir/arch/$karch" -a arch/$karch/include
+  install -Dt "$builddir/arch/$karch/kernel" -m644 arch/$karch/kernel/asm-offsets.s
+
+  install -Dt "$builddir/drivers/md" -m644 drivers/md/*.h
+  install -Dt "$builddir/net/mac80211" -m644 net/mac80211/*.h
+
+  # https://bugs.archlinux.org/task/13146
+  install -Dt "$builddir/drivers/media/i2c" -m644 drivers/media/i2c/msp3400-driver.h
+
+  # https://bugs.archlinux.org/task/20402
+  install -Dt "$builddir/drivers/media/usb/dvb-usb" -m644 drivers/media/usb/dvb-usb/*.h
+  install -Dt "$builddir/drivers/media/dvb-frontends" -m644 drivers/media/dvb-frontends/*.h
+  install -Dt "$builddir/drivers/media/tuners" -m644 drivers/media/tuners/*.h
+
+  # https://bugs.archlinux.org/task/71392
+  install -Dt "$builddir/drivers/iio/common/hid-sensors" -m644 drivers/iio/common/hid-sensors/*.h
+
+  echo "Installing KConfig files..."
+  find . -name 'Kconfig*' -exec install -Dm644 {} "$builddir/{}" \;
+
+  if [[ $(scripts/config -s CONFIG_RUST) = y ]]; then
+    echo "Installing Rust files..."
+    install -Dt "$builddir/rust" -m644 rust/*.rmeta
+    install -Dt "$builddir/rust" rust/*.so
+  fi
+
+  echo "Installing unstripped VDSO..."
+  make INSTALL_MOD_PATH="$pkgdir/usr" vdso_install \
+    link=  # Suppress build-id symlinks
+
+  echo "Removing unneeded architectures..."
+  local arch
+  for arch in "$builddir"/arch/*/; do
+    [[ $arch = */$karch/ ]] && continue
+    echo "Removing $(basename "$arch")"
+    rm -r "$arch"
+  done
+
+  echo "Removing documentation..."
+  rm -r "$builddir/Documentation"
+
+  echo "Removing broken symlinks..."
+  find -L "$builddir" -type l -printf 'Removing %P\n' -delete
+
+  echo "Removing loose objects..."
+  find "$builddir" -type f -name '*.o' -printf 'Removing %P\n' -delete
+
+  echo "Stripping build tools..."
+  local file
+  while read -rd '' file; do
+    case "$(file -Sib "$file")" in
+      application/x-sharedlib\;*)      # Libraries (.so)
+        strip -v $STRIP_SHARED "$file" ;;
+      application/x-archive\;*)        # Libraries (.a)
+        strip -v $STRIP_STATIC "$file" ;;
+      application/x-executable\;*)     # Binaries
+        strip -v $STRIP_BINARIES "$file" ;;
+      application/x-pie-executable\;*) # Relocatable binaries
+        strip -v $STRIP_SHARED "$file" ;;
+    esac
+  done < <(find "$builddir" -type f -perm -u+x ! -name vmlinux -print0)
+
+  echo "Stripping vmlinux..."
+  strip -v $STRIP_STATIC "$builddir/vmlinux"
+
+  echo "Adding symlink..."
+  mkdir -p "$pkgdir/usr/src"
+  ln -sr "$builddir" "$pkgdir/usr/src/$pkgbase"
+}
+
+_package-dtbs() {
+  pkgdesc="Device tree binaries for the $pkgdesc kernel"
+
+  cd $_srcname
+  local dtbdir="$pkgdir/usr/lib/modules/$(<version)/dtb"
+
+  echo "Installing device tree binaries..."
+  mkdir -p "$dtbdir"
+  make INSTALL_DTBS_PATH="$dtbdir" dtbs_install
+}
+
+pkgname=(
+  "$pkgbase"
+  "$pkgbase-headers"
+  "$pkgbase-dtbs"
+)
+for _p in "${pkgname[@]}"; do
+  eval "package_$_p() {
+    $(declare -f "_package${_p#$pkgbase}")
+    _package${_p#$pkgbase}
+  }"
+done

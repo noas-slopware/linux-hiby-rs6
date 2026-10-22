@@ -1,0 +1,22 @@
+# Maintainer: Noa Himesaka <himesaka@noa.codes>
+#
+# Nura's swclock-offset 0.3.0: the PM660 RTC cannot be set from Linux, so the system time is
+# kept as an offset to it (/var/cache/swclock-offset), saved at shutdown and applied at boot, before
+# any network. Nura pulls it in through soc-qcom-sdm660. Not in Arch or the AUR.
+
+pkgname=swclock-offset
+pkgver=0.3.0
+pkgrel=1
+pkgdesc='Keep system time at an offset to a non-writable RTC'
+url='https://gitlab.postmarketos.org/postmarketOS/swclock-offset'
+arch=(any)
+license=(GPL-3.0-or-later)
+depends=(coreutils sh)
+source=("$url/-/archive/$pkgver/swclock-offset-$pkgver.tar.gz")
+sha256sums=('779e7bfe70f75171a7261163812b2fc49fb5b3bb3d0cb2a1666961b19a1e764f')
+
+package() {
+  cd $pkgname-$pkgver
+  # no OpenRC parts
+  make DESTDIR="$pkgdir" bin systemd
+}

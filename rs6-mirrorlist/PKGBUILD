@@ -1,0 +1,20 @@
+# Maintainer: Noa Himesaka <himesaka@noa.codes>
+#
+# Mirrorlist for the [rs6] repository (HiBy RS6 packages for Arch Linux Ports AArch64), in the
+# arch-mact2-mirrorlist mould: unsigned repo, published by noas-slopware/linux-hiby-rs6's CI to GitHub Pages
+# (primary) and YuruMirror (mirror.funami.tech).
+
+pkgname=rs6-mirrorlist
+pkgver=1
+pkgrel=2
+pkgdesc='HiBy RS6 Arch Linux Ports repository mirrorlist'
+arch=(any)
+url='https://github.com/noas-slopware/linux-hiby-rs6'
+license=(MIT)
+backup=("etc/pacman.d/$pkgname")  # keeps a reordered mirrorlist
+source=($pkgname)
+sha512sums=('d01db4829e5990b9c9e1316a06ecfaa8cd2108c272838ec869d178fbc965bd5499defb27be58550ef8885e31846d7574c7ab16b117ef7a6f1fe5542f1b347a3e')
+
+package() {
+  install -Dm644 "$srcdir/$pkgname" "$pkgdir/etc/pacman.d/$pkgname"
+}

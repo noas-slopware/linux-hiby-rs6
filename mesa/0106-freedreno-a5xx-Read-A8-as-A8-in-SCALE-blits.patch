@@ -1,0 +1,84 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 04:00:00 +0900
+Subject: [PATCH] freedreno/a5xx: Read A8 as A8 in SCALE blits
+
+A SCALE blit reads its source through the TP and writes it with the RB,
+and the 2D source descriptor (SP_PS_2D_SRC_INFO) has no swizzle. The
+texture format therefore has to put the channel where the RB format
+takes it from. fd5_pipe2tex() maps A8_UNORM to TFMT5_8_UNORM, which
+returns the value in red with alpha at one (the 3D path fixes that up
+with the descriptor swizzle), and RB5_A8_UNORM then writes alpha: every
+A8 texel a SCALE blit touches becomes 0xff.
+
+GL_ALPHA textures are A8_UNORM, and Qt's GLES backend keeps its text
+glyph caches in them (QRhiTexture::RED_OR_ALPHA8 is GL_ALPHA outside a
+desktop core profile). Glyph uploads to a cache that is still in use go
+through a staging or shadow blit, so on the A508/A509/A512 each newly
+rasterized glyph turned into a solid box.
+
+Qualcomm's driver reads A8 as TFMT5_A8_UNORM (A5xQctFormatToTpFormat,
+used by A5xBltDevice::SetA2dSrcTexture). Do the same. A8 is the only
+format the SCALE path accepts whose texture and RB formats put the
+channel in different places: L8 reads as 8_UNORM and writes R8, both in
+red, and the other alpha, luminance and intensity formats have no RB
+format and stay with u_blitter.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ src/gallium/drivers/freedreno/a5xx/fd5_blitter.c | 24 ++++++++++++++++++++++--
+ 1 file changed, 22 insertions(+), 2 deletions(-)
+
+diff --git a/src/gallium/drivers/freedreno/a5xx/fd5_blitter.c b/src/gallium/drivers/freedreno/a5xx/fd5_blitter.c
+index 40e13c5..934d1dd 100644
+--- a/src/gallium/drivers/freedreno/a5xx/fd5_blitter.c
++++ b/src/gallium/drivers/freedreno/a5xx/fd5_blitter.c
+@@ -233,6 +233,26 @@ struct blit_surf {
+    uint32_t width, height;
+ };
+ 
++/* The texture format a SCALE blit's source is read as.  The 2D source
++ * descriptor has no swizzle, so the channel has to come out of the TP in the
++ * slot the RB format writes it from.  fd5_pipe2tex() reads A8 as 8_UNORM,
++ * whose value lands in red and leaves alpha at one, for the 3D path to move
++ * with a swizzle; written back as RB5_A8_UNORM that is 0xff everywhere.
++ * Qualcomm's driver reads A8 as TFMT5_A8_UNORM, value in alpha
++ * (A5xQctFormatToTpFormat).  A8 is the only format the SCALE path takes
++ * whose texture and RB formats disagree about the channel.
++ */
++static enum a5xx_tex_fmt
++blit_tex_format(enum pipe_format fmt)
++{
++   switch (fmt) {
++   case PIPE_FORMAT_A8_UNORM:
++      return TFMT5_A8_UNORM;
++   default:
++      return fd5_pipe2tex(fmt);
++   }
++}
++
+ static uint32_t
+ surf_info(const struct blit_surf *s)
+ {
+@@ -508,7 +528,7 @@ emit_blit(struct fd_ringbuffer *ring, const struct pipe_blit_info *info,
+    s = (struct blit_surf) {
+       .bo = src->bo,
+       .cfmt = fd5_pipe2color(sformat),
+-      .tfmt = fd5_pipe2tex(sformat),
++      .tfmt = blit_tex_format(sformat),
+       .tile = fd_resource_tile_mode(info->src.resource, info->src.level),
+       .swap = fd5_pipe2swap(sformat),
+       .pitch = fd_resource_pitch(src, info->src.level),
+@@ -519,7 +539,7 @@ emit_blit(struct fd_ringbuffer *ring, const struct pipe_blit_info *info,
+    d = (struct blit_surf) {
+       .bo = dst->bo,
+       .cfmt = fd5_pipe2color(dformat),
+-      .tfmt = fd5_pipe2tex(dformat),
++      .tfmt = blit_tex_format(dformat),
+       .tile = fd_resource_tile_mode(info->dst.resource, info->dst.level),
+       .swap = fd5_pipe2swap(dformat),
+       .pitch = fd_resource_pitch(dst, info->dst.level),
+-- 
+2.56.0
+

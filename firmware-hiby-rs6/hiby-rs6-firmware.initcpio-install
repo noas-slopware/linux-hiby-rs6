@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# mkinitcpio install hook (firmware-hiby-rs6): the Adreno 512 microcode and zap shader.
+# msm binds the GPU from the initramfs, so without these its first firmware load fails and the
+# GPU only comes up once the rootfs is mounted. updates/ is what the kernel searches first,
+# so the initramfs gets the same files the running system uses.
+
+build() {
+    add_file /usr/lib/firmware/updates/qcom/a530_pm4.fw
+    add_file /usr/lib/firmware/updates/qcom/a530_pfp.fw
+    add_file /usr/lib/firmware/a512_zap.mbn
+}
+
+help() {
+    cat <<HELPEOF
+Adds the HiBy RS6 GPU firmware (a530 PM4/PFP from updates/qcom, a512 zap shader).
+HELPEOF
+}

@@ -1,0 +1,5 @@
+# HiBy RS6, the sysctls Nura's zramstart sets for zram swap: no swap readahead, prefer
+# swapping to zram over dropping page cache, start reclaiming early enough for zram to help.
+vm.page-cluster = 0
+vm.swappiness = 180
+vm.min_free_kbytes = 100000

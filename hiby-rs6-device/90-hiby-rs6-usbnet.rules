@@ -1,0 +1,3 @@
+# Start the USB network gadget once the USB device controller is there (dwc3 can probe after
+# multi-user.target is reached)
+ACTION=="add", SUBSYSTEM=="udc", TAG+="systemd", ENV{SYSTEMD_WANTS}+="hiby-rs6-usbnet.service"

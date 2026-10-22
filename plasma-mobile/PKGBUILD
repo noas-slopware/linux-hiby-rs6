@@ -1,0 +1,101 @@
+# Maintainer: Balló György <ballogyor+arch at gmail dot com>
+# Contributor: Devin Lin <devin@kde.org>
+# HiBy RS6 ([rs6] repo): this PKGBUILD as Arch has it, plus patches/plasma-mobile: brightness slider bus-name watcher, overlay graphics released while hidden; arch=(aarch64), pkgrel 1.1.
+
+pkgname=plasma-mobile
+pkgver=6.8.0
+_dirver=$(echo $pkgver | cut -d. -f1-3)
+pkgrel=1.1
+pkgdesc='Plasma shell for mobile devices'
+arch=(aarch64)
+url='https://plasma-mobile.org/'
+license=(GPL-3.0-or-later)
+depends=(
+  bash
+  bluez-qt
+  glibc
+  kauth
+  kcmutils
+  kconfig
+  kcoreaddons
+  kdbusaddons
+  kdeclarative
+  ki18n
+  kio
+  kirigami
+  kirigami-addons
+  kitemmodels
+  kjobwidgets
+  knewstuff
+  knotifications
+  kpackage
+  kpipewire
+  kservice
+  ksvg
+  kwayland
+  kwin
+  kwindowsystem
+  layer-shell-qt
+  libgcc
+  libkscreen
+  libplasma
+  libstdc++
+  milou
+  modemmanager-qt
+  modemmanager-qt
+  networkmanager-qt
+  plasma-keyboard
+  plasma-nano
+  plasma-nm
+  plasma-pa
+  plasma-workspace
+  powerdevil
+  qcoro
+  qt6-5compat
+  qt6-base
+  qt6-declarative
+  qt6-sensors
+  solid
+  systemd-libs
+  wayland
+)
+makedepends=(
+  cmake
+  extra-cmake-modules
+  plasma-wayland-protocols
+  vulkan-headers
+)
+optdepends=(
+  'bluedevil: Bluetooth management'
+  'kscreen: Screen management'
+  'plasma-settings: System settings'
+)
+source=("https://download.kde.org/stable/plasma/$_dirver/$pkgname-$pkgver.tar.xz"{,.sig}
+        0001-screenbrightnessplugin-Watch-the-bus-name-not-the-interface-name.patch
+        0002-mobileshell-release-overlay-graphics-while-hidden-sm.patch)
+sha256sums=('8323525a40c8e7a3fbf9fb002bc9655627ed53cd302391fbee5d543db4f390af'
+            'SKIP'
+            'cd952c64ae04fc0b3d306984d5a1f9db708fa60d6be5166810dfdb65385f5485'
+            'e8ba64338c2a65aee6c07b55ee64bd6993652b4ce515dc4d9482061ba5d7c7d7')
+validpgpkeys=(
+  E0A3EB202F8E57528E13E72FD7574483BB57B18D # Jonathan Esk-Riddell <jr@jriddell.org>
+  0AAC775BB6437A8D9AF7A3ACFE0784117FBCE11D # Bhushan Shah <bshah@kde.org>
+  D07BD8662C56CB291B316EB2F5675605C74E02CF # David Edmundson <davidedmundson@kde.org>
+  1FA881591C26B276D7A5518EEAAF29B42A678C20 # Marco Martin <notmart@gmail.com>
+)
+
+prepare() {
+  patch -d $pkgname-$pkgver -Np1 -i ../0001-screenbrightnessplugin-Watch-the-bus-name-not-the-interface-name.patch
+  patch -d $pkgname-$pkgver -Np1 -i ../0002-mobileshell-release-overlay-graphics-while-hidden-sm.patch
+}
+
+build() {
+  cmake -B build -S $pkgname-$pkgver \
+    -D KDE_INSTALL_LIBEXECDIR=lib
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}
+

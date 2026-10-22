@@ -1,0 +1,17 @@
+######################################################
+####                                              ####
+###            rs6 Repository Mirrorlist           ###
+####                                              ####
+######################################################
+#### Entry in file /etc/pacman.conf, after [core] and before [extra]
+#### (the RS6 forks of extra packages keep their names and must win):
+###     [rs6]
+###     SigLevel = Never
+###     Include = /etc/pacman.d/rs6-mirrorlist
+######################################################
+
+# Worldwide (GitHub Pages)
+Server = https://noas-slopware.github.io/linux-hiby-rs6/arch/$arch
+
+# South Korea
+Server = https://mirror.funami.tech/linux-hiby-rs6/arch/$arch

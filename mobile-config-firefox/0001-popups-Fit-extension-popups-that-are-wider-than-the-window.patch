@@ -1,0 +1,195 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 14:30:06 +0900
+Subject: [PATCH] popups: Fit extension popups that are wider than the window
+
+Firefox sizes a browser action popup to its content's preferred width and
+pins it there with an inline min-width. That beats the max-width: 100vw
+in popups.css, so a popup wider than the window is cut off on the right.
+Bitwarden 2026.10 asks for 480px by default, which on a 432px wide window
+hides the right edge of every page.
+
+Drop the min-width so the popup browser takes the panel's width, and add
+PopupFit, which zooms popups that are still too wide until they fit.
+Firefox already scales the size it reports by the popup's zoom, so the
+popup settles on the fitted size after one resize.
+
+Zoomed popups (and odd-sized ones at fractional scales, e.g. 381px at
+2.5 dppx, even unzoomed) then hit a Firefox bug: measuring the popup
+(getContentSize) resizes the viewport to the measured size, rounded out to
+whole device pixels, the next refresh puts the real size back, and each
+step moves the scrolled area by a fraction of a pixel. That fires
+MozScrolledAreaChanged, which measures again: ten resizes a second for as
+long as the popup is open. PopupFit loads popup-browser-content.js into
+each popup browser, which skips sub-pixel scrolled-area changes in
+ext-browser-content.js' listener. DOM changes still resize through its
+MutationObserver, and real layout changes still go through
+MozScrolledAreaChanged.
+---
+ src/modules/PopupFit.sys.mjs         | 64 ++++++++++++++++++++++++++++
+ src/modules/boot.sys.mjs             |  9 ++++
+ src/modules/popup-browser-content.js | 34 +++++++++++++++
+ src/themes/shared/chrome/popups.css  |  6 ++-
+ 4 files changed, 112 insertions(+), 1 deletion(-)
+ create mode 100644 src/modules/PopupFit.sys.mjs
+ create mode 100644 src/modules/popup-browser-content.js
+
+diff --git a/src/modules/PopupFit.sys.mjs b/src/modules/PopupFit.sys.mjs
+new file mode 100644
+index 0000000..76c5f22
+--- /dev/null
++++ b/src/modules/PopupFit.sys.mjs
+@@ -0,0 +1,64 @@
++// Copyright 2026 Noa Himesaka
++// SPDX-License-Identifier: MPL-2.0
++
++/**
++ * Fits extension popups that are wider than the window by zooming them out.
++ *
++ * Firefox sizes a browser action popup to its content's preferred width (up
++ * to 800px; Bitwarden asks for 480px) and pins it there with an inline
++ * min-width, so on a narrow window the popup is cut off on the right.
++ * popups.css lets the popup browser shrink to the panel's width, and this
++ * zooms the content until its preferred width fits the browser. Firefox
++ * already scales the preferred size it reports by the popup's zoom, so the
++ * next resize settles on the fitted width.
++ *
++ * Also loads popup-browser-content.js into every popup browser, which stops
++ * Firefox from re-measuring zoomed and odd-sized popups in a loop.
++ */
++export class PopupFit {
++    init() {
++        const windowObserver = {
++            observe: (subject, topic) => {
++                if (topic === 'domwindowopened') {
++                    const window = subject;
++                    window.addEventListener('load', () => {
++                        if (window.location.href !== 'chrome://browser/content/browser.xhtml') return;
++                        this._setupForWindow(window);
++                    }, { once: true });
++                }
++            }
++        };
++
++        Services.obs.addObserver(windowObserver, 'domwindowopened');
++    }
++
++    _setupForWindow(window) {
++        // Popups we zoomed out, so a zoom the user picked is left alone.
++        const fitted = new WeakSet();
++        // A new frame loader (the popup changed process) has a fresh global.
++        const patched = new WeakSet();
++
++        // Firefox fires this on the popup browser after every resize. It
++        // doesn't bubble, so listen in the capture phase.
++        window.addEventListener('WebExtPopupResized', (event) => {
++            const browser = event.target;
++            if (browser.frameLoader && !patched.has(browser.frameLoader)) {
++                patched.add(browser.frameLoader);
++                browser.messageManager.loadFrameScript(
++                    'chrome://mobileconfigfirefox/content/popup-browser-content.js', false, true);
++            }
++
++            // Popups in the overflow panel have a fixed width and never set one.
++            const wanted = parseFloat(browser.style.width);
++            const available = browser.getBoundingClientRect().width;
++            if (!(wanted > 0) || !(available > 0)) return;
++
++            const zoom = browser.fullZoom;
++            const fit = Math.min(1, available / (wanted / zoom));
++            if (fit < zoom - 0.01 || (fitted.has(browser) && fit > zoom + 0.01)) {
++                fitted.add(browser);
++                browser.fullZoom = fit;
++            }
++        }, true);
++    }
++}
+diff --git a/src/modules/boot.sys.mjs b/src/modules/boot.sys.mjs
+index a23c28f..27dad28 100644
+--- a/src/modules/boot.sys.mjs
++++ b/src/modules/boot.sys.mjs
+@@ -24,6 +24,9 @@ const { AboutMobile } = ChromeUtils.importESModule(
+ const { TabCounter } = ChromeUtils.importESModule(
+     'chrome://mobileconfigfirefox/content/TabCounter.sys.mjs'
+ );
++const { PopupFit } = ChromeUtils.importESModule(
++    'chrome://mobileconfigfirefox/content/PopupFit.sys.mjs'
++);
+ 
+ const lazy = {};
+ ChromeUtils.defineESModuleGetters(lazy, {
+@@ -141,6 +144,12 @@ function register_fluent_sources() {
+         } catch(e) {
+             console.error("TabCounter failed to initialize:", e);
+         }
++        try {
++            const popupFit = new PopupFit();
++            popupFit.init();
++        } catch(e) {
++            console.error("PopupFit failed to initialize:", e);
++        }
+         // TODO:
+         // - Fix CSP issue that prevents to load our styles/scripts in about:mobile
+         register_about_mobile();
+diff --git a/src/modules/popup-browser-content.js b/src/modules/popup-browser-content.js
+new file mode 100644
+index 0000000..ffa7738
+--- /dev/null
++++ b/src/modules/popup-browser-content.js
+@@ -0,0 +1,34 @@
++// Copyright 2026 Noa Himesaka
++// SPDX-License-Identifier: MPL-2.0
++
++// Frame script for extension popup browsers, loaded by PopupFit.sys.mjs into
++// the same global as Firefox's ext-browser-content.js.
++//
++// Firefox re-measures a popup whenever its scrolled area changes. The
++// measurement (getContentSize) resizes the viewport to the preferred size,
++// rounded out to whole device pixels, and the next refresh puts the browser's
++// real size back. When the preferred size isn't a whole number of device
++// pixels (odd CSS sizes at 2.5 dppx, most zoom levels), each of those steps
++// moves the scrolled area by a fraction of a pixel, which triggers the next
++// measurement: ten times a second for as long as the popup is open.
++// Sub-pixel moves of the scrolled area are that rounding, not new content,
++// so don't measure for them. DOM changes still go through the
++// MutationObserver.
++
++"use strict";
++
++if (typeof BrowserListener === "object" && !BrowserListener.mcfScrolledArea) {
++    const { handleEvent } = BrowserListener;
++
++    BrowserListener.mcfScrolledArea = { width: 0, height: 0 };
++    BrowserListener.handleEvent = function (event) {
++        if (event.type === "MozScrolledAreaChanged") {
++            const last = this.mcfScrolledArea;
++            this.mcfScrolledArea = { width: event.width, height: event.height };
++            if (Math.abs(event.width - last.width) < 1 && Math.abs(event.height - last.height) < 1) {
++                return;
++            }
++        }
++        handleEvent.call(this, event);
++    };
++}
+diff --git a/src/themes/shared/chrome/popups.css b/src/themes/shared/chrome/popups.css
+index fefc856..249a183 100644
+--- a/src/themes/shared/chrome/popups.css
++++ b/src/themes/shared/chrome/popups.css
+@@ -136,9 +136,13 @@ browser.webextension-popup-browser {
+ }
+ 
+ /* Make large extensions (e.g., uBlock origin) popups useful
+- * by allowing them to be horizontally scrolled */
++ * by allowing them to be horizontally scrolled.
++ * Firefox pins the popup browser to the content's preferred width with an
++ * inline min-width, which beats max-width, so drop it; PopupFit.sys.mjs then
++ * zooms popups that are still too wide (e.g., Bitwarden) to fit. */
+ .webextension-popup-browser, .webextension-popup-stack {
+     max-width: 100vw !important;
++    min-width: 0 !important;
+     width: 100% !important;
+     overflow-x: scroll !important;
+ }
+-- 
+2.56.0
+

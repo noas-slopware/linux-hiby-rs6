@@ -1,0 +1,74 @@
+# Maintainer: Jan Alexander Steffens (heftig) <heftig@archlinux.org>
+# Maintainer: Daniel Bermond <dbermond@archlinux.org>
+# Maintainer: Bruno Pagani <archange@archlinux.org>
+# HiBy RS6 ([rs6] repo): this PKGBUILD as Arch has it, plus its 0001 test fix (the DebugInfo llc tests failed on AArch64 hosts); [rs6] carries it because the ARMv8.0 repo has none (its check() failed there); arch=(aarch64), pkgrel 1.1.
+
+pkgname=spirv-llvm-translator
+pkgver=23.1.2
+pkgrel=1.1
+pkgdesc="LLVM <-> SPIR-V converter for compilers targeting SPIR-V"
+url="https://www.khronos.org/spirv/"
+arch=(aarch64)
+license=(NCSA)
+depends=(
+  glibc
+  libstdc++
+  llvm-libs
+  spirv-tools
+)
+makedepends=(
+  cmake
+  git
+  llvm
+  ninja
+  spirv-headers
+)
+checkdepends=(
+  clang
+  python
+)
+source=(
+  git+https://github.com/KhronosGroup/SPIRV-LLVM-Translator#tag=v$pkgver
+  0001-test-run-the-DebugInfo-llc-tests-for-x86_64-on-every-host.patch
+)
+b2sums=('de830357b3ce992a14703b5c70f3f41173de4c1798ad64b684b547a0f9f7fbedeed4b72afcd0f5f10c80d97ce93cc111df546b8e07050fbe90130f0f08cf0d0c'
+        '620299c7d3b8aac1bfeb473b0c9acc4f7eed35447e7ee9785f8ae97db8470fde4b2e637b70fea726d173ea9c2aa42c54e7f7d15307c2676214e15b11d7d37c41')
+
+prepare() {
+  patch -d SPIRV-LLVM-Translator -Np1 -i ../0001-test-run-the-DebugInfo-llc-tests-for-x86_64-on-every-host.patch
+}
+
+build() {
+  local cmake_options=(
+    -D BUILD_SHARED_LIBS=ON
+    -D CMAKE_BUILD_TYPE=Release
+    -D CMAKE_INSTALL_PREFIX=/usr
+    -D CMAKE_INSTALL_SYSCONFDIR=/etc
+    -D CMAKE_POSITION_INDEPENDENT_CODE=ON
+    -D CMAKE_SKIP_RPATH=ON
+    -D LLVM_CONFIG=llvm-config
+    -D LLVM_EXTERNAL_LIT=/usr/bin/lit
+    -D LLVM_EXTERNAL_SPIRV_HEADERS_SOURCE_DIR=/usr/include/spirv
+    -D LLVM_LIBDIR_SUFFIX=
+    -D LLVM_SPIRV_ENABLE_LIBSPIRV_DIS=ON
+    -D LLVM_SPIRV_INCLUDE_TESTS=ON
+    -W no-author
+  )
+
+  cmake -S SPIRV-LLVM-Translator -B build -G Ninja "${cmake_options[@]}"
+  cmake --build build
+}
+
+check() {
+  # Does not use ctest-compatible targets
+  cmake --build build --target test
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+
+  install -Dm644 SPIRV-LLVM-Translator/LICENSE.TXT \
+    -t "$pkgdir/usr/share/licenses/$pkgname"
+}
+
+# vim:set sw=2 sts=-1 et:

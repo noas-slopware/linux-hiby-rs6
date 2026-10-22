@@ -1,0 +1,34 @@
+From: Noa Himesaka <himesaka@noa.codes>
+Subject: [PATCH] test: run the DebugInfo llc tests for x86_64 on every host
+
+The DebugInfo tests run llc with %triple, the default target triple, on IR
+translated back from SPIR-V, which keeps the SPIR calling conventions. Only
+the X86 backend accepts those (as the C convention); on an AArch64 host 39
+tests abort with "LLVM ERROR: unsupported calling convention". Use x86_64
+whenever llc has the X86 backend.
+---
+--- a/test/DebugInfo/lit.local.cfg
++++ b/test/DebugInfo/lit.local.cfg
+@@ -1,4 +1,21 @@
+-config.substitutions.append(('%triple', config.target_triple))
++import os
++import subprocess
++
++# The reverse-translated IR keeps the SPIR calling conventions (spir_func,
++# spir_kernel). The X86 backend lowers them like the C convention, but other
++# backends (AArch64, ...) stop with "LLVM ERROR: unsupported calling
++# convention", so on those hosts every llc run below failed. Run llc for
++# x86_64 whenever it has the X86 backend; the default triple otherwise.
++def _llc_has_x86():
++    try:
++        out = subprocess.run([os.path.join(config.llvm_tools_dir, 'llc'), '--version'],
++                             capture_output=True, text=True).stdout
++    except OSError:
++        return False
++    return any(line.split()[:1] == ['x86-64'] for line in out.splitlines())
++
++config.substitutions.append(('%triple', 'x86_64-unknown-linux-gnu' if _llc_has_x86()
++                             else config.target_triple))
+ 
+ # Building all dependencies for debug info tests takes too long,
+ # so CI terminates the build after time out.

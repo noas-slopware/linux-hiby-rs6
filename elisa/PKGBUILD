@@ -1,0 +1,77 @@
+# Maintainer: Antonio Rojas <arojas@archlinux.org>
+# HiBy RS6 ([rs6] repo): this PKGBUILD as Arch has it, plus patches/elisa: Subsonic source, bit-perfect output, mobile drawer, cover decoding and search fixes; arch=(aarch64), pkgrel 1.1.
+
+pkgname=elisa
+pkgver=26.08.2
+pkgrel=1.1
+pkgdesc='A simple music player aiming to provide a nice experience for its users'
+url='https://apps.kde.org/elisa/'
+arch=(aarch64)
+license=(LGPL-2.0-or-later)
+depends=(glibc
+         kcodecs
+         kcolorscheme
+         kconfig
+         kcoreaddons
+         kcrash
+         kdbusaddons
+         kfilemetadata
+         ki18n
+         kiconthemes
+         kio
+         kirigami
+         kirigami-addons
+         kitemviews
+         kxmlgui
+         libstdc++
+         libvlc
+         qqc2-desktop-style
+         qt6-base
+         qt6-declarative
+         qt6-multimedia
+         vlc-plugins-base
+         vlc-plugin-ffmpeg)
+makedepends=(extra-cmake-modules
+             kdoctools)
+groups=(kde-applications
+        kde-multimedia)
+source=(https://download.kde.org/stable/release-service/$pkgver/src/$pkgname-$pkgver.tar.xz{,.sig}
+        0001-Add-a-Subsonic-OpenSubsonic-Navidrome-music-source.patch
+        0002-Add-a-bit-perfect-output-setting.patch
+        0003-Open-mobile-drawers-after-the-tap.patch
+        0004-Decode-embedded-covers-at-the-requested-size.patch
+        0005-Do-not-scale-cover-sourceSize-by-the-device-pixel-ratio-twice.patch
+        0006-Emit-finished-of-embedded-cover-responses-on-the-pixmap-reader-thread.patch
+        0007-Filter-the-views-on-the-text-the-search-field-shows.patch)
+sha256sums=('432331a84ade68fd519974c91ebd789bf5670b9be24e9acc8b5def3140b30b1c'
+            'SKIP'
+            '3cc440ccbfb8841c163107bbe5bdbe886c7fdc52319eb6a436ca16ec76560f65'
+            '49918219bfff0717162e90b9f2c16a1092b17bddf88ea605b6de601049b7fb54'
+            '14df16561fed16737a87aca6561c58c8e65b3ad9f7aee5a02ffd185a0951e623'
+            '66d6376cd729fe0ba01db2457f3bd42d1be1e6a864d0646ac61f69c8fab0bc1d'
+            '65b87fedeb47477af634784329aeb7ffd77bb8ad480aac95dd0910e77f7f3248'
+            'e4d3aaeb057db77f45a3d9ea81baf5fa7f320ab94788d074531e7ed637e830d1'
+            '82a525f9f50645506d7442d5ce98ff1abc206918cd211c2748bfa4136497fa46')
+validpgpkeys=(CA262C6C83DE4D2FB28A332A3A6A4DB839EAA6D7  # Albert Astals Cid <aacid@kde.org>
+              F23275E4BF10AFC1DF6914A6DBD2CE893E2D1C87  # Christoph Feck <cfeck@kde.org>
+              D81C0CB38EB725EF6691C385BB463350D6EF31EF) # Heiko Becker <heiko.becker@kde.org>
+
+prepare() {
+  patch -d $pkgname-$pkgver -Np1 -i ../0001-Add-a-Subsonic-OpenSubsonic-Navidrome-music-source.patch
+  patch -d $pkgname-$pkgver -Np1 -i ../0002-Add-a-bit-perfect-output-setting.patch
+  patch -d $pkgname-$pkgver -Np1 -i ../0003-Open-mobile-drawers-after-the-tap.patch
+  patch -d $pkgname-$pkgver -Np1 -i ../0004-Decode-embedded-covers-at-the-requested-size.patch
+  patch -d $pkgname-$pkgver -Np1 -i ../0005-Do-not-scale-cover-sourceSize-by-the-device-pixel-ratio-twice.patch
+  patch -d $pkgname-$pkgver -Np1 -i ../0006-Emit-finished-of-embedded-cover-responses-on-the-pixmap-reader-thread.patch
+  patch -d $pkgname-$pkgver -Np1 -i ../0007-Filter-the-views-on-the-text-the-search-field-shows.patch
+}
+
+build() {
+  cmake -B build -S $pkgname-$pkgver \
+    -DBUILD_TESTING=OFF 
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}

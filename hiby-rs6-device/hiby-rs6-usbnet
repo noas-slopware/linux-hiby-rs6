@@ -1,0 +1,49 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# hiby-rs6-usbnet: USB network gadget (NCM, usb0) so the RS6 answers at 172.16.42.1 over the cable,
+# the way Nura did (same USB IDs, so the host side keeps working). NetworkManager brings
+# usb0 up with the hiby-rs6-usb profile (shared: DHCP for the host).
+#   hiby-rs6-usbnet start|stop
+set -eu
+G=/sys/kernel/config/usb_gadget/hiby-rs6
+
+# stable MAC addresses from the machine id (locally administered, unicast)
+mac() {
+	printf '%s-%s' "$(cat /etc/machine-id)" "$1" | sha256sum |
+		sed 's/^\(..\)\(..\)\(..\)\(..\)\(..\).*/02:\1:\2:\3:\4:\5/'
+}
+
+start() {
+	[ -d "$G" ] && return 0
+	modprobe libcomposite 2>/dev/null || :
+	mountpoint -q /sys/kernel/config || mount -t configfs none /sys/kernel/config
+	udc=$(ls /sys/class/udc 2>/dev/null | head -n1)
+	[ -n "$udc" ] || { echo "no USB device controller" >&2; exit 1; }
+	mkdir "$G"
+	echo 0x18d1 > "$G/idVendor"
+	echo 0xd001 > "$G/idProduct"
+	mkdir -p "$G/strings/0x409"
+	echo HiBy > "$G/strings/0x409/manufacturer"
+	echo RS6 > "$G/strings/0x409/product"
+	cut -c1-16 /etc/machine-id > "$G/strings/0x409/serialnumber"
+	mkdir "$G/functions/ncm.usb0"
+	mac dev > "$G/functions/ncm.usb0/dev_addr"
+	mac host > "$G/functions/ncm.usb0/host_addr"
+	mkdir -p "$G/configs/c.1/strings/0x409"
+	echo NCM > "$G/configs/c.1/strings/0x409/configuration"
+	ln -s "$G/functions/ncm.usb0" "$G/configs/c.1/"
+	echo "$udc" > "$G/UDC"
+}
+
+stop() {
+	[ -d "$G" ] || return 0
+	echo "" > "$G/UDC" 2>/dev/null || :
+	rm -f "$G/configs/c.1/ncm.usb0"
+	rmdir "$G/configs/c.1/strings/0x409" "$G/configs/c.1" "$G/functions/ncm.usb0" "$G/strings/0x409" "$G"
+}
+
+case ${1:-} in
+start) start ;;
+stop) stop ;;
+*) echo "usage: ${0##*/} start|stop" >&2; exit 2 ;;
+esac

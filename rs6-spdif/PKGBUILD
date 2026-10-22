@@ -1,0 +1,36 @@
+# Maintainer: Noa Himesaka <himesaka@noa.codes>
+#
+# HiBy RS6 coaxial S/PDIF output: ALSA PCM plugin rs6_spdif (IEC 60958 biphase-mark encoder) and
+# control plugin rs6_jack ("SPDIF Jack" / "DAC Jack" from the kernel's Output Target). Source:
+# userspace/spdif on the main branch of noas-slopware/linux-hiby-rs6 (meson; plugin dir from
+# alsa.pc, /usr/lib/alsa-lib on Arch as on Alpine). docs/spdif-dsd.md on the docs branch.
+
+pkgname=rs6-spdif
+pkgver=1.0
+pkgrel=1
+pkgdesc='HiBy RS6 coaxial S/PDIF output: ALSA IEC 60958 encoder plugin and output jack controls'
+url='https://github.com/noas-slopware/linux-hiby-rs6'
+arch=(aarch64)
+license=(MIT)
+depends=(alsa-lib glibc)
+makedepends=(meson)
+checkdepends=(python)
+# senpai branch (default) of noas-slopware/linux-hiby-rs6
+_rs6commit=f773f4acc90f1d6d55795f943593466c07b6276d
+source=("linux-hiby-rs6-$_rs6commit.tar.gz::https://github.com/noas-slopware/linux-hiby-rs6/archive/$_rs6commit.tar.gz")
+sha256sums=('360c953e8eb687629077ed6a368f0a4b7fe2b463a5217a1bc618a90a407971fc')
+
+build() {
+  arch-meson linux-hiby-rs6-$_rs6commit/userspace/spdif build
+  meson compile -C build
+}
+
+check() {
+  # encoder vs the docs' vectors, the stock HAL transliteration and a spec encoder, and the plugin
+  # end to end through alsa-lib; test-target needs the RS6 sound card and skips elsewhere
+  meson test -C build --print-errorlogs
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir" --no-rebuild
+}

@@ -1,0 +1,29 @@
+# Maintainer: Noa Himesaka <himesaka@noa.codes>
+#
+# libqrtr for rmtfs and tqftpserv, as Alpine/Nura package it (qrtr 1.2): library and headers only.
+# No qrtr-ns: the name service is in the kernel (net/qrtr) since Linux 5.7. Not in the Arch Ports
+# repos; the AUR's qrtr 1.2 builds the ns too.
+
+pkgname=qrtr
+pkgver=1.2
+pkgrel=1
+pkgdesc='Userspace reference for net/qrtr in the Linux kernel (library only)'
+url='https://github.com/linux-msm/qrtr'
+arch=(aarch64)
+license=(BSD-3-Clause)
+depends=(glibc)
+makedepends=(linux-api-headers meson)
+source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver/qrtr-v$pkgver.tar.gz")
+sha256sums=('7a82bf80246fe71287b13c66c0466208822e8337fcd4aaf302eee6c5fcb48a52')
+
+build() {
+  arch-meson $pkgname-$pkgver build \
+    -D qrtr-ns=disabled \
+    -D systemd-service=disabled
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir" --no-rebuild
+  install -Dm644 $pkgname-$pkgver/LICENSE -t "$pkgdir"/usr/share/licenses/$pkgname/
+}

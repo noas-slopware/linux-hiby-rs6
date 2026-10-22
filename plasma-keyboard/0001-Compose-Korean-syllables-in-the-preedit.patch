@@ -1,0 +1,763 @@
+From: Noa Himesaka <himesaka@noa.codes>
+Subject: [PATCH] Compose Korean syllables in the preedit
+
+Qt Virtual Keyboard's HangulInputMethod never uses a preedit: for every
+jamo it reads the character before the cursor from the surrounding text
+and commits the recomposed syllable with a replacement range. We can only
+forward that as delete_surrounding_text + commit_string, and the
+surrounding text we have lags behind the application by a compositor
+round trip. With a stale or missing previous character the jamo is
+committed on its own (ㅎㅓ instead of 허), and Firefox applies the delete
+against stale text as well (Mozilla bug 2080478), doubling the input.
+
+Add HangulPreeditInputMethod, which does what ibus-hangul and
+fcitx5-hangul do: libhangul's 2-set automaton composes the syllable in the
+preedit, and only finished syllables are committed. Committed text is
+never rewritten, so no delete_surrounding_text is sent at all.
+
+Qt Virtual Keyboard asks the input method to commit whenever the
+surrounding text changes outside of an input method event. Here the
+application's report of what we sent always arrives later, and may be one
+or more of our actions behind, so the input method remembers the states it
+put the application in and recognises reports of them (and briefly trusts
+the result of keys it passed on, like Return or Backspace) instead of
+breaking every syllable in two. Qt leaves the preedit out of the
+surrounding text; Firefox includes it, with the cursor after it, so a
+report like "험" while "허" is being committed and "마" shown is ours too.
+Any other change, e.g. tapping elsewhere, ends the composition without
+committing it again, since applications commit their preedit themselves
+then (Firefox, and Qt on a mouse click; a Qt Quick field tapped by touch
+keeps it uncommitted, so that syllable is lost).
+
+It lives in org.kde.plasma.keyboard.lib so the KCM can load the ko_KR
+layout too.
+---
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9226983..550ae89 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -64,6 +64,7 @@ ecm_setup_version(${PROJECT_VERSION} VARIABLE_PREFIX PLASMA_KEYBOARD VERSION_HEA
+ 
+ find_package(PkgConfig REQUIRED)
+ pkg_check_modules(XKBCommon REQUIRED IMPORTED_TARGET xkbcommon)
++pkg_check_modules(LibHangul REQUIRED IMPORTED_TARGET libhangul)
+ 
+ find_package(Wayland 1.2 REQUIRED COMPONENTS Client)
+ find_package(QtWaylandScanner REQUIRED ${QT_MIN_VERSION})
+diff --git a/src/layouts/ko_KR/main.qml b/src/layouts/ko_KR/main.qml
+index ddafd91..abb9664 100644
+--- a/src/layouts/ko_KR/main.qml
++++ b/src/layouts/ko_KR/main.qml
+@@ -8,7 +8,8 @@ import QtQuick.Layouts
+ 
+ KeyboardLayoutLoader {
+     function createInputMethod() {
+-        return Qt.createQmlObject('import QtQuick; import QtQuick.VirtualKeyboard.Plugins; HangulInputMethod {}', parent, "inputMethod.qml")
++        // Composes syllables in the preedit instead of rewriting committed text
++        return Qt.createQmlObject('import QtQuick; import org.kde.plasma.keyboard.lib; HangulPreeditInputMethod {}', parent, "inputMethod.qml")
+     }
+     sourceComponent: InputContext.shiftActive ? page2 : page1
+     sharedLayouts: ['symbols']
+diff --git a/src/layouts/ko_KR/symbols.qml b/src/layouts/ko_KR/symbols.qml
+index 03642c9..c431c1b 100644
+--- a/src/layouts/ko_KR/symbols.qml
++++ b/src/layouts/ko_KR/symbols.qml
+@@ -8,7 +8,8 @@ import QtQuick.VirtualKeyboard.Components
+ 
+ KeyboardLayoutLoader {
+     function createInputMethod() {
+-        return Qt.createQmlObject('import QtQuick; import QtQuick.VirtualKeyboard.Plugins; HangulInputMethod {}', parent, "inputMethodSymbols.qml")
++        // Shared with main.qml, see there
++        return Qt.createQmlObject('import QtQuick; import org.kde.plasma.keyboard.lib; HangulPreeditInputMethod {}', parent, "inputMethodSymbols.qml")
+     }
+     sharedLayouts: ['main']
+     property bool secondPage
+diff --git a/src/qmlplugin/CMakeLists.txt b/src/qmlplugin/CMakeLists.txt
+index 6196846..17aa04a 100644
+--- a/src/qmlplugin/CMakeLists.txt
++++ b/src/qmlplugin/CMakeLists.txt
+@@ -15,6 +15,17 @@ ecm_target_qml_sources(keyboardlib SOURCES
+     BreezePopup.qml
+ )
+ 
++# Korean input method, in this installed module so that every process loading
++# our layouts (plasma-keyboard and the KCM) can create it.
++target_sources(keyboardlib PRIVATE
++    hangulcomposer.cpp
++    hangulcomposer.h
++    hangulinputsession.cpp
++    hangulinputsession.h
++    hangulpreeditinputmethod.cpp
++    hangulpreeditinputmethod.h
++)
++
+ target_link_libraries(keyboardlib
+     PUBLIC
+         Qt::Core
+@@ -22,6 +33,8 @@ target_link_libraries(keyboardlib
+         Qt::Qml
+         Qt::Gui
+         Qt::Quick
++        Qt::VirtualKeyboard
++        PkgConfig::LibHangul
+ )
+ 
+ ecm_finalize_qml_module(keyboardlib)
+diff --git a/src/qmlplugin/hangulcomposer.cpp b/src/qmlplugin/hangulcomposer.cpp
+new file mode 100644
+index 0000000..8808443
+--- /dev/null
++++ b/src/qmlplugin/hangulcomposer.cpp
+@@ -0,0 +1,106 @@
++/*
++    SPDX-FileCopyrightText: 2026 Noa Himesaka <himesaka@noa.codes>
++
++    SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++*/
++
++#include "hangulcomposer.h"
++
++#include <hangul.h>
++
++static QString fromUcs4(const ucschar *str)
++{
++    if (!str) {
++        return {};
++    }
++    qsizetype length = 0;
++    while (str[length] != 0) {
++        ++length;
++    }
++    return QString::fromUcs4(reinterpret_cast<const char32_t *>(str), length);
++}
++
++HangulComposer::HangulComposer()
++    : m_hic(hangul_ic_new("2"))
++{
++    if (!m_hic) {
++        return;
++    }
++
++    // libhangul takes the ASCII key of the 2-set layout, while the on-screen
++    // layout gives us the jamo itself. Ask libhangul which jamo each key types
++    // to build the reverse map: lowercase keys first, then the shifted keys
++    // that type something else (the tense consonants and ㅒ/ㅖ).
++    const QByteArray keys = QByteArrayLiteral("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ");
++    for (const char key : keys) {
++        hangul_ic_reset(m_hic);
++        if (!hangul_ic_process(m_hic, key)) {
++            continue;
++        }
++        const ucschar *preedit = hangul_ic_get_preedit_string(m_hic);
++        if (preedit && preedit[0] > 0 && preedit[0] <= 0xFFFF && preedit[1] == 0) {
++            const char16_t jamo = char16_t(preedit[0]);
++            if (!m_keys.contains(jamo)) {
++                m_keys.insert(jamo, key);
++            }
++        }
++    }
++    hangul_ic_reset(m_hic);
++}
++
++HangulComposer::~HangulComposer()
++{
++    if (m_hic) {
++        hangul_ic_delete(m_hic);
++    }
++}
++
++bool HangulComposer::accepts(QChar ch) const
++{
++    return m_hic && m_keys.contains(ch.unicode());
++}
++
++HangulComposer::Result HangulComposer::feed(QChar ch)
++{
++    Result result;
++    if (!accepts(ch)) {
++        return result;
++    }
++
++    result.handled = true;
++    if (hangul_ic_process(m_hic, m_keys.value(ch.unicode()))) {
++        result.commit = fromUcs4(hangul_ic_get_commit_string(m_hic));
++        result.preedit = fromUcs4(hangul_ic_get_preedit_string(m_hic));
++    } else {
++        // Not expected for a 2-set key, but never lose the jamo.
++        result.commit = fromUcs4(hangul_ic_get_commit_string(m_hic)) + fromUcs4(hangul_ic_flush(m_hic)) + ch;
++    }
++    return result;
++}
++
++bool HangulComposer::backspace()
++{
++    return m_hic && hangul_ic_backspace(m_hic);
++}
++
++QString HangulComposer::preedit() const
++{
++    return m_hic ? fromUcs4(hangul_ic_get_preedit_string(m_hic)) : QString();
++}
++
++bool HangulComposer::isEmpty() const
++{
++    return !m_hic || hangul_ic_is_empty(m_hic);
++}
++
++QString HangulComposer::flush()
++{
++    return m_hic ? fromUcs4(hangul_ic_flush(m_hic)) : QString();
++}
++
++void HangulComposer::reset()
++{
++    if (m_hic) {
++        hangul_ic_reset(m_hic);
++    }
++}
+diff --git a/src/qmlplugin/hangulcomposer.h b/src/qmlplugin/hangulcomposer.h
+new file mode 100644
+index 0000000..25483eb
+--- /dev/null
++++ b/src/qmlplugin/hangulcomposer.h
+@@ -0,0 +1,69 @@
++/*
++    SPDX-FileCopyrightText: 2026 Noa Himesaka <himesaka@noa.codes>
++
++    SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++*/
++
++#pragma once
++
++#include <QHash>
++#include <QString>
++
++struct _HangulInputContext;
++
++/**
++ * Hangul syllable composer for the dubeolsik (2-set) layout, backed by libhangul.
++ *
++ * The keyboard layout produces Hangul compatibility jamo (U+3131..U+3163).
++ * Each jamo is fed to libhangul's 2-set automaton, which returns the text
++ * that is finished (to be committed) and the syllable that is still being
++ * composed (to be shown as preedit).
++ *
++ * Only depends on QtCore and libhangul.
++ */
++class HangulComposer
++{
++public:
++    struct Result {
++        bool handled = false; ///< false if the character is not a 2-set jamo
++        QString commit; ///< finished text, commit before showing the new preedit
++        QString preedit; ///< syllable still being composed
++    };
++
++    HangulComposer();
++    ~HangulComposer();
++
++    HangulComposer(const HangulComposer &) = delete;
++    HangulComposer &operator=(const HangulComposer &) = delete;
++
++    /// Whether @p ch is a jamo that can be typed with the 2-set layout.
++    bool accepts(QChar ch) const;
++
++    /// Feed one jamo. Composition continues or moves on to a new syllable.
++    Result feed(QChar ch);
++
++    /// Remove the last jamo of the syllable being composed.
++    /// Returns false if there was nothing to remove.
++    bool backspace();
++
++    /// The syllable currently being composed.
++    QString preedit() const;
++
++    bool isEmpty() const;
++
++    /// End the composition and return the composed text, which should be committed.
++    QString flush();
++
++    /// Drop the composition without returning it.
++    void reset();
++
++    /// Number of jamo the layout can type, for tests (26 + 7 tense/compound ones).
++    int keyCount() const
++    {
++        return m_keys.size();
++    }
++
++private:
++    _HangulInputContext *m_hic = nullptr;
++    QHash<char16_t, int> m_keys; ///< compatibility jamo -> 2-set ASCII key
++};
+diff --git a/src/qmlplugin/hangulinputsession.cpp b/src/qmlplugin/hangulinputsession.cpp
+new file mode 100644
+index 0000000..f468956
+--- /dev/null
++++ b/src/qmlplugin/hangulinputsession.cpp
+@@ -0,0 +1,212 @@
++/*
++    SPDX-FileCopyrightText: 2026 Noa Himesaka <himesaka@noa.codes>
++
++    SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++*/
++
++#include "hangulinputsession.h"
++
++#include <Qt>
++
++// Keys that don't type anything and must not end the syllable
++static bool isModifierKey(int key)
++{
++    switch (key) {
++    case Qt::Key_Shift:
++    case Qt::Key_Control:
++    case Qt::Key_Meta:
++    case Qt::Key_Alt:
++    case Qt::Key_AltGr:
++    case Qt::Key_CapsLock:
++    case Qt::Key_NumLock:
++    case Qt::Key_Mode_switch:
++    case Qt::Key_Context1: // plasma-keyboard's "special keys" button
++        return true;
++    default:
++        return false;
++    }
++}
++
++HangulInputSession::Actions HangulInputSession::keyEvent(int key, const QString &text, const Snapshot &snapshot, qint64 nowMs)
++{
++    Actions actions;
++    m_snapshot = snapshot;
++
++    // Shift is how ㄲ, ㅆ, ㅒ... are typed in the middle of a syllable (있, 됐):
++    // never let it end the composition.
++    if (isModifierKey(key) || (key == Qt::Key_unknown && text.isEmpty())) {
++        return actions;
++    }
++
++    if (text.size() == 1 && m_composer.accepts(text.at(0))) {
++        const HangulComposer::Result result = m_composer.feed(text.at(0));
++        actions.commit = result.commit;
++        actions.setPreedit = true;
++        actions.preedit = result.preedit;
++        actions.accepted = true;
++        track(actions);
++        return actions;
++    }
++
++    if (key == Qt::Key_Backspace) {
++        if (!m_composer.isEmpty() && m_composer.backspace()) {
++            actions.setPreedit = true;
++            actions.preedit = m_composer.preedit();
++            actions.accepted = true;
++            track(actions);
++            return actions;
++        }
++        // Deletes committed text in the application.
++        m_unpredictableEditUntil = nowMs + UnpredictableEchoWindowMs;
++        return actions;
++    }
++
++    // Any other key ends the syllable, then goes to the application as usual.
++    if (!m_composer.isEmpty()) {
++        actions.commit = m_composer.flush();
++        track(actions);
++    }
++    if (!text.isEmpty() && key != Qt::Key_Return && key != Qt::Key_Enter) {
++        // plasma-keyboard commits the text of keys it doesn't turn into keysyms.
++        expectCommit(text);
++        m_shownPreedit.clear();
++        pushState();
++    } else {
++        m_unpredictableEditUntil = nowMs + UnpredictableEchoWindowMs;
++    }
++    return actions;
++}
++
++HangulInputSession::Actions HangulInputSession::update(const Snapshot &snapshot, qint64 nowMs)
++{
++    Actions actions;
++
++    if (snapshot == m_snapshot) {
++        // The text field didn't change: Qt Virtual Keyboard wants the composition
++        // finished for another reason (switching language or input method, ...).
++        if (!m_composer.isEmpty()) {
++            actions.commit = m_composer.flush();
++            track(actions);
++        }
++        return actions;
++    }
++
++    const QString before = textBeforeCursor(snapshot);
++    const QString previousBefore = textBeforeCursor(m_snapshot);
++    m_snapshot = snapshot;
++
++    // Only the text after the cursor changed. Firefox does this while it
++    // catches up with a preedit at the start of the text: it cuts the
++    // preedit's length out of text that doesn't contain it yet.
++    if (before == previousBefore) {
++        return actions;
++    }
++
++    // The application reports a state we put it in, maybe not the latest one.
++    if (consumeEcho(before)) {
++        return actions;
++    }
++
++    // The application applied a key we passed on (Return, Backspace...); we
++    // can't tell what the text looks like after it, so trust it for a moment.
++    if (nowMs < m_unpredictableEditUntil) {
++        return actions;
++    }
++
++    // The text or cursor was changed from the application side, e.g. the user
++    // tapped somewhere else. Applications end the composition themselves when
++    // that happens (Firefox, and Qt on a mouse click, commit it), so
++    // committing it again here would duplicate it. Drop it, as text-input-v3
++    // suggests. (A Qt Quick field tapped by touch moves the cursor and keeps
++    // the preedit uncommitted, so that syllable is lost.)
++    forgetExpectations();
++    if (!m_composer.isEmpty()) {
++        m_composer.reset();
++        actions.setPreedit = true;
++        track(actions);
++    }
++    return actions;
++}
++
++QString HangulInputSession::textBeforeCursor(const Snapshot &snapshot)
++{
++    return snapshot.text.left(qBound(0, snapshot.cursor, int(snapshot.text.size())));
++}
++
++void HangulInputSession::reset()
++{
++    m_composer.reset();
++    forgetExpectations();
++    m_unpredictableEditUntil = 0;
++}
++
++void HangulInputSession::track(const Actions &actions)
++{
++    // A commit ends the preedit, and the application may report the text in
++    // between before it shows the next preedit.
++    if (!actions.commit.isEmpty()) {
++        expectCommit(actions.commit);
++        m_shownPreedit.clear();
++        pushState();
++    }
++    if (actions.setPreedit) {
++        m_shownPreedit = actions.preedit;
++        pushState();
++    }
++}
++
++void HangulInputSession::expectCommit(const QString &text)
++{
++    if (text.isEmpty()) {
++        return;
++    }
++    m_pendingCommits.append({++m_commitSerial, text});
++    while (m_pendingCommits.size() > MaxPendingCommits) {
++        m_pendingCommits.removeFirst();
++    }
++}
++
++void HangulInputSession::pushState()
++{
++    m_states.append({m_commitSerial, m_shownPreedit});
++    while (m_states.size() > MaxStates) {
++        m_states.removeFirst();
++    }
++}
++
++bool HangulInputSession::consumeEcho(const QString &textBeforeCursor)
++{
++    // A state matches if the text before the cursor ends with our commits the
++    // application has not shown yet, followed by the preedit of that state
++    // (Firefox) or not (Qt). Applications may skip states but never go back
++    // to one older than what they already reported, so the oldest match wins:
++    // a report can fit more than one state ("허" is the preedit before 허 is
++    // committed and the commit after), and settling on a newer one would
++    // turn the reports of the states in between into foreign edits.
++    for (qsizetype i = 0; i < m_states.size(); ++i) {
++        const State state = m_states.at(i);
++        QString commits;
++        for (const Commit &commit : std::as_const(m_pendingCommits)) {
++            if (commit.serial <= state.commitSerial) {
++                commits += commit.text;
++            }
++        }
++        const bool withPreedit = !state.preedit.isEmpty() && textBeforeCursor.endsWith(commits + state.preedit);
++        const bool withoutPreedit = !commits.isEmpty() && textBeforeCursor.endsWith(commits);
++        if (withPreedit || withoutPreedit) {
++            m_pendingCommits.removeIf([&state](const Commit &commit) {
++                return commit.serial <= state.commitSerial;
++            });
++            m_states.remove(0, i);
++            return true;
++        }
++    }
++    return false;
++}
++
++void HangulInputSession::forgetExpectations()
++{
++    m_pendingCommits.clear();
++    m_states.clear();
++    m_shownPreedit.clear();
++}
+diff --git a/src/qmlplugin/hangulinputsession.h b/src/qmlplugin/hangulinputsession.h
+new file mode 100644
+index 0000000..9fae488
+--- /dev/null
++++ b/src/qmlplugin/hangulinputsession.h
+@@ -0,0 +1,103 @@
++/*
++    SPDX-FileCopyrightText: 2026 Noa Himesaka <himesaka@noa.codes>
++
++    SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++*/
++
++#pragma once
++
++#include "hangulcomposer.h"
++
++#include <QList>
++#include <QString>
++
++/**
++ * Hangul input state machine of the virtual keyboard, independent of Qt Virtual Keyboard.
++ *
++ * The syllable being typed is shown as preedit and only committed once it is
++ * finished, like ibus-hangul and fcitx5-hangul do. Committed text is never
++ * rewritten, so no delete_surrounding_text request is ever sent to the client.
++ *
++ * plasma-keyboard talks to the application through the compositor, so the
++ * surrounding text it reports to Qt Virtual Keyboard catches up with our own
++ * commits and preedits only after a round trip. Qt Virtual Keyboard asks the
++ * input method to "update" (commit) every time that surrounding text changes,
++ * which would break each syllable in two (허망 -> 허마ㅇ). update() therefore
++ * tells the application's reports of states we put it in apart from edits
++ * made elsewhere.
++ *
++ * Applications differ in what they report: Qt leaves the preedit out of the
++ * surrounding text, Firefox puts it in (with the cursor after it), and either
++ * may report a state that is one or more of our actions behind.
++ */
++class HangulInputSession
++{
++public:
++    /// What Qt Virtual Keyboard currently knows about the text field. Qt Virtual
++    /// Keyboard only asks for a commit when one of these changes.
++    struct Snapshot {
++        QString text;
++        int cursor = 0;
++        bool operator==(const Snapshot &other) const = default;
++    };
++
++    /// What the input method should do with the input context, in this order.
++    struct Actions {
++        QString commit; ///< commit this text (ends the current preedit)
++        bool setPreedit = false;
++        QString preedit; ///< then show this preedit, if setPreedit
++        bool accepted = false; ///< the key was consumed
++    };
++
++    /// How long an edit we cannot predict (Return, Backspace on committed text, ...)
++    /// may take to come back from the application.
++    static constexpr qint64 UnpredictableEchoWindowMs = 1000;
++    /// Commits whose echo was never seen are forgotten after this many newer ones.
++    static constexpr int MaxPendingCommits = 32;
++    /// States the application never reported are forgotten after this many newer ones.
++    static constexpr int MaxStates = 64;
++
++    Actions keyEvent(int key, const QString &text, const Snapshot &snapshot, qint64 nowMs);
++    Actions update(const Snapshot &snapshot, qint64 nowMs);
++    void reset();
++
++    bool isComposing() const
++    {
++        return !m_composer.isEmpty();
++    }
++    QString preedit() const
++    {
++        return m_composer.preedit();
++    }
++    int keyCount() const
++    {
++        return m_composer.keyCount();
++    }
++
++private:
++    struct Commit {
++        qint64 serial;
++        QString text;
++    };
++    /// A state we put the application in: our commits up to commitSerial, then preedit.
++    struct State {
++        qint64 commitSerial;
++        QString preedit;
++    };
++
++    /// Remember the states the application goes through while applying @p actions.
++    void track(const Actions &actions);
++    void expectCommit(const QString &text);
++    void pushState();
++    bool consumeEcho(const QString &textBeforeCursor);
++    void forgetExpectations();
++    static QString textBeforeCursor(const Snapshot &snapshot);
++
++    HangulComposer m_composer;
++    Snapshot m_snapshot;
++    QList<Commit> m_pendingCommits; ///< committed by us, not yet seen in the surrounding text
++    QList<State> m_states; ///< states the application may still report, oldest first
++    qint64 m_commitSerial = 0;
++    QString m_shownPreedit; ///< preedit the application shows once it has caught up with us
++    qint64 m_unpredictableEditUntil = 0;
++};
+diff --git a/src/qmlplugin/hangulpreeditinputmethod.cpp b/src/qmlplugin/hangulpreeditinputmethod.cpp
+new file mode 100644
+index 0000000..b9fb84e
+--- /dev/null
++++ b/src/qmlplugin/hangulpreeditinputmethod.cpp
+@@ -0,0 +1,84 @@
++/*
++    SPDX-FileCopyrightText: 2026 Noa Himesaka <himesaka@noa.codes>
++
++    SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++*/
++
++#include "hangulpreeditinputmethod.h"
++
++#include <QVirtualKeyboardInputContext>
++
++HangulPreeditInputMethod::HangulPreeditInputMethod(QObject *parent)
++    : QVirtualKeyboardAbstractInputMethod(parent)
++{
++    m_clock.start();
++}
++
++QList<QVirtualKeyboardInputEngine::InputMode> HangulPreeditInputMethod::inputModes(const QString &locale)
++{
++    Q_UNUSED(locale);
++    return {QVirtualKeyboardInputEngine::InputMode::Hangul};
++}
++
++bool HangulPreeditInputMethod::setInputMode(const QString &locale, QVirtualKeyboardInputEngine::InputMode inputMode)
++{
++    Q_UNUSED(locale);
++    Q_UNUSED(inputMode);
++    return true;
++}
++
++bool HangulPreeditInputMethod::setTextCase(QVirtualKeyboardInputEngine::TextCase textCase)
++{
++    Q_UNUSED(textCase);
++    return true;
++}
++
++bool HangulPreeditInputMethod::keyEvent(Qt::Key key, const QString &text, Qt::KeyboardModifiers modifiers)
++{
++    Q_UNUSED(modifiers);
++    QVirtualKeyboardInputContext *ic = inputContext();
++    if (!ic) {
++        return false;
++    }
++
++    // reset() may not touch the input context, so a dropped composition can
++    // leave its preedit behind in Qt Virtual Keyboard. Clear it before starting
++    // a new one, or an identical first preedit would never be sent.
++    if (!m_session.isComposing() && !ic->preeditText().isEmpty()) {
++        ic->clear();
++    }
++
++    const HangulInputSession::Actions actions = m_session.keyEvent(key, text, snapshot(), m_clock.elapsed());
++    apply(actions);
++    return actions.accepted;
++}
++
++void HangulPreeditInputMethod::reset()
++{
++    m_session.reset();
++}
++
++void HangulPreeditInputMethod::update()
++{
++    if (!inputContext()) {
++        return;
++    }
++    apply(m_session.update(snapshot(), m_clock.elapsed()));
++}
++
++HangulInputSession::Snapshot HangulPreeditInputMethod::snapshot() const
++{
++    const QVirtualKeyboardInputContext *ic = inputContext();
++    return {ic->surroundingText(), ic->cursorPosition()};
++}
++
++void HangulPreeditInputMethod::apply(const HangulInputSession::Actions &actions)
++{
++    QVirtualKeyboardInputContext *ic = inputContext();
++    if (!actions.commit.isEmpty()) {
++        ic->commit(actions.commit);
++    }
++    if (actions.setPreedit) {
++        ic->setPreeditText(actions.preedit);
++    }
++}
+diff --git a/src/qmlplugin/hangulpreeditinputmethod.h b/src/qmlplugin/hangulpreeditinputmethod.h
+new file mode 100644
+index 0000000..a801b92
+--- /dev/null
++++ b/src/qmlplugin/hangulpreeditinputmethod.h
+@@ -0,0 +1,48 @@
++/*
++    SPDX-FileCopyrightText: 2026 Noa Himesaka <himesaka@noa.codes>
++
++    SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++*/
++
++#pragma once
++
++#include "hangulinputsession.h"
++
++#include <QElapsedTimer>
++#include <QVirtualKeyboardAbstractInputMethod>
++#include <qqmlintegration.h>
++
++/**
++ * Korean (dubeolsik) input method that composes syllables in the preedit.
++ *
++ * Replaces Qt Virtual Keyboard's HangulInputMethod, which composes by
++ * rewriting the character before the cursor (commit with replacement).
++ * plasma-keyboard can only forward that as delete_surrounding_text followed
++ * by commit_string, against surrounding text that lags behind the
++ * application. That gave separated jamo (ㅎㅓ instead of 허) and, in Firefox,
++ * doubled text.
++ */
++class HangulPreeditInputMethod : public QVirtualKeyboardAbstractInputMethod
++{
++    Q_OBJECT
++    QML_ELEMENT
++
++public:
++    explicit HangulPreeditInputMethod(QObject *parent = nullptr);
++
++    QList<QVirtualKeyboardInputEngine::InputMode> inputModes(const QString &locale) override;
++    bool setInputMode(const QString &locale, QVirtualKeyboardInputEngine::InputMode inputMode) override;
++    bool setTextCase(QVirtualKeyboardInputEngine::TextCase textCase) override;
++
++    bool keyEvent(Qt::Key key, const QString &text, Qt::KeyboardModifiers modifiers) override;
++
++    void reset() override;
++    void update() override;
++
++private:
++    HangulInputSession::Snapshot snapshot() const;
++    void apply(const HangulInputSession::Actions &actions);
++
++    HangulInputSession m_session;
++    QElapsedTimer m_clock;
++};

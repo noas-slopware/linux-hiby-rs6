@@ -1,0 +1,49 @@
+# Maintainer: Felix Yan <felixonmars@archlinux.org>
+# Maintainer: Antonio Rojas <arojas@archlinux.org>
+# Contributor: Andrea Scarpino <andrea@archlinux.org>
+# HiBy RS6 ([rs6] repo): this PKGBUILD as Arch has it, plus patches/kiconthemes: KQuickIconProvider requestedSize is in device pixels; arch=(aarch64), pkgrel 1.1.
+
+pkgname=kiconthemes
+pkgver=6.31.0
+pkgrel=1.1
+pkgdesc='Support for icon themes'
+arch=(aarch64)
+url='https://develop.kde.org/products/frameworks/'
+license=(LGPL-2.0-only LGPL-3.0-only)
+depends=(breeze-icons
+         libstdc++
+         glibc
+         karchive
+         kcolorscheme
+         kconfig
+         ki18n
+         kwidgetsaddons
+         qt6-base
+         qt6-svg)
+makedepends=(doxygen
+             extra-cmake-modules
+             qt6-tools)
+optdepends=('qt6-declarative: QML bindings')
+groups=(kf6)
+source=(https://download.kde.org/stable/frameworks/${pkgver%.*}/$pkgname-$pkgver.tar.xz{,.sig}
+        0001-KQuickIconProvider-requestedSize-is-in-device-pixels.patch)
+sha256sums=('d6558d7dc6ed6de90ef3b5eef905c25fb624147a01d2703329144534a5df58ec'
+            'SKIP'
+            'c91b35343621ed6772338d5e8d45bb45771ddf1ba1025047bd9b943124dd6fb1')
+validpgpkeys=(53E6B47B45CEA3E0D5B7457758D0EE648A48B3BB # David Faure <faure@kde.org>
+              90A968ACA84537CC27B99EAF2C8DF587A6D4AAC1 # Nicolas Fella <nicolas.fella@kde.org>
+              )
+
+prepare() {
+  patch -d $pkgname-$pkgver -Np1 -i ../0001-KQuickIconProvider-requestedSize-is-in-device-pixels.patch
+}
+
+build() {
+  cmake -B build -S $pkgname-$pkgver \
+    -DBUILD_TESTING=OFF
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}

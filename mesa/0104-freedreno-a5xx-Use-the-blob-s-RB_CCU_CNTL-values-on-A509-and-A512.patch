@@ -1,0 +1,76 @@
+From a5b6133b56f02534d6045ba91b8ab80c022ddba0 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 16:22:41 +0900
+Subject: [PATCH 4/4] freedreno/a5xx: Use the blob's RB_CCU_CNTL values on A509
+ and A512
+
+Qualcomm's driver computes RB_CCU_CNTL in A5xContext::HwInit from the GMEM
+size kgsl reports, the number of CCUs and the per-CCU cache size, with
+quarter-size color and depth caches:
+
+  bypass = (ccus * 32K) << 11
+  gmem   = 2 << 19 | 2 << 6 | (gmem - Cbytes) << 11 | (gmem - Cbytes - Zbytes) >> 2
+
+where Cbytes = Zbytes = ccus * 8K. HwOverrideDefaults gives A509 and A512
+two CCUs, and kgsl's adreno_gpulist gives them 272 KB of GMEM, so both
+write 0x08000000 in bypass mode and 0x2010f080 in GMEM mode. The same
+formula yields the A508 values recorded with libwrap (0x04000000,
+0x10107880) and the A530 values Mesa has always used (0x10000000,
+0x7c13c080). A5xBltDevice::HwStaticSetup also writes 0x08000000 for this
+group directly.
+
+Read from the HiBy RS6's stock Adreno 512 driver (libGLESv2_adreno.so) with
+Ghidra.
+---
+ src/gallium/drivers/freedreno/a5xx/fd5_emit.h | 27 +++++++++++++++++--
+ 1 file changed, 25 insertions(+), 2 deletions(-)
+
+diff --git a/src/gallium/drivers/freedreno/a5xx/fd5_emit.h b/src/gallium/drivers/freedreno/a5xx/fd5_emit.h
+index 5dbc1e6..d504a7a 100644
+--- a/src/gallium/drivers/freedreno/a5xx/fd5_emit.h
++++ b/src/gallium/drivers/freedreno/a5xx/fd5_emit.h
+@@ -51,16 +51,39 @@ struct fd5_emit {
+    unsigned streamout_mask;
+ };
+ 
++/* RB_CCU_CNTL as Qualcomm's driver computes it (A5xContext::HwInit) from the
++ * GMEM size, the CCU count and the per-CCU cache size (32 KB, quarter-size
++ * color and depth caches): the color cache base sits at GMEM minus the color
++ * cache, in KB at bits [31:21], the depth cache below it at bits [18:8], and
++ * bypass mode only sets the full CCU size as the color base. A508 has 136 KB
++ * of GMEM and one CCU, A509/A512 272 KB and two, A530 1 MB and four.
++ */
+ static inline uint32_t
+ fd5_ccu_cntl_bypass(const struct fd_screen *screen)
+ {
+-   return screen->gpu_id == 508 ? 0x04000000 : 0x10000000;
++   switch (screen->gpu_id) {
++   case 508:
++      return 0x04000000;
++   case 509:
++   case 512:
++      return 0x08000000;
++   default:
++      return 0x10000000;
++   }
+ }
+ 
+ static inline uint32_t
+ fd5_ccu_cntl_gmem(const struct fd_screen *screen)
+ {
+-   return screen->gpu_id == 508 ? 0x10107880 : 0x7c13c080;
++   switch (screen->gpu_id) {
++   case 508:
++      return 0x10107880;
++   case 509:
++   case 512:
++      return 0x2010f080;
++   default:
++      return 0x7c13c080;
++   }
+ }
+ 
+ static inline enum a5xx_color_fmt
+-- 
+2.56.0
+

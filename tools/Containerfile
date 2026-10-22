@@ -1,0 +1,11 @@
+# rs6-arch-base: the Arch Linux Ports AArch64 bootstrap from arch.bens.haus (ARMv8.0), as an image.
+# Built by mkimages-rs6.sh, which puts the verified bootstrap tarball in the context as bootstrap.tar.zst
+# and, on an x86_64 host, qemu-aarch64-static (else an empty file): binfmt_misc without the F flag looks
+# the interpreter up inside the container. Nothing here runs AArch64 code; the extract stage is native.
+FROM --platform=$BUILDPLATFORM docker.io/library/archlinux:latest AS extract
+COPY bootstrap.tar.zst qemu-aarch64-static /in/
+RUN mkdir /rootfs && bsdtar -xpf /in/bootstrap.tar.zst -C /rootfs --strip-components=1 --numeric-owner && \
+    if [ -s /in/qemu-aarch64-static ]; then install -m755 /in/qemu-aarch64-static /rootfs/usr/bin/; fi
+FROM scratch
+COPY --from=extract /rootfs/ /
+CMD ["/bin/bash"]

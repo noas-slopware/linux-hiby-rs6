@@ -1,0 +1,17 @@
+# After mkinitcpio (90-mkinitcpio-install.hook) has copied the kernel and built the initramfs:
+# rewrite extlinux.conf for U-Boot.
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Target = usr/lib/modules/*/vmlinuz
+Target = usr/lib/modules/*/dtb/qcom/sdm660-hiby-rs6.dtb
+Target = usr/share/hiby-rs6/kernel-cmdline.conf
+Target = usr/share/hiby-rs6/extlinux.d/*
+Target = usr/bin/hiby-rs6-extlinux
+
+[Action]
+Description = Writing extlinux.conf for the RS6...
+When = PostTransaction
+Exec = /usr/bin/hiby-rs6-extlinux

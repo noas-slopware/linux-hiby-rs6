@@ -1,0 +1,84 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# hiby-rs6-extlinux: write /boot/extlinux/extlinux.conf for the RS6's U-Boot (sdm660-mainline, bootstd
+# extlinux on nura_boot) from the installed linux-hiby-rs6* kernels; run by 95-hiby-rs6-extlinux.hook.
+# Replaces Nura's boot-deploy, keeping its extlinux.d idea: extra, hand-made entries in
+# /usr/share/hiby-rs6/extlinux.d/*.conf and /etc/hiby-rs6/extlinux.d/*.conf are appended on every run
+# (copy a kernel/initramfs/DTB somewhere under /boot yourself and point an entry at it).
+#
+# /boot is the nura_boot partition, so paths in extlinux.conf are relative to /boot.
+# Kernel command line: /etc/kernel/cmdline if it exists (used verbatim), else
+# "root=PARTLABEL=nura_root rootfstype=f2fs rw quiet" plus /usr/share/hiby-rs6/kernel-cmdline.conf.
+set -eu
+
+BOOT=${BOOT:-/boot}
+MODULES=${MODULES:-/usr/lib/modules}
+CMDLINE=${CMDLINE:-/etc/kernel/cmdline}
+SHARE=${SHARE:-/usr/share/hiby-rs6}
+ETC=${ETC:-/etc/hiby-rs6}
+DTB=qcom/sdm660-hiby-rs6.dtb
+
+log() { printf '==> hiby-rs6-extlinux: %s\n' "$*" >&2; }
+
+cmdline() {
+	if [ -s "$CMDLINE" ]; then
+		grep -v '^[[:space:]]*#' "$CMDLINE" | tr -s '\n\t' '  ' | sed 's/^ *//; s/ *$//'
+		return
+	fi
+	{
+		echo "root=PARTLABEL=nura_root rootfstype=f2fs rw quiet"
+		[ -f "$SHARE/kernel-cmdline.conf" ] && grep -v '^[[:space:]]*#' "$SHARE/kernel-cmdline.conf"
+	} | tr -s '\n\t' '  ' | sed 's/^ *//; s/ *$//'
+}
+
+# installed RS6 kernels: "<pkgbase> <kver>" per line, sorted by pkgbase
+kernels() {
+	for pb in "$MODULES"/*/pkgbase; do
+		[ -f "$pb" ] || continue
+		read -r name < "$pb"
+		case $name in linux-hiby-rs6*) ;; *) continue ;; esac
+		kver=${pb%/pkgbase}
+		echo "$name ${kver##*/}"
+	done | sort
+}
+
+args=$(cmdline)
+first=$(kernels | head -n1 | cut -d' ' -f1)
+if [ -z "$first" ]; then
+	log "no linux-hiby-rs6 kernel installed; leaving extlinux.conf alone"
+	exit 0
+fi
+mkdir -p "$BOOT/extlinux"
+tmp="$BOOT/extlinux/extlinux.conf.new"
+{
+	echo "# Written by hiby-rs6-extlinux. Edit /etc/kernel/cmdline or /etc/hiby-rs6/extlinux.d/*.conf,"
+	echo "# then run hiby-rs6-extlinux; this file is rewritten on every kernel update."
+	echo "timeout 1"
+	echo "default $first"
+	echo "menu title HiBy RS6"
+	kernels | while read -r name kver; do
+		if [ ! -f "$BOOT/vmlinuz-$name" ] || [ ! -f "$BOOT/initramfs-$name.img" ]; then
+			log "$name: /boot/vmlinuz-$name or initramfs-$name.img missing, skipped (run mkinitcpio -p $name)"
+			continue
+		fi
+		if [ ! -f "$MODULES/$kver/dtb/$DTB" ]; then
+			log "$name: $MODULES/$kver/dtb/$DTB missing (install $name-dtbs), skipped"
+			continue
+		fi
+		mkdir -p "$BOOT/dtbs/$name"
+		cp "$MODULES/$kver/dtb/$DTB" "$BOOT/dtbs/$name/sdm660-hiby-rs6.dtb.new"
+		mv "$BOOT/dtbs/$name/sdm660-hiby-rs6.dtb.new" "$BOOT/dtbs/$name/sdm660-hiby-rs6.dtb"
+		printf '\nlabel %s\n\tmenu label Arch Linux %s\n\tkernel /vmlinuz-%s\n\tfdt /dtbs/%s/sdm660-hiby-rs6.dtb\n\tinitrd /initramfs-%s.img\n\tappend %s\n' \
+			"$name" "$kver" "$name" "$name" "$name" "$args"
+	done
+	for entry in "$SHARE"/extlinux.d/*.conf "$ETC"/extlinux.d/*.conf; do
+		[ -f "$entry" ] || continue
+		log "adding entries from $entry"
+		printf '\n'
+		cat "$entry"
+	done
+} > "$tmp"
+sync -f "$tmp" 2>/dev/null || sync
+mv "$tmp" "$BOOT/extlinux/extlinux.conf"
+sync
+log "wrote $BOOT/extlinux/extlinux.conf (default $first)"

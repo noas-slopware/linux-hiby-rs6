@@ -1,0 +1,28 @@
+# Maintainer: Noa Himesaka <himesaka@noa.codes>
+#
+# Nura's bootmac 0.7.1: stable Wi-Fi and Bluetooth MAC addresses at boot (WCN3990 has none
+# programmed). Without serialno= on the kernel command line (U-Boot/extlinux gives none) it hashes
+# /etc/machine-id, so carry machine-id over from Nura or every MAC changes (Bluetooth pairings in
+# /var/lib/bluetooth/<adapter MAC>/ included). Not in Arch or the AUR.
+
+pkgname=bootmac
+pkgver=0.7.1
+pkgrel=1
+pkgdesc='Configure MAC addresses at boot'
+url='https://gitlab.postmarketos.org/postmarketOS/bootmac'
+arch=(any)
+license=(GPL-3.0-or-later)
+# btmgmt is in bluez-utils on Arch, hciconfig/hcitool in bluez-deprecated-tools
+depends=(bluez-deprecated-tools bluez-utils iproute2)
+makedepends=(meson systemd)
+source=("$url/-/archive/v$pkgver/bootmac-v$pkgver.tar.gz")
+sha256sums=('679779ef447b020115776a4f4adf2170f9f1f593cf8ee1fd6bb969e2f8fedf27')
+
+build() {
+  arch-meson $pkgname-v$pkgver build -D systemd_units=true
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir" --no-rebuild
+}

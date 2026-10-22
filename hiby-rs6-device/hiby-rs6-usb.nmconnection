@@ -1,0 +1,17 @@
+# HiBy RS6 USB network (hiby-rs6-usbnet): 172.16.42.1 on usb0, DHCP for the host (needs dnsmasq)
+[connection]
+id=hiby-rs6-usb
+uuid=5b1c6f4e-2a1d-4b7e-9c51-7f2b8e0d6a31
+type=ethernet
+interface-name=usb0
+autoconnect=true
+autoconnect-priority=-10
+
+[ethernet]
+
+[ipv4]
+method=shared
+address1=172.16.42.1/24
+
+[ipv6]
+method=ignore

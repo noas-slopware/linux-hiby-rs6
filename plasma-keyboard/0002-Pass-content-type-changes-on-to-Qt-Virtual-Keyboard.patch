@@ -1,0 +1,34 @@
+From: Noa Himesaka <himesaka@noa.codes>
+Subject: [PATCH] Pass content type changes on to Qt Virtual Keyboard
+
+Qt Virtual Keyboard reads the input method hints only when it is asked to
+update. The content type a newly focused field sends after the input
+context is set up was therefore only picked up with the next surrounding
+text change, which is the application's response to the first key. The
+change of hints at that point resets the input method, so an input method
+that composes in the preedit (Korean) lost the first jamo of the first
+word: 허망 came out as ㅓ망 in Qt applications.
+
+Ask Qt Virtual Keyboard to update its hints as soon as the content type
+arrives.
+---
+diff --git a/src/inputlisteneritem.cpp b/src/inputlisteneritem.cpp
+index ca6bb6a..eb71d5f 100644
+--- a/src/inputlisteneritem.cpp
++++ b/src/inputlisteneritem.cpp
+@@ -95,6 +95,15 @@ InputListenerItem::InputListenerItem()
+             }
+         }
+     });
++    // Qt Virtual Keyboard only reads the hints in update(). Without this, the
++    // content type of a newly focused field reached it with the first
++    // surrounding text change, i.e. after the first key, and the change of
++    // hints reset the input method in the middle of the first word.
++    connect(&m_input, &InputPlugin::contentTypeChanged, this, [this] {
++        if (m_input.hasContext()) {
++            QGuiApplication::inputMethod()->update(Qt::ImHints);
++        }
++    });
+     connect(&m_input, &InputPlugin::deactivate, this, [this] {
+         QGuiApplication::inputMethod()->setVisible(false);
+         QGuiApplication::inputMethod()->reset();

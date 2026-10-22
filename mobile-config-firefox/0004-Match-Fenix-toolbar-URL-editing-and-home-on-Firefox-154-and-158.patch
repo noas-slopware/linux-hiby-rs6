@@ -1,0 +1,2352 @@
+From: Noa Himesaka <himesaka@noa.codes>
+Subject: [PATCH] Match Fenix's toolbar, URL editing and home page, on Firefox 154 and 158
+
+Toolbar: one Fenix toolbar (FenixToolbar.sys.mjs, toolbar.css) instead of
+the desktop nav bar plus tab strip, with Fenix's URL pill, page progress bar
+on the edge facing the page, URL fade only when the text overflows, and the
+private colour scheme in private windows.
+
+URL editing: a full-window awesomebar. With the toolbar at the bottom the
+results are listed bottom-up and Up/Down follow what is on screen. On 154,
+whose URL bar is a permanent breakout popover, will-change on the URL bar
+made it the containing block of the fixed results (height 0): turn it off
+while editing and place the bar and results against the window. The tab
+tray and the dialog layer are manual popovers too, so the top-layer URL
+bar is no longer drawn over them. Placeholder "Search or enter address".
+
+Home: about:fenixhome as the new tab and home page, laid out like Fenix's
+Homepage.kt (shortcuts, continue, bookmarks, recently visited, private
+home), from Places, pinned links and the open tabs.
+
+App menu rows use Fenix's metrics on both versions. MemoryTrim answers
+memory pressure the way Fenix's MemoryController does in the background:
+only while every window is hidden and the system is short of memory.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+diff --git a/src/modules/FenixDialogs.sys.mjs b/src/modules/FenixDialogs.sys.mjs
+index 9e18675..f7e1c70 100644
+--- a/src/modules/FenixDialogs.sys.mjs
++++ b/src/modules/FenixDialogs.sys.mjs
+@@ -62,6 +62,8 @@ export const FenixDialogs = {
+             const doc = win.document;
+             const layer = make(doc, 'div', 'mcf-fx-layer');
+             layer.setAttribute('gravity', opts.gravity || 'center');
++            // The top layer, above the urlbar popover of Firefox <= 156.
++            layer.setAttribute('popover', 'manual');
+             if (opts.className) layer.classList.add(opts.className);
+             const scrim = make(doc, 'div', 'mcf-fx-scrim');
+             const dialog = make(doc, 'div', 'mcf-fx-dialog');
+@@ -178,6 +180,7 @@ export const FenixDialogs = {
+             }
+ 
+             doc.documentElement.append(layer);
++            try { layer.showPopover(); } catch (e) {}
+             // Scroll the (first) selected choice into view, like the
+             // RecyclerView's scrollToPosition().
+             list?.querySelector('[checked]')?.scrollIntoView({ block: 'center' });
+diff --git a/src/modules/FenixToolbar.sys.mjs b/src/modules/FenixToolbar.sys.mjs
+new file mode 100644
+index 0000000..6171d09
+--- /dev/null
++++ b/src/modules/FenixToolbar.sys.mjs
+@@ -0,0 +1,287 @@
++// Copyright 2026 Noa Himesaka
++// SPDX-License-Identifier: MPL-2.0
++
++/**
++ * Firefox for Android's one-row browser toolbar on narrow windows
++ * (toolbar.css has the layout and the sources).
++ *
++ * Fenix's phone toolbar is [address bar | new tab | tab counter | menu]
++ * (BrowserToolbarMiddleware.kt buildEndBrowserActions()). Desktop has the
++ * menu and the address bar, so this adds the "new tab" button and the tab
++ * counter after the address bar. They are plain toolbar buttons next to the
++ * app menu button, not CustomizableUI widgets, so customizing the toolbar
++ * leaves them alone; toolbar.css hides them on wide windows.
++ *
++ * The counter's click opens the tab tray (TabTray.sys.mjs) and its long
++ * press the counter menu (TabCounterMenu.sys.mjs).
++ *
++ * Fenix also has no extension buttons in the toolbar: all extensions are in
++ * the menu's Extensions entry (MainMenu.kt). Pinned extensions don't show in
++ * Firefox's extensions panel, so on narrow windows they're moved to it (the
++ * panel's own area) and put back when the window gets wide again.
++ */
++
++const NARROW = 700; // toolbar.css switches to the mobile layout at this width
++const MOVED_PREF = 'mcf.toolbar.extensionsInPanel';
++
++export class FenixToolbar {
++    init() {
++        const windowObserver = {
++            observe: (subject, topic) => {
++                if (topic === 'domwindowopened') {
++                    const window = subject;
++                    window.addEventListener('load', () => {
++                        if (window.location.href !== 'chrome://browser/content/browser.xhtml') return;
++                        this._setupForWindow(window);
++                    }, { once: true });
++                }
++            }
++        };
++
++        Services.obs.addObserver(windowObserver, 'domwindowopened');
++    }
++
++    _setupForWindow(window) {
++        const document = window.document;
++        document.l10n.addResourceIds([{ path: 'browser/mobileconfig/fenix.ftl', optional: true }]);
++
++        const menuButton = document.getElementById('PanelUI-button');
++        if (!menuButton) return;
++
++        const newTab = document.createXULElement('toolbarbutton');
++        newTab.id = 'mcf-newtab-button';
++        newTab.className = 'toolbarbutton-1 chromeclass-toolbar-additional';
++        document.l10n.setAttributes(newTab, 'mcf-toolbar-new-tab');
++        newTab.addEventListener('command', (event) => window.BrowserCommands.openTab({ event }));
++
++        const counter = document.createXULElement('toolbarbutton');
++        counter.id = 'mcf-tabcounter-button';
++        counter.className = 'toolbarbutton-1 chromeclass-toolbar-additional';
++        // The click is handled in TabTray.sys.mjs, which also stops the
++        // all-tabs panel; the command here is for keyboard activation.
++        document.l10n.setAttributes(counter, 'mcf-toolbar-tab-counter', { count: 1 });
++
++        menuButton.before(newTab, counter);
++
++        const update = () => {
++            // The tab being closed is still in the list during TabClose.
++            const count = window.gBrowser.tabs.filter(tab => !tab.closing).length;
++            // Fenix shows an infinity icon above 99 tabs (TabCounter.kt).
++            counter.setAttribute('tabcount', count > 99 ? '∞' : String(count));
++            counter.toggleAttribute('tabcount-wide', count > 9);
++            document.l10n.setAttributes(counter, 'mcf-toolbar-tab-counter', { count });
++        };
++        update();
++        const container = window.gBrowser.tabContainer;
++        for (const type of ['TabOpen', 'TabClose', 'TabShow', 'TabHide']) {
++            container.addEventListener(type, update);
++        }
++
++        this._extensionsToMenu(window);
++        this._privateHome(window);
++        this._placeholder(window);
++        this._progressBar(window);
++        this._awesomebarKeys(window);
++    }
++
++    /**
++     * With a bottom toolbar the suggestions are listed bottom-up (toolbar.css),
++     * the first one nearest to the edit bar. Up and down then follow what
++     * is on screen: Up goes to the suggestion above, which is the next one
++     * in the list.
++     */
++    _awesomebarKeys(window) {
++        const input = window.document.getElementById('urlbar-input');
++        if (!input) return;
++        input.addEventListener('keydown', (event) => {
++            if ((event.key !== 'ArrowUp' && event.key !== 'ArrowDown') ||
++                event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
++            const urlbar = window.gURLBar;
++            if (!urlbar?.view?.isOpen || window.innerWidth > NARROW ||
++                Services.prefs.getBoolPref('mcf.toolbar.positionOnTop', false)) return;
++            event.preventDefault();
++            event.stopImmediatePropagation();
++            urlbar.view.selectBy(1, { reverse: event.key === 'ArrowDown' });
++        }, true);
++    }
++
++    /**
++     * The progress bar on the toolbar's edge facing the page
++     * (FullDisplayToolbar.kt: AnimatedProgressBar, 5dp, the accent gradient,
++     * transparent track, shown from 1 to 99 percent).
++     *
++     * Fenix feeds it Gecko's page load progress. Desktop Firefox doesn't
++     * deliver onProgressChange to the tab progress listeners (checked on 154
++     * and 158: only the start and stop states arrive), so the bar moves
++     * towards 90 percent while the tab is loading and is removed when it
++     * stops.
++     *
++     * The movement is a CSS animation of the bar's transform (toolbar.css),
++     * which the compositor runs: nothing on the main thread while a page
++     * loads. Setting the width from a timer restyled, laid out and repainted
++     * the toolbar ten times a second instead, on the thread that also
++     * handles the page's network data.
++     */
++    _progressBar(window) {
++        const document = window.document;
++        const navBar = document.getElementById('nav-bar');
++        const gBrowser = window.gBrowser;
++        if (!navBar || !gBrowser) return;
++        const bar = document.createXULElement('box');
++        bar.id = 'mcf-progress';
++        bar.hidden = true;
++        navBar.append(bar);
++
++        const stop = () => {
++            bar.hidden = true;
++        };
++        const start = () => {
++            if (!bar.hidden) return;
++            bar.hidden = false;
++            // Showing the bar starts its animation at 5 percent. A stop and
++            // a start before the next restyle would leave the old one
++            // running, so rewind it (one style flush per page load).
++            for (const animation of bar.getAnimations()) animation.currentTime = 0;
++        };
++        const listener = {
++            QueryInterface: ChromeUtils.generateQI(['nsIWebProgressListener', 'nsISupportsWeakReference']),
++            onStateChange: (webProgress, request, flags) => {
++                if (!webProgress.isTopLevel) return;
++                const { STATE_START, STATE_STOP, STATE_IS_NETWORK } = Ci.nsIWebProgressListener;
++                if ((flags & STATE_IS_NETWORK) && (flags & STATE_START)) start();
++                else if ((flags & STATE_IS_NETWORK) && (flags & STATE_STOP)) stop();
++            },
++        };
++        gBrowser.addProgressListener(listener, Ci.nsIWebProgress.NOTIFY_STATE_NETWORK);
++        gBrowser.tabContainer.addEventListener('TabSelect', () => {
++            if (gBrowser.selectedTab.hasAttribute('busy')) start();
++            else stop();
++        });
++    }
++
++    /**
++     * Fenix's address bar hint is "Search or enter address" (search_hint),
++     * desktop says "Search with <engine> or enter address". Desktop sets its
++     * hint through the input's l10n id, and again whenever the engine or the
++     * search mode changes, so this swaps the two ids that carry the default
++     * hint and leaves the search mode hints ("Search <engine>") alone.
++     */
++    _placeholder(window) {
++        const input = window.document.getElementById('urlbar-input');
++        if (!input) return;
++        const DESKTOP = new Set(['urlbar-placeholder-with-name', 'urlbar-placeholder']);
++        let desktop = null; // the desktop hint, to put back on wide windows
++        const apply = () => {
++            const l10n = window.document.l10n;
++            const id = input.getAttribute('data-l10n-id');
++            if (DESKTOP.has(id)) {
++                desktop = l10n.getAttributes(input);
++                if (window.innerWidth <= NARROW) l10n.setAttributes(input, 'mcf-urlbar-placeholder');
++            } else if (id === 'mcf-urlbar-placeholder' && window.innerWidth > NARROW && desktop) {
++                l10n.setAttributes(input, desktop.id, desktop.args);
++            }
++        };
++        new window.MutationObserver(apply).observe(input, { attributes: true, attributeFilter: ['data-l10n-id'] });
++        window.addEventListener('resize', apply);
++        apply();
++    }
++
++    /**
++     * A private window starts on about:privatebrowsing, which is hard-wired
++     * in browser.js. Fenix's private home is the same screen as the normal
++     * home (private colours, the "Leave no traces" text), which is the new
++     * tab page here (boot.sys.mjs), so the first tab goes there too.
++     */
++    _privateHome(window) {
++        if (!window.PrivateBrowsingUtils?.isWindowPrivate(window)) return;
++        const gBrowser = window.gBrowser;
++        if (!gBrowser) return;
++        const listener = {
++            QueryInterface: ChromeUtils.generateQI(['nsIWebProgressListener', 'nsISupportsWeakReference']),
++            onLocationChange: (webProgress, request, location) => {
++                if (!webProgress.isTopLevel || location.spec !== 'about:privatebrowsing') return;
++                gBrowser.removeProgressListener(listener);
++                if (gBrowser.tabs.length !== 1) return;
++                window.setTimeout(() => {
++                    gBrowser.selectedBrowser.loadURI(Services.io.newURI('about:fenixhome'), {
++                        triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
++                    });
++                }, 0);
++            },
++        };
++        gBrowser.addProgressListener(listener, Ci.nsIWebProgress.NOTIFY_LOCATION);
++        window.setTimeout(() => {
++            try { gBrowser.removeProgressListener(listener); } catch (e) {}
++        }, 10000);
++    }
++
++    _extensionsToMenu(window) {
++        let CUI;
++        try {
++            CUI = window.CustomizableUI;
++            if (!CUI?.isWebExtensionWidget) return;
++        } catch (e) {
++            return;
++        }
++        const narrow = () => window.innerWidth <= NARROW;
++        const readMoved = () => {
++            try {
++                return new Set(JSON.parse(Services.prefs.getStringPref(MOVED_PREF, '[]')));
++            } catch (e) {
++                return new Set();
++            }
++        };
++        const writeMoved = (set) => Services.prefs.setStringPref(MOVED_PREF, JSON.stringify([...set]));
++        let busy = false;
++
++        const apply = () => {
++            if (busy) return;
++            busy = true;
++            try {
++                const moved = readMoved();
++                if (narrow()) {
++                    for (const id of CUI.getWidgetIdsInArea(CUI.AREA_NAVBAR)) {
++                        if (!CUI.isWebExtensionWidget(id)) continue;
++                        CUI.addWidgetToArea(id, CUI.AREA_ADDONS);
++                        moved.add(id);
++                    }
++                } else {
++                    for (const id of moved) {
++                        if (CUI.getPlacementOfWidget(id)?.area === CUI.AREA_ADDONS) {
++                            CUI.addWidgetToArea(id, CUI.AREA_NAVBAR);
++                        }
++                    }
++                    moved.clear();
++                }
++                writeMoved(moved);
++            } catch (e) {
++                console.error('Moving extension buttons failed:', e);
++            } finally {
++                busy = false;
++            }
++        };
++
++        // New extensions pinned by their manifest (default_area navbar).
++        const listener = {
++            onWidgetAdded: (id, area) => {
++                if (!busy && narrow() && area === CUI.AREA_NAVBAR && CUI.isWebExtensionWidget(id)) {
++                    window.setTimeout(apply, 0);
++                }
++            },
++        };
++        CUI.addListener(listener);
++        window.addEventListener('unload', () => CUI.removeListener(listener), { once: true });
++
++        let wasNarrow = null;
++        window.addEventListener('resize', () => {
++            if (wasNarrow === narrow()) return;
++            wasNarrow = narrow();
++            apply();
++        });
++        // After CustomizableUI built the toolbars.
++        (window.delayedStartupPromise || Promise.resolve()).then(() => {
++            wasNarrow = narrow();
++            apply();
++        });
++    }
++}
+diff --git a/src/modules/MemoryTrim.sys.mjs b/src/modules/MemoryTrim.sys.mjs
+new file mode 100644
+index 0000000..8744f55
+--- /dev/null
++++ b/src/modules/MemoryTrim.sys.mjs
+@@ -0,0 +1,157 @@
++// Copyright 2026 Noa Himesaka
++// SPDX-License-Identifier: MPL-2.0
++
++/**
++ * Trims memory when the browser is in the background and the system runs
++ * short of memory, like Firefox for Android.
++ *
++ * Android tells GeckoView with ComponentCallbacks2.onTrimMemory(), which
++ * GeckoRuntime registers a MemoryController for
++ * (mobile/android/geckoview/.../gecko/process/MemoryController.java, same in
++ * FIREFOX_154_0_RELEASE and main):
++ *   TRIM_MEMORY_UI_HIDDEN (20)                  -> nothing (below BACKGROUND)
++ *   TRIM_MEMORY_BACKGROUND (40) / MODERATE (60) -> notifyObservers
++ *       "memory-pressure": "low-memory", or "low-memory-ongoing" when the
++ *       last "low-memory" was less than 10 s ago
++ *   TRIM_MEMORY_COMPLETE (80) / RUNNING_CRITICAL (15) / onLowMemory()
++ *                                               -> "low-memory", always
++ *
++ * When Android sends what (frameworks/base services/core/java/com/android/
++ * server/am/AppProfiler.java updateLowMemStateLSP()):
++ * - Hiding the UI only ever gets UI_HIDDEN, which GeckoView ignores. That is
++ *   all a backgrounded app gets as long as memory is fine (memFactor
++ *   NORMAL), and all it gets at all with the modern trim of Android 14+.
++ * - BACKGROUND, MODERATE and COMPLETE go to background processes only while
++ *   the memory factor is not NORMAL. LowMemDetector (services/core/jni/
++ *   com_android_server_am_LowMemDetector.cpp) raises it from the kernel's
++ *   memory pressure stall information: 15 ms of "some" stall in a 1 s
++ *   window is low pressure, 30 / 50 ms of "full" stall medium / high.
++ *
++ * So a short trip to the home screen, the lock screen or a screen-off does
++ * nothing: purging then only cost time when the browser came back
++ * (WebRender re-rasterising and re-uploading every glyph and tile, JIT code
++ * compiled again). While every browser window is hidden (all minimized, or
++ * suspended by the compositor: KWin suspends windows that are minimized,
++ * behind show-desktop, under the lock screen or on a screen that is off),
++ * this reads /proc/pressure/memory once a second, and on the first second
++ * with 15 ms of stall sends what Android sends at the BACKGROUND level: the
++ * gfx caches (gfx/layers/MemoryPressureObserver.cpp), WebRender's texture
++ * and glyph caches, GC, CC and the caches that listen for memory-pressure
++ * let go. Again only after the pressure went away and came back. Without
++ * PSI, low pressure is less than 10% of the memory available (Firefox
++ * itself unloads tabs at 5%, AvailableMemoryWatcherLinux.cpp).
++ */
++const POLL_MS = 1000; // LowMemDetector's PSI window
++const STALL_US = 15000; // PSI_LOW_STALL_US: "some" stall per window
++const FALLBACK_AVAILABLE_PERCENT = 10; // without PSI
++const ONGOING_RESET_MS = 10000; // MemoryController.LOW_MEMORY_ONGOING_RESET_TIME_MS
++const PSI_PATH = '/proc/pressure/memory';
++const MEMINFO_PATH = '/proc/meminfo';
++
++// /proc files report a size of 0, so IOUtils.readUTF8() returns nothing;
++// read up to a limit instead.
++async function readProc(path) {
++    return new TextDecoder().decode(await IOUtils.read(path, { maxBytes: 8192 }));
++}
++
++export class MemoryTrim {
++    init() {
++        this._timer = null;
++        this._lastLowMemory = 0;
++        this._lastStall = null; // "some" total, µs
++        this._psi = true;
++        this._pressure = false; // trimmed for the current pressure episode
++        const windowObserver = {
++            observe: (subject, topic) => {
++                if (topic !== 'domwindowopened') return;
++                const window = subject;
++                window.addEventListener('load', () => {
++                    if (window.location.href !== 'chrome://browser/content/browser.xhtml') return;
++                    this._setupForWindow(window);
++                }, { once: true });
++            }
++        };
++        Services.obs.addObserver(windowObserver, 'domwindowopened');
++    }
++
++    _isHidden(window) {
++        if (window.closed) return true;
++        return window.windowState === window.STATE_MINIMIZED || window.document.hidden;
++    }
++
++    _allHidden() {
++        for (const window of Services.wm.getEnumerator('navigator:browser')) {
++            if (!this._isHidden(window)) return false;
++        }
++        return true;
++    }
++
++    _setupForWindow(window) {
++        const check = () => this._update();
++        window.addEventListener('sizemodechange', check);
++        window.document.addEventListener('visibilitychange', check);
++        window.addEventListener('unload', () => Services.tm.dispatchToMainThread(check), { once: true });
++    }
++
++    /** Watch the memory pressure only while nothing is visible. */
++    _update() {
++        if (!this._allHidden()) {
++            this._timer?.cancel();
++            this._timer = null;
++            this._lastStall = null;
++            this._pressure = false;
++            return;
++        }
++        if (this._timer) return;
++        this._timer = Cc['@mozilla.org/timer;1'].createInstance(Ci.nsITimer);
++        this._timer.initWithCallback(() => this._poll(), POLL_MS, Ci.nsITimer.TYPE_REPEATING_SLACK_LOW_PRIORITY);
++        this._poll();
++    }
++
++    async _poll() {
++        let low;
++        try {
++            low = await this._isMemoryLow();
++        } catch (e) {
++            return;
++        }
++        if (!this._timer) return; // visible again meanwhile
++        if (!low) {
++            this._pressure = false;
++            return;
++        }
++        if (this._pressure) return;
++        this._pressure = true;
++        this.trim();
++    }
++
++    async _isMemoryLow() {
++        if (this._psi) {
++            try {
++                // "some avg10=0.00 avg60=0.00 avg300=0.00 total=12345"
++                const text = await readProc(PSI_PATH);
++                const total = Number(/^some .*total=(\d+)/m.exec(text)?.[1]);
++                if (Number.isFinite(total)) {
++                    const last = this._lastStall;
++                    this._lastStall = total;
++                    return last !== null && total - last >= STALL_US;
++                }
++            } catch (e) {}
++            this._psi = false;
++        }
++        const text = await readProc(MEMINFO_PATH);
++        const kb = (key) => Number(new RegExp(`^${key}:\\s+(\\d+)`, 'm').exec(text)?.[1]);
++        const total = kb('MemTotal');
++        const available = kb('MemAvailable');
++        if (!total || !Number.isFinite(available)) return false;
++        return available * 100 / total < FALLBACK_AVAILABLE_PERCENT;
++    }
++
++    trim() {
++        const now = Date.now();
++        // MemoryController.onMemoryNotification()
++        const arg = now - this._lastLowMemory >= ONGOING_RESET_MS ? 'low-memory' : 'low-memory-ongoing';
++        if (arg === 'low-memory') this._lastLowMemory = now;
++        Services.obs.notifyObservers(null, 'memory-pressure', arg);
++    }
++}
+diff --git a/src/modules/TabCounterMenu.sys.mjs b/src/modules/TabCounterMenu.sys.mjs
+index dbc8d64..8186258 100644
+--- a/src/modules/TabCounterMenu.sys.mjs
++++ b/src/modules/TabCounterMenu.sys.mjs
+@@ -74,7 +74,7 @@ export class TabCounterMenu {
+         // vertical tabs (tabcounter.css).
+         const isCounter = (node) => {
+             if (!Services.prefs.getBoolPref('mcf.toolbar.tabCounter.enabled', true)) return null;
+-            const id = Services.prefs.getBoolPref('sidebar.verticalTabs', false) ? 'sidebar-button' : 'alltabs-button';
++            const id = Services.prefs.getBoolPref('sidebar.verticalTabs', false) ? 'sidebar-button' : 'mcf-tabcounter-button';
+             return node?.closest?.(`#${id}`);
+         };
+ 
+diff --git a/src/modules/TabTray.sys.mjs b/src/modules/TabTray.sys.mjs
+index 13288b3..7843c10 100644
+--- a/src/modules/TabTray.sys.mjs
++++ b/src/modules/TabTray.sys.mjs
+@@ -71,7 +71,7 @@ const S = {
+ };
+ 
+ // AppConstants-free "pristine home" test: a tab nobody navigated anywhere.
+-const BLANK = /^(about:(blank|home|newtab|privatebrowsing))?$/;
++const BLANK = /^(about:(blank|home|newtab|privatebrowsing|fenixhome))?$/;
+ 
+ const CSS = `
+ #mcf-tabtray {
+@@ -99,6 +99,9 @@ const CSS = `
+     -moz-user-select: none;
+ }
+ #mcf-tabtray[hidden] { display: none; }
++/* In the top layer (popover="manual"), like the urlbar of Firefox <= 156,
++ * which is a popover too and would be drawn over a normal overlay. */
++#mcf-tabtray:popover-open { width: auto; height: auto; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; overflow: visible; }
+ #mcf-tabtray * { box-sizing: border-box; }
+ :where(#mcf-tabtray) button {
+     appearance: none;
+@@ -399,7 +402,7 @@ export class TabTray {
+             if (window.innerWidth > MOBILE_MAX_WIDTH) return false;
+             if (!Services.prefs.getBoolPref('mcf.toolbar.tabCounter.enabled', true)) return false;
+             if (Services.prefs.getBoolPref('sidebar.verticalTabs', false)) return false;
+-            return !!event.target?.closest?.('#alltabs-button');
++            return !!event.target?.closest?.('#alltabs-button, #mcf-tabcounter-button');
+         };
+         for (const type of ['mousedown', 'mouseup', 'keypress']) {
+             window.addEventListener(type, (event) => {
+@@ -474,7 +477,7 @@ class TabTrayUI {
+     _ensureRoot() {
+         if (this.root) return;
+         const doc = this.document;
+-        this.root = this.el('div', null, { id: 'mcf-tabtray', hidden: true });
++        this.root = this.el('div', null, { id: 'mcf-tabtray', hidden: true, popover: 'manual' });
+         const style = this.el('style');
+         style.textContent = CSS;
+         this.root.append(style);
+@@ -490,6 +493,7 @@ class TabTrayUI {
+         this.sub = null;
+         w.document.activeElement?.blur?.();
+         this.root.hidden = false;
++        try { this.root.showPopover(); } catch (e) {}
+         w.addEventListener('keydown', this._onKey, true);
+         const c = w.gBrowser.tabContainer;
+         this._events = ['TabOpen', 'TabClose', 'TabSelect', 'TabAttrModified', 'TabMove'];
+@@ -501,6 +505,7 @@ class TabTrayUI {
+     close() {
+         if (!this.root || this.root.hidden) return;
+         this.root.hidden = true;
++        try { this.root.hidePopover(); } catch (e) {}
+         this._dismissPopup();
+         this._snackEl?.remove();
+         this._snackEl = null;
+diff --git a/src/modules/ToolbarGestures.sys.mjs b/src/modules/ToolbarGestures.sys.mjs
+index f4c6f8f..195cfe6 100644
+--- a/src/modules/ToolbarGestures.sys.mjs
++++ b/src/modules/ToolbarGestures.sys.mjs
+@@ -175,7 +175,7 @@ export class ToolbarGestures {
+             window.mcfTabTray.open();
+             return;
+         }
+-        const anchor = Services.prefs.getBoolPref('sidebar.verticalTabs', false) ? null : 'alltabs-button';
++        const anchor = Services.prefs.getBoolPref('sidebar.verticalTabs', false) ? null : 'mcf-tabcounter-button';
+         if (anchor && window.document.getElementById(anchor)) {
+             window.gTabsPanel.showAllTabsPanel(null, anchor);
+         }
+diff --git a/src/modules/aboutmobile/locales/en-US/browser/mobileconfig/fenix.ftl b/src/modules/aboutmobile/locales/en-US/browser/mobileconfig/fenix.ftl
+index 4341c6b..2721ad3 100644
+--- a/src/modules/aboutmobile/locales/en-US/browser/mobileconfig/fenix.ftl
++++ b/src/modules/aboutmobile/locales/en-US/browser/mobileconfig/fenix.ftl
+@@ -15,6 +15,20 @@ mcf-tabcounter-new-private-window =
+ mcf-tabcounter-close-tab =
+     .label = Close tab
+ 
++## Toolbar (fenix/.../toolbar/BrowserToolbarMiddleware.kt, android-components
++## mozac_open_tab_counter_tab_tray)
++
++mcf-toolbar-new-tab =
++    .tooltiptext = New tab
++    .aria-label = New tab
++mcf-toolbar-tab-counter =
++    .aria-label = Tabs Open: { $count }. Tap to switch tabs.
++
++## Address bar (fenix strings.xml search_hint)
++
++mcf-urlbar-placeholder =
++    .placeholder = Search or enter address
++
+ ## Main menu (fenix/.../components/menu/compose/MainMenu.kt, fenix strings.xml)
+ 
+ mcf-appmenu-bookmark-page =
+@@ -62,3 +76,22 @@ mcf-context-search-privately =
+     .label = Private Search
+ mcf-context-select-all =
+     .label = Select all
++
++## Home screen (fenix/.../home, fenix strings.xml). Used by the new tab page
++## in fenixhome/.
++
++fenixhome-title = New tab
++fenixhome-stories =
++    .aria-label = All stories
++fenixhome-private-browsing =
++    .aria-label = Private browsing
++fenixhome-shortcuts = Shortcuts
++fenixhome-continue = Continue
++fenixhome-bookmarks = Bookmarks
++fenixhome-recently-visited = Recently visited
++fenixhome-show-all = Show all
++fenixhome-add-shortcut = Add shortcut
++fenixhome-private-title = Leave no traces on this device
++# Fenix says "{ $appName } deletes your cookies, history, and site data when you close all your private tabs." Desktop Firefox keeps private windows, not tabs.
++fenixhome-private-description = Firefox deletes your cookies, history, and site data when you close all your private windows.
++fenixhome-private-link = Who might be able to see my activity?
+diff --git a/src/modules/boot.sys.mjs b/src/modules/boot.sys.mjs
+index 5cf3a31..e1a0e30 100644
+--- a/src/modules/boot.sys.mjs
++++ b/src/modules/boot.sys.mjs
+@@ -33,6 +33,12 @@ const { ExtensionPopupPage } = ChromeUtils.importESModule(
+ const { PanelToggle } = ChromeUtils.importESModule(
+     'chrome://mobileconfigfirefox/content/PanelToggle.sys.mjs'
+ );
++const { FenixToolbar } = ChromeUtils.importESModule(
++    'chrome://mobileconfigfirefox/content/FenixToolbar.sys.mjs'
++);
++const { MemoryTrim } = ChromeUtils.importESModule(
++    'chrome://mobileconfigfirefox/content/MemoryTrim.sys.mjs'
++);
+ const { TabCounterMenu } = ChromeUtils.importESModule(
+     'chrome://mobileconfigfirefox/content/TabCounterMenu.sys.mjs'
+ );
+@@ -265,6 +271,41 @@ function register_about_mobile() {
+     );
+ }
+ 
++/**
++ * Register about:fenixhome, the Fenix home screen (fenixhome/), and make it
++ * the new tab page: about:newtab and about:home are loaded by processes with
++ * their own copies of the redirector, so the supported way is the new tab URL
++ * override that extensions use (AboutNewTab.newTabURL). The URL bar treats
++ * the override as a blank page, like Fenix's home screen.
++ */
++function register_fenix_home() {
++    const Cm = Components.manager.QueryInterface(Ci.nsIComponentRegistrar);
++    const { ComponentUtils } = ChromeUtils.importESModule(
++        "resource://gre/modules/ComponentUtils.sys.mjs"
++    );
++    const factory = ComponentUtils.generateSingletonFactory(function () {
++        return new AboutMobile({
++            chromeUrl: "chrome://mobileconfigfirefox/content/fenixhome/index.html",
++            aboutHost: "fenixhome",
++            classID: "{b0a2f1d4-3c6e-4f0a-9d57-1f5f0e6c8a42}",
++            description: "Fenix home screen",
++            uriFlags:
++              Ci.nsIAboutModule.ALLOW_SCRIPT |
++              Ci.nsIAboutModule.IS_SECURE_CHROME_UI,
++        });
++    });
++    Cm.registerFactory(
++        Components.ID("{b0a2f1d4-3c6e-4f0a-9d57-1f5f0e6c8a42}"),
++        "about:fenixhome",
++        "@mozilla.org/network/protocol/about;1?what=fenixhome",
++        factory
++    );
++    const { AboutNewTab } = ChromeUtils.importESModule(
++        "resource:///modules/AboutNewTab.sys.mjs"
++    );
++    AboutNewTab.newTabURL = "about:fenixhome";
++}
++
+ /**
+  * Registers Fluent strings.
+  *
+@@ -319,6 +360,17 @@ function register_fluent_sources() {
+         } catch(e) {
+             console.error("PanelToggle failed to initialize:", e);
+         }
++        try {
++            new MemoryTrim().init();
++        } catch(e) {
++            console.error("MemoryTrim failed to initialize:", e);
++        }
++        try {
++            const fenixToolbar = new FenixToolbar();
++            fenixToolbar.init();
++        } catch(e) {
++            console.error("FenixToolbar failed to initialize:", e);
++        }
+         try {
+             const tabCounterMenu = new TabCounterMenu();
+             tabCounterMenu.init();
+@@ -388,6 +440,11 @@ function register_fluent_sources() {
+         // TODO:
+         // - Fix CSP issue that prevents to load our styles/scripts in about:mobile
+         register_about_mobile();
++        try {
++            register_fenix_home();
++        } catch (e) {
++            console.error("Fenix home failed to register:", e);
++        }
+         register_fluent_sources();
+     } catch(e) {
+         console.log(e);
+diff --git a/src/modules/fenixhome/home.css b/src/modules/fenixhome/home.css
+new file mode 100644
+index 0000000..e247f64
+--- /dev/null
++++ b/src/modules/fenixhome/home.css
+@@ -0,0 +1,373 @@
++/* Copyright 2026 Noa Himesaka
++ * SPDX-License-Identifier: MPL-2.0 */
++
++/* The home screen of Firefox for Android (Fenix), as a new tab page.
++ * Sources (mozilla-firefox/firefox, mobile/android/fenix/app/src/main/java/
++ * org/mozilla/fenix/home): ui/Homepage.kt (section order and spacing),
++ * ui/HomepageHeader.kt, ui/WordmarkAndLogo.kt, topsites/TopSites.kt and
++ * TopSitesLayout.kt (4 columns, 84dp items, 60dp favicon cards),
++ * recenttabs/view/RecentTabs.kt, bookmarks/view/Bookmarks.kt,
++ * recentvisits/view/RecentlyVisited.kt, compose/home/HomeSectionHeader.kt,
++ * ui/PrivateBrowsingDescription.kt; colours from AcornColors.kt (Nova) and
++ * the AcornTypography.kt text styles. dp are CSS px, as elsewhere. */
++
++:root {
++    color-scheme: light dark;
++    --surface: light-dark(#f7f6fb, #1d1b1f);
++    --on-surface: light-dark(#180e30, #f2f0f8);
++    --on-surface-variant: light-dark(rgb(24 14 48 / 70%), rgb(242 240 248 / 70%));
++    --card: light-dark(#ffffff, #131215);
++    --card-border: light-dark(#e3e2e7, #3f3e42);
++    --favicon-card: light-dark(#ffffff, #312f33);
++    --placeholder: light-dark(#e3e2e7, #312f33);
++    --favicon-surface: light-dark(#ffffff, #131215);
++    --secondary: light-dark(#67666a, #d6d5da);
++    --divider: light-dark(#e3e2e7, #3f3e42);
++    --pressed: color-mix(in srgb, var(--on-surface) 12%, transparent);
++    --horizontal-margin: 16px;
++}
++
++/* The private colour scheme (acornPrivateColorScheme). */
++:root.private {
++    --surface: #180e30;
++    --on-surface: #f2f0f8;
++    --on-surface-variant: rgb(242 240 248 / 70%);
++    --card-border: #332752;
++    --divider: #332752;
++}
++
++* { box-sizing: border-box; }
++[hidden] { display: none !important; }
++
++html, body {
++    margin: 0;
++    background: var(--surface);
++    color: var(--on-surface);
++    font: 400 16px/24px system-ui, sans-serif;
++    letter-spacing: 0.15px;
++    -moz-user-select: none;
++    user-select: none;
++}
++
++body {
++    min-height: 100vh;
++    padding-bottom: 24px;
++}
++
++button {
++    font: inherit;
++    color: inherit;
++    background: none;
++    border: 0;
++    padding: 0;
++}
++
++/* HomepageHeader: private mode toggle at the end, wordmark below. */
++header {
++    display: flex;
++    align-items: flex-start;
++    padding: 4px 4px 0;
++}
++header .spacer { flex: 1; }
++.icon-button {
++    width: 48px;
++    height: 48px;
++    border-radius: 50%;
++    display: flex;
++    align-items: center;
++    justify-content: center;
++    -moz-context-properties: fill;
++    fill: var(--on-surface);
++}
++.icon-button::before {
++    content: "";
++    width: 24px;
++    height: 24px;
++    background: var(--icon) center / 24px no-repeat;
++    -moz-context-properties: fill;
++    fill: var(--on-surface);
++}
++.icon-button:active { background: var(--pressed); }
++.private-button {
++    --icon: url("chrome://browser/skin/privateBrowsing.svg");
++    background: light-dark(#e3e2e7, #312f33);
++}
++:root.private .private-button { background: #332752; }
++.wordmark {
++    display: flex;
++    align-items: center;
++    justify-content: center;
++    padding: 4px 0 20px;
++}
++.wordmark .logo { height: 40px; padding-inline-end: 10px; box-sizing: content-box; }
++.wordmark .text {
++    height: 26px;
++    -moz-context-properties: fill;
++    fill: var(--on-surface);
++}
++body.is-private .wordmark { display: none; }
++
++/* HomeSectionHeader: subtitle1, the optional "Show all >" text button. */
++section { margin-top: 40px; }
++section:first-of-type { margin-top: 0; }
++.section-header {
++    display: flex;
++    align-items: center;
++    padding: 0 var(--horizontal-margin);
++}
++.section-header h2 {
++    flex: 1;
++    margin: 0;
++    font: 400 16px/24px system-ui, sans-serif;
++    letter-spacing: 0.15px;
++    overflow: hidden;
++    display: -webkit-box;
++    -webkit-line-clamp: 2;
++    -webkit-box-orient: vertical;
++}
++.text-button {
++    display: flex;
++    align-items: center;
++    gap: 4px;
++    min-height: 48px;
++    padding: 0 12px;
++    margin-inline-end: -12px;
++    border-radius: 20px;
++    font-size: 16px;
++}
++.text-button::after {
++    content: "";
++    width: 16px;
++    height: 16px;
++    background: url("chrome://global/skin/icons/arrow-right.svg") center / 16px no-repeat;
++    -moz-context-properties: fill;
++    fill: var(--on-surface);
++}
++.text-button:active { background: var(--pressed); }
++.section-header + * { margin-top: 16px; }
++
++/* HomepageCard: a rounded card with a 1dp outline. */
++.card {
++    background: var(--card);
++    border: 1px solid var(--card-border);
++    border-radius: 16px;
++    box-shadow: 0 2px 6px rgb(0 0 0 / 12%);
++    color: var(--on-surface);
++}
++
++/* Shortcuts: 4 columns, 8dp gaps, 84dp items at most, 60dp favicon cards. */
++.shortcuts-grid {
++    display: grid;
++    grid-template-columns: repeat(4, minmax(0, 84px));
++    justify-content: center;
++    column-gap: 8px;
++    row-gap: 12px;
++    padding: 0 var(--horizontal-margin);
++}
++.shortcut {
++    display: flex;
++    flex-direction: column;
++    align-items: center;
++    padding: 4px 0 6px;
++    text-decoration: none;
++    color: var(--on-surface);
++    position: relative;
++}
++.favicon-card {
++    width: 60px;
++    height: 60px;
++    border-radius: 16px;
++    background: var(--favicon-card);
++    display: flex;
++    align-items: center;
++    justify-content: center;
++    box-shadow: 0 1px 4px rgb(0 0 0 / 16%);
++    position: relative;
++}
++.favicon-card img { width: 36px; height: 36px; border-radius: 8px; }
++.favicon-card .letter { font: 500 22px/1 system-ui, sans-serif; color: var(--secondary); text-transform: uppercase; }
++.shortcut.pinned .favicon-card::after {
++    content: "";
++    position: absolute;
++    inset-block-start: 4px;
++    inset-inline-start: 4px;
++    width: 8px;
++    height: 8px;
++    background: url("chrome://browser/skin/pin-12.svg") center / contain no-repeat;
++    -moz-context-properties: fill;
++    fill: var(--secondary);
++}
++.shortcut .title {
++    width: 100%;
++    margin-top: 6px;
++    padding: 0 4px;
++    font: 700 12px/16px system-ui, sans-serif;
++    letter-spacing: 0.4px;
++    text-align: center;
++    overflow: hidden;
++    display: -webkit-box;
++    -webkit-line-clamp: 2;
++    -webkit-box-orient: vertical;
++}
++.shortcut.add .favicon-card { background: var(--placeholder); box-shadow: none; }
++.shortcut.add .favicon-card::before {
++    content: "";
++    width: 24px;
++    height: 24px;
++    background: url("chrome://global/skin/icons/plus.svg") center / 24px no-repeat;
++    -moz-context-properties: fill;
++    fill: var(--on-surface);
++}
++.shortcut:active .favicon-card { filter: brightness(0.92); }
++
++/* Recent tabs: a 108x80 thumbnail, title (14sp, 2 lines), favicon and URL (12sp). */
++.recent-tabs-list {
++    display: flex;
++    flex-direction: column;
++    gap: 8px;
++    padding: 0 var(--horizontal-margin);
++}
++.recent-tab {
++    display: flex;
++    align-items: center;
++    gap: 16px;
++    padding: 8px 16px 8px 8px;
++    border-radius: 8px;
++    border: 0;
++    box-shadow: 0 1px 2px rgb(0 0 0 / 14%);
++    text-decoration: none;
++    color: var(--on-surface);
++    background: var(--card);
++}
++.recent-tab .thumb {
++    flex: none;
++    width: 108px;
++    height: 80px;
++    border-radius: 8px;
++    background: var(--placeholder);
++    display: flex;
++    align-items: center;
++    justify-content: center;
++}
++.recent-tab .thumb img { width: 36px; height: 36px; }
++.recent-tab .text { flex: 1; min-width: 0; align-self: stretch; display: flex; flex-direction: column; justify-content: space-between; }
++.recent-tab .name {
++    font-size: 14px;
++    line-height: 20px;
++    letter-spacing: 0;
++    overflow: hidden;
++    display: -webkit-box;
++    -webkit-line-clamp: 2;
++    -webkit-box-orient: vertical;
++}
++.recent-tab .url-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
++.recent-tab .url-row img { width: 18px; height: 18px; border-radius: 2px; flex: none; }
++.recent-tab .url {
++    font-size: 12px;
++    line-height: 16px;
++    letter-spacing: 0.4px;
++    color: var(--on-surface-variant);
++    white-space: nowrap;
++    overflow: hidden;
++    text-overflow: ellipsis;
++}
++
++/* Bookmarks: 134dp cards in a row, a 126x82 image, caption below. */
++.bookmarks-row {
++    display: flex;
++    gap: 8px;
++    padding: 0 16px;
++    overflow-x: auto;
++    scrollbar-width: none;
++}
++.bookmark {
++    flex: none;
++    width: 134px;
++    padding: 4px 4px 8px;
++    text-decoration: none;
++    color: var(--on-surface);
++}
++.bookmark .image {
++    width: 126px;
++    height: 82px;
++    border-radius: 8px;
++    background: var(--favicon-surface);
++    display: flex;
++    align-items: center;
++    justify-content: center;
++}
++.bookmark .image img { width: 36px; height: 36px; }
++.bookmark .name {
++    margin: 8px 4px 0;
++    font: 400 12px/16px system-ui, sans-serif;
++    letter-spacing: 0.4px;
++    white-space: nowrap;
++    overflow: hidden;
++    text-overflow: ellipsis;
++}
++
++/* Recently visited: one card, 3 items per column, a divider between them,
++ * more than three scroll sideways in columns up to 320dp wide. */
++.recent-visits-wrap { padding: 8px 16px; overflow-x: auto; scrollbar-width: none; }
++.recent-visits-card {
++    display: grid;
++    grid-auto-flow: column;
++    grid-template-rows: repeat(3, auto);
++    column-gap: 32px;
++    width: 100%;
++    overflow: clip;
++}
++.recent-visits-wrap.multi .recent-visits-card { grid-auto-columns: minmax(0, 320px); width: max-content; max-width: none; }
++.visit {
++    display: flex;
++    align-items: center;
++    gap: 16px;
++    min-height: 56px;
++    padding: 8px 16px;
++    text-decoration: none;
++    color: var(--on-surface);
++    position: relative;
++    min-width: 0;
++}
++.visit img { width: 24px; height: 24px; border-radius: 4px; flex: none; }
++.visit .label {
++    flex: 1;
++    min-width: 0;
++    font: 400 16px/24px system-ui, sans-serif;
++    letter-spacing: 0.15px;
++    white-space: nowrap;
++    overflow: hidden;
++    text-overflow: ellipsis;
++}
++.visit.divider::after {
++    content: "";
++    position: absolute;
++    inset-inline: 16px;
++    inset-block-end: 0;
++    border-bottom: 1px solid var(--divider);
++}
++.visit:active { background: var(--pressed); }
++
++/* PrivateBrowsingDescription (felt privacy): icon, headline5, subtitle1, link. */
++#private {
++    display: flex;
++    flex-direction: column;
++    align-items: center;
++    padding: 0 24px;
++    text-align: center;
++}
++#private .private-circle {
++    width: 72px;
++    height: 72px;
++    padding: 16px;
++    border-radius: 50%;
++    background: #332752;
++    margin-bottom: 24px;
++}
++#private h1 { margin: 0 0 8px; font: 400 24px/32px system-ui, sans-serif; letter-spacing: 0.18px; }
++#private p { margin: 0 0 8px; font-size: 16px; line-height: 24px; letter-spacing: 0.15px; }
++#private a { color: var(--on-surface); text-decoration: underline; font-size: 16px; line-height: 24px; }
++
++/* The globe page-icon shows for sites without a favicon (yet). */
++img { -moz-context-properties: fill; fill: var(--secondary); }
++.wordmark .text { fill: var(--on-surface); }
+diff --git a/src/modules/fenixhome/home.js b/src/modules/fenixhome/home.js
+new file mode 100644
+index 0000000..3a913e0
+--- /dev/null
++++ b/src/modules/fenixhome/home.js
+@@ -0,0 +1,189 @@
++// Copyright 2026 Noa Himesaka
++// SPDX-License-Identifier: MPL-2.0
++
++/**
++ * The Fenix home screen (home.css has the sources). A privileged about page
++ * (about:fenixhome, registered by boot.sys.mjs and set as the new tab URL),
++ * so it reads Places and the browser window directly.
++ */
++const { PlacesUtils } = ChromeUtils.importESModule("resource://gre/modules/PlacesUtils.sys.mjs");
++const { PrivateBrowsingUtils } = ChromeUtils.importESModule("resource://gre/modules/PrivateBrowsingUtils.sys.mjs");
++
++const SHORTCUT_COLUMNS = 4;
++const SHORTCUT_ROWS = 2; // collapsed (TOP_SITES_COLLAPSED_ROWS)
++const BOOKMARKS = 8;
++const VISITS = 9; // 3 per column
++const topWin = () => window.browsingContext?.topChromeWindow;
++
++const el = (tag, props = {}, ...kids) => {
++    const e = document.createElement(tag);
++    for (const [k, v] of Object.entries(props)) {
++        if (k === "class") e.className = v;
++        else if (k === "text") e.textContent = v;
++        else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
++        else e.setAttribute(k, v);
++    }
++    e.append(...kids);
++    return e;
++};
++const icon = (url) => "page-icon:" + url;
++const host = (url) => { try { return new URL(url).host.replace(/^www\./, ""); } catch (e) { return url; } };
++// URLStringUtils.toLosslessDisplayUrl: no scheme, no www, no trailing slash.
++const display = (url) => url.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "");
++
++const open = (url) => { window.location.href = url; };
++
++async function query(sql, params = {}) {
++    const db = await PlacesUtils.promiseDBConnection();
++    return db.executeCached(sql, params);
++}
++
++async function topSites() {
++    const rows = await query(
++        `SELECT url, title FROM moz_places
++          WHERE hidden = 0 AND frecency > 0 AND visit_count > 0
++            AND substr(url, 1, 4) = 'http'
++          ORDER BY frecency DESC LIMIT 40`);
++    const seen = new Set();
++    const out = [];
++    let pinned = [];
++    try {
++        const { NewTabUtils } = ChromeUtils.importESModule("resource://gre/modules/NewTabUtils.sys.mjs");
++        pinned = (NewTabUtils.pinnedLinks.links || []).filter(Boolean);
++    } catch (e) {}
++    for (const p of pinned) {
++        seen.add(host(p.url));
++        out.push({ url: p.url, title: p.title || host(p.url), pinned: true });
++    }
++    for (const r of rows) {
++        const url = r.getResultByName("url");
++        const h = host(url);
++        if (seen.has(h)) continue;
++        seen.add(h);
++        out.push({ url, title: r.getResultByName("title") || h, pinned: false });
++    }
++    return out;
++}
++
++function renderShortcuts(sites) {
++    const grid = document.getElementById("shortcuts-grid");
++    const max = SHORTCUT_COLUMNS * SHORTCUT_ROWS;
++    for (const s of sites.slice(0, max)) {
++        grid.append(el("a", { class: "shortcut" + (s.pinned ? " pinned" : ""), href: s.url },
++            el("div", { class: "favicon-card" }, el("img", { src: icon(s.url), alt: "" })),
++            el("div", { class: "title", text: s.title })));
++    }
++    if (sites.length < max) {
++        const add = el("a", { class: "shortcut add", href: "#", onclick: async (e) => {
++            e.preventDefault();
++            const typed = window.prompt("Address", "https://");
++            if (!typed) return;
++            try {
++                const url = new URL(typed).href;
++                const { NewTabUtils } = ChromeUtils.importESModule("resource://gre/modules/NewTabUtils.sys.mjs");
++                NewTabUtils.pinnedLinks.pin({ url, title: host(url) }, Math.min(sites.length, max - 1));
++                location.reload();
++            } catch (err) {}
++        } },
++            el("div", { class: "favicon-card" }),
++            el("div", { class: "title", "data-l10n-id": "fenixhome-add-shortcut" }));
++        grid.append(add);
++    }
++    document.getElementById("shortcuts").hidden = !grid.childElementCount;
++}
++
++function renderRecentTabs() {
++    const win = topWin();
++    if (!win?.gBrowser) return;
++    const gB = win.gBrowser;
++    const own = gB.getTabForBrowser?.(window.browsingContext.top.embedderElement);
++    const tabs = [...gB.tabs]
++        .filter(t => t !== own && !t.closing && t.linkedBrowser?.currentURI?.spec &&
++                     /^https?:/.test(t.linkedBrowser.currentURI.spec) &&
++                     PrivateBrowsingUtils.isBrowserPrivate(t.linkedBrowser) === PrivateBrowsingUtils.isContentWindowPrivate(window))
++        .sort((a, b) => b.lastAccessed - a.lastAccessed)
++        .slice(0, 1);
++    const list = document.getElementById("recent-tabs-list");
++    for (const t of tabs) {
++        const url = t.linkedBrowser.currentURI.spec;
++        list.append(el("a", { class: "recent-tab", href: "#", onclick: (e) => { e.preventDefault(); gB.selectedTab = t; } },
++            el("div", { class: "thumb" }, el("img", { src: icon(url), alt: "" })),
++            el("div", { class: "text" },
++                el("div", { class: "name", text: t.label || display(url) }),
++                el("div", { class: "url-row" }, el("img", { src: icon(url), alt: "" }), el("div", { class: "url", text: display(url) })))));
++    }
++    document.getElementById("recent-tabs").hidden = !tabs.length;
++}
++
++async function recentBookmarks() {
++    return (await PlacesUtils.bookmarks.getRecent(BOOKMARKS * 2))
++        .filter(b => b.url && /^https?:/.test(b.url.href)).slice(0, BOOKMARKS);
++}
++
++function renderBookmarks(items) {
++    const row = document.getElementById("bookmarks-row");
++    for (const b of items) {
++        row.append(el("a", { class: "bookmark card", href: b.url.href },
++            el("div", { class: "image" }, el("img", { src: icon(b.url.href), alt: "" })),
++            el("div", { class: "name", text: b.title || display(b.url.href) })));
++    }
++    document.getElementById("bookmarks").hidden = !items.length;
++    document.getElementById("bookmarks-all").addEventListener("click", () => topWin()?.PlacesCommandHook?.showPlacesOrganizer?.("UnfiledBookmarks"));
++}
++
++async function recentVisits() {
++    // The newest visits by the visit date index, deduplicated here: grouping
++    // by page first reads the whole history on every new tab.
++    const rows = await query(
++        `SELECT p.url AS url, p.title AS title
++           FROM moz_historyvisits v JOIN moz_places p ON p.id = v.place_id
++          WHERE p.hidden = 0 AND substr(p.url, 1, 4) = 'http'
++          ORDER BY v.visit_date DESC LIMIT 200`);
++    const seen = new Set();
++    const items = [];
++    for (const r of rows) {
++        const url = r.getResultByName("url");
++        if (seen.has(url)) continue;
++        seen.add(url);
++        items.push({ url, title: r.getResultByName("title") || display(url) });
++        if (items.length === VISITS) break;
++    }
++    return items;
++}
++
++function renderVisits(items) {
++    const card = document.getElementById("recent-visits-card");
++    items.forEach((v, i) => {
++        const last = (i + 1) % 3 === 0 || i === items.length - 1;
++        card.append(el("a", { class: "visit" + (last ? "" : " divider"), href: v.url },
++            el("img", { src: icon(v.url), alt: "" }),
++            el("div", { class: "label", text: v.title })));
++    });
++    document.getElementById("recent-visits-wrap").classList.toggle("multi", items.length > 3);
++    document.getElementById("recent-visits").hidden = !items.length;
++    document.getElementById("history-all").addEventListener("click", () => topWin()?.PlacesCommandHook?.showPlacesOrganizer?.("History"));
++}
++
++window.addEventListener("DOMContentLoaded", async () => {
++    const isPrivate = PrivateBrowsingUtils.isContentWindowPrivate(window);
++    document.documentElement.classList.toggle("private", isPrivate);
++    document.body.classList.toggle("is-private", isPrivate);
++    document.getElementById("normal").hidden = isPrivate;
++    document.getElementById("private").hidden = !isPrivate;
++    // The toggle opens a window in the other mode, as desktop has no per-tab mode.
++    document.getElementById("private-toggle").addEventListener("click", () => {
++        topWin()?.OpenBrowserWindow({ private: !isPrivate });
++    });
++    if (isPrivate) return;
++    try {
++        // All queries first, then the whole page in one go: one layout and
++        // paint instead of one per section, and nothing moves around.
++        const [sites, bookmarks, visits] = await Promise.all([topSites(), recentBookmarks(), recentVisits()]);
++        renderShortcuts(sites);
++        renderRecentTabs();
++        renderBookmarks(bookmarks);
++        renderVisits(visits);
++    } catch (e) {
++        console.error("Fenix home failed:", e);
++    }
++});
+diff --git a/src/modules/fenixhome/index.html b/src/modules/fenixhome/index.html
+new file mode 100644
+index 0000000..eece54e
+--- /dev/null
++++ b/src/modules/fenixhome/index.html
+@@ -0,0 +1,65 @@
++<!doctype html>
++<!--
++# Copyright 2026 Noa Himesaka
++# SPDX-License-Identifier: MPL-2.0
++-->
++<html lang="en-US">
++<head>
++    <meta charset="utf-8">
++    <title data-l10n-id="fenixhome-title">New tab</title>
++    <meta http-equiv="Content-Security-Policy"
++          content="default-src chrome:;
++                   img-src chrome: moz-icon: page-icon: https: blob: data:;
++                   script-src resource: chrome:;
++                   style-src chrome: data:;
++                   object-src 'none'">
++    <meta name="viewport" content="width=device-width, initial-scale=1">
++    <meta name="color-scheme" content="light dark">
++    <link rel="stylesheet" href="chrome://mobileconfigfirefox/content/fenixhome/home.css">
++    <link rel="localization" href="browser/mobileconfig/fenix.ftl">
++    <script src="chrome://mobileconfigfirefox/content/fenixhome/home.js"></script>
++</head>
++<body>
++    <header>
++        <button id="stories" class="icon-button" hidden data-l10n-id="fenixhome-stories"></button>
++        <span class="spacer"></span>
++        <button id="private-toggle" class="icon-button private-button" data-l10n-id="fenixhome-private-browsing"></button>
++    </header>
++    <div id="wordmark" class="wordmark">
++        <img class="logo" src="chrome://branding/content/about-logo.svg" alt="">
++        <img class="text" src="chrome://branding/content/firefox-wordmark.svg" alt="Firefox">
++    </div>
++
++    <main id="normal">
++        <section id="shortcuts" hidden>
++            <div class="section-header"><h2 data-l10n-id="fenixhome-shortcuts"></h2></div>
++            <div id="shortcuts-grid" class="shortcuts-grid"></div>
++        </section>
++        <section id="recent-tabs" hidden>
++            <div class="section-header"><h2 data-l10n-id="fenixhome-continue"></h2></div>
++            <div id="recent-tabs-list" class="recent-tabs-list"></div>
++        </section>
++        <section id="bookmarks" hidden>
++            <div class="section-header">
++                <h2 data-l10n-id="fenixhome-bookmarks"></h2>
++                <button id="bookmarks-all" class="text-button" data-l10n-id="fenixhome-show-all"></button>
++            </div>
++            <div id="bookmarks-row" class="bookmarks-row"></div>
++        </section>
++        <section id="recent-visits" hidden>
++            <div class="section-header">
++                <h2 data-l10n-id="fenixhome-recently-visited"></h2>
++                <button id="history-all" class="text-button" data-l10n-id="fenixhome-show-all"></button>
++            </div>
++            <div id="recent-visits-wrap" class="recent-visits-wrap"><div id="recent-visits-card" class="card recent-visits-card"></div></div>
++        </section>
++    </main>
++
++    <main id="private" hidden>
++        <img class="private-circle" src="chrome://browser/skin/privatebrowsing/favicon.svg" alt="">
++        <h1 data-l10n-id="fenixhome-private-title"></h1>
++        <p data-l10n-id="fenixhome-private-description"></p>
++        <a id="private-learn-more" href="https://support.mozilla.org/kb/private-browsing-use-firefox-without-history" data-l10n-id="fenixhome-private-link"></a>
++    </main>
++</body>
++</html>
+diff --git a/src/policies.json b/src/policies.json
+index f90cc8b..cb1cf7a 100644
+--- a/src/policies.json
++++ b/src/policies.json
+@@ -9,7 +9,7 @@
+         "OverridePostUpdatePage": "",
+ 
+         "Homepage": {
+-            "URL": "about:home",
++            "URL": "about:fenixhome",
+             "Locked": false,
+             "StartPage": "homepage"
+         },
+diff --git a/src/themes/release/chrome/urlbar.css b/src/themes/release/chrome/urlbar.css
+index 4975274..a1897d8 100644
+--- a/src/themes/release/chrome/urlbar.css
++++ b/src/themes/release/chrome/urlbar.css
+@@ -43,31 +43,6 @@
+         }
+     }
+ 
+-    /* Show the forward button if the back button is disabled */
+-    #back-button[disabled] ~ #forward-button {
+-        display: flex !important;
+-    }
+-
+-    #back-button[disabled] {
+-        display: none !important;
+-    }
+-
+-    #urlbar {
+-        padding: 0px 5px;
+-    }
+-
+-    /* Smaller font: show more of the URL */
+-    #urlbar-input {
+-        font-size: 9pt !important;
+-        padding: 0px 4px !important;
+-        /* Fade rightmost part with a gradient so it's clear that the URL is truncated */
+-        mask-image: linear-gradient(to right, black 90%, transparent 100%);
+-    }
+-
+-    #urlbar[focused] #urlbar-input {
+-        mask-image: none;
+-    }
+-
+     #identity-box {
+         margin: 0 !important;
+     }
+@@ -97,29 +72,8 @@
+     }
+ 
+ 
+-    /* Fixing invisible URL bar on FF 133-156
+-     * Making the active URL bar wider for better text input and
+-     * a wider popout */
+-    #urlbar[breakout][breakout-extend] {
+-        left: 11vw !important; /* should be 10, but 10 looks off-center */
+-        width: 80vw !important;
+-        bottom: 0 !important;
+-        z-index: 5 !important;
+-    }
+-
+-    @media not (-moz-pref("mcf.toolbar.positionOnTop")) {
+-        #urlbar[breakout][breakout-extend] {
+-            top: 0 !important;
+-            align-content: flex-end !important;
+-        }
+-    }
+-
+-    @media -moz-pref("mcf.toolbar.positionOnTop") {
+-        #urlbar[breakout][breakout-extend] {
+-            top: calc(1.1 * --urlbar-container-height) !important;
+-            align-content: flex-start !important;
+-        }
+-    }
++    /* FF <= 156: the focused urlbar is a breakout popover; toolbar.css
++     * lays it out as the edit toolbar over the nav-bar. */
+ 
+     /* Label of "identity icons", e.g. firefox specific pages look weird
+      * when ellipsed, e.g. "F..x" instead of "Firefox". So just hide this
+@@ -139,7 +93,7 @@
+      * being below the urlbar. */
+     .urlbarView {
+         position: fixed !important;
+-        inset: 84px 0px 0px 0px;
++        inset: var(--mcf-toolbar-height, 84px) 0px 0px 0px;
+         width: 100% !important;
+         background: var(--arrowpanel-background);
+         margin: 0px !important;
+@@ -152,69 +106,11 @@
+ 
+     @media not (-moz-pref("mcf.toolbar.positionOnTop")) {
+         .urlbarView {
+-            inset: 0px 0px 84px 0px;
++            inset: 0px 0px var(--mcf-toolbar-height, 84px) 0px;
+         }
+     }
+ 
+-    /* FF 157+: the results are a popover now */
+-    .urlbarView:popover-open {
+-        margin: var(--urlbarView-margin-block) var(--urlbarView-margin-inline) !important;
+-        width: auto !important;
+-        overflow: clip !important;
+-    }
+-
+-    /* Firefox sizes the input's half of the surface as if #urlbar had no
+-     * padding; take the 5px from the #urlbar rule above back out. */
+-    #urlbar[popover-open] > .urlbar-background {
+-        inset-inline: calc(5px - var(--urlbar-background-overhang-open)
+-            - var(--urlbar-input-growth-open-inline)) !important;
+-    }
+-
+-    /* Toolbar at the bottom: open above the input, surface upside down. */
+-    @media not (-moz-pref("mcf.toolbar.positionOnTop")) {
+-        .urlbarView:popover-open {
+-            position-area: block-start center !important;
+-        }
+-        #urlbar[popover-open] > .urlbar-background {
+-            inset-block: calc(-1 * var(--urlbar-joint-background-overlap))
+-                calc(-1 * (var(--urlbar-background-overhang-open) + var(--urlbar-input-growth-open-block))) !important;
+-            border-radius: 0 0 var(--urlbar-background-border-top-radius-open)
+-                var(--urlbar-background-border-top-radius-open) !important;
+-            clip-path: inset(calc(var(--urlbar-joint-background-overlap) - var(--urlbar-input-growth-open-block))
+-                calc(-1 * var(--urlbar-joint-background-shadow-margin))
+-                calc(-1 * var(--urlbar-joint-background-shadow-margin))) !important;
+-        }
+-
+-        #urlbar > .urlbarView > .urlbarView-background {
+-            inset-block: calc(-1 * var(--urlbarView-joint-background-outset-block))
+-                calc(-1 * var(--urlbarView-margin-block) - var(--urlbar-joint-background-overlap)) !important;
+-            border-radius: var(--urlbar-background-border-radius)
+-                var(--urlbar-background-border-radius) 0 0 !important;
+-            clip-path: inset(calc(-1 * var(--urlbar-joint-background-shadow-margin))
+-                calc(-1 * var(--urlbar-joint-background-shadow-margin))
+-                var(--urlbar-joint-background-overlap)) !important;
+-        }
+-    }
+-
+-    /* FF 157+: widen the focused urlbar by hiding the rest of the nav-bar,
+-     * except back (or forward in its place) and the app menu. */
+-    #nav-bar:has(#urlbar[focused]:not([breakout])) :is(
+-        #nav-bar-customization-target > :not(#urlbar-container, #back-button,
+-            #back-button[disabled] ~ #forward-button),
+-        #nav-bar-customization-target ~ :not(#PanelUI-button)) {
+-        display: none !important;
+-    }
+-
+-    /* Fix suggestions width for vertical tabs (FF <= 156) */
+-    @media -moz-pref("sidebar.verticalTabs") {
+-        #urlbar[breakout] > .urlbarView {
+-            left: 10vw !important;
+-        }
+-
+-        #urlbar[breakout] .urlbarView-body-inner {
+-            width: 80vw !important;
+-        }
+-    }
++    /* FF 157+: the results are a popover; toolbar.css lays it out. */
+ 
+     /* Bookmarks toolbar. Firefox shows it for some reason when opening a
+      * private browsing window, even if it is not enabled in the normal
+@@ -235,7 +131,7 @@
+ 
+     vbox.urlbarView {
+         position: fixed !important;
+-        bottom: 82px !important;
++        bottom: var(--mcf-toolbar-height, 82px) !important;
+         box-shadow: rgba(0, 0, 0, 0.05) 0px -8px 8px 3px !important;
+         left: 0 !important;
+         right: 0 !important;
+diff --git a/src/themes/shared/chrome/appmenu.css b/src/themes/shared/chrome/appmenu.css
+index 3298799..354801e 100644
+--- a/src/themes/shared/chrome/appmenu.css
++++ b/src/themes/shared/chrome/appmenu.css
+@@ -98,6 +98,30 @@
+         display: none !important;
+     }
+ 
++    /* Same row metrics on every Firefox: from 158 (Nova) the rows have 6dp
++     * padding, a 4dp margin and 16dp corners, before they had 8dp, 8dp and
++     * 4dp. The sign-in button of the account row is an outlined pill there. */
++    #appMenu-mainView :is(#mcf-appmenu-bookmark, #appMenu-find-button2,
++                          #appMenu-translate-button, #appMenu-unified-extensions-button,
++                          #appMenu-settings-button, #appMenu-fxa-status2) {
++        margin-inline: 4px !important;
++        border-radius: 16px !important;
++    }
++    #appMenu-mainView :is(#mcf-appmenu-bookmark, #appMenu-find-button2,
++                          #appMenu-translate-button, #appMenu-unified-extensions-button,
++                          #appMenu-settings-button) {
++        padding-block: 6px !important;
++    }
++    #appMenu-mainView #appMenu-fxa-label2 {
++        box-sizing: border-box;
++        min-height: 32px;
++        margin-inline-start: 14.67px;
++        padding: 3.67px 12px !important;
++        border: 1.5px solid currentColor !important;
++        border-radius: 16px !important;
++        background: transparent !important;
++    }
++
+     /* Leading icons, like Fenix's menu rows. */
+     #appMenu-mainView :is(#mcf-appmenu-bookmark, #appMenu-find-button2,
+                           #appMenu-translate-button, #appMenu-unified-extensions-button,
+diff --git a/src/themes/shared/chrome/dialogs.css b/src/themes/shared/chrome/dialogs.css
+index 45f871d..0cf2f14 100644
+--- a/src/themes/shared/chrome/dialogs.css
++++ b/src/themes/shared/chrome/dialogs.css
+@@ -28,6 +28,20 @@
+     &[gravity="bottom"] {
+         align-items: flex-end;
+     }
++
++    /* popover="manual": undo the user agent's box for popovers. */
++    &:popover-open {
++        width: auto;
++        height: auto;
++        max-width: none;
++        max-height: none;
++        margin: 0;
++        padding: 0;
++        border: 0;
++        overflow: visible;
++        background: transparent;
++        color: inherit;
++    }
+ }
+ 
+ .mcf-fx-scrim {
+diff --git a/src/themes/shared/chrome/popups.css b/src/themes/shared/chrome/popups.css
+index 7ff1772..539cd02 100644
+--- a/src/themes/shared/chrome/popups.css
++++ b/src/themes/shared/chrome/popups.css
+@@ -21,8 +21,8 @@
+         min-width: 100vw !important;
+         width: 100vw !important;
+         max-width: 100vw !important;
+-        max-height: calc(100vh - 88px) !important;
+-        min-height: calc(100vh - 88px) !important;
++        max-height: calc(100vh - var(--mcf-toolbar-height, 88px)) !important;
++        min-height: calc(100vh - var(--mcf-toolbar-height, 88px)) !important;
+     }
+ 
+     panelview {
+@@ -64,7 +64,7 @@
+      * gets the rest. The panel's content box doesn't stretch to the panel,
+      * so size the multiview itself. */
+     #customizationui-widget-panel:has(panelview[extension][visible]) {
+-        --mcf-popup-height: var(--mcf-popup-space, calc(100vh - 88px));
++        --mcf-popup-height: var(--mcf-popup-space, calc(100vh - var(--mcf-toolbar-height, 88px)));
+         min-height: var(--mcf-popup-height) !important;
+         max-height: var(--mcf-popup-height) !important;
+         align-content: stretch !important;
+diff --git a/src/themes/shared/chrome/toolbar.css b/src/themes/shared/chrome/toolbar.css
+new file mode 100644
+index 0000000..1087dd7
+--- /dev/null
++++ b/src/themes/shared/chrome/toolbar.css
+@@ -0,0 +1,615 @@
++/* Copyright 2026 Noa Himesaka
++ * SPDX-License-Identifier: MPL-2.0 */
++
++/* The browser toolbar of Firefox for Android (Fenix), in place of desktop's
++ * tab strip row plus navigation bar row. FenixToolbar.sys.mjs adds the "new
++ * tab" and tab counter buttons and puts the extension buttons in the menu.
++ *
++ * Sources (mozilla-firefox/firefox, mobile/android):
++ * - fenix/.../components/toolbar/BrowserToolbarMiddleware.kt: on a phone
++ *   (narrower than 600dp, expanded toolbar off) the toolbar is one row:
++ *   [site info shield | URL | reader mode when available] inside the address
++ *   bar, then the browser actions: the "new tab" shortcut
++ *   (toolbarSimpleShortcutKey defaults to NEW_TAB), the tab counter and the
++ *   menu (buildEndBrowserActions). Back, forward and refresh only show from
++ *   600dp wide (buildStartBrowserActions); the navigation bar row only with
++ *   the expanded toolbar, whose default-expanded-toolbar is false in
++ *   nimbus.fml.yaml. No tab strip on phones (Settings.isTabStripEnabled).
++ * - android-components/.../compose/browser-toolbar/ui/FullDisplayToolbar.kt:
++ *   8dp around a 48dp tall pill (CircleShape, surfaceContainerHighest),
++ *   buttons are 48dp IconButtons with 24dp icons, a 1dp divider and the
++ *   progress bar on the edge facing the page.
++ * - .../ui/Origin.kt: 15sp URL, the registrable domain emphasised, 66dp fade.
++ * - android-components/ui/tabcounter TabCounter.kt: the 24dp mozac_ic_tab
++ *   icon with the count in 12sp (two digits 9.6sp) bold, an infinity icon
++ *   above 99 tabs, a mask badge in private mode.
++ * - .../theme/AcornColors.kt (light/dark colour schemes) with NovaColors.kt.
++ * dp are CSS px here, like in the other Fenix parity files.
++ *
++ * Wide windows keep the desktop toolbar. */
++
++:root {
++    /* Acorn (Nova) colours: light, dark. */
++    --mcf-fx-surface: light-dark(#f7f6fb, #1d1b1f);
++    --mcf-fx-pill: light-dark(#e3e2e7, #312f33);
++    --mcf-fx-on-surface: light-dark(#180e30, #f2f0f8);
++    --mcf-fx-on-surface-variant: light-dark(rgb(24 14 48 / 70%), rgb(242 240 248 / 70%));
++    --mcf-fx-divider: light-dark(#e3e2e7, #3f3e42);
++    --mcf-fx-pressed: color-mix(in srgb, var(--mcf-fx-on-surface) 12%, transparent);
++
++    /* Icons: mozac_ic_*_24 vector drawables as SVG (fill from the context). */
++    --mcf-fx-icon-plus: url("data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2024%2024%22%3E%3Cpath%20fill=%22context-fill%22%20d=%22M12.5,5C12.983,5%2013.375,5.392%2013.375,5.875V11.625H19.125C19.608,11.625%2020,12.017%2020,12.5C20,12.983%2019.608,13.375%2019.125,13.375H13.375V19.125C13.375,19.608%2012.983,20%2012.5,20C12.017,20%2011.625,19.608%2011.625,19.125V13.375H5.875C5.392,13.375%205,12.983%205,12.5C5,12.017%205.392,11.625%205.875,11.625H11.625V5.875C11.625,5.392%2012.017,5%2012.5,5Z%22/%3E%3C/svg%3E");
++    --mcf-fx-icon-ellipsis-vertical: url("data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2024%2024%22%3E%3Cpath%20fill=%22context-fill%22%20d=%22M11%2017.5V20h2.5v-2.5H11zm0-6.75v2.5h2.5v-2.5H11zM11%204v2.5h2.5V4H11z%22/%3E%3C/svg%3E");
++    --mcf-fx-icon-tab: url("data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2024%2024%22%3E%3Cpath%20fill=%22context-fill%22%20d=%22M1.005,7.649C1.005,6.1%202.141,4.762%203.704,4.553H3.705C6.159,4.228%208.947,4.005%2012.01,4.005C14.434,4.005%2017.223,4.147%2020.285,4.553H20.286C21.841,4.761%2023.005,6.092%2023.005,7.66V16.36C23,17.906%2021.865,19.238%2020.306,19.447H20.305C17.851,19.772%2015.062,19.995%2012,19.995C9.576,19.995%206.787,19.853%203.725,19.447H3.724C2.169,19.239%201.005,17.908%201.005,16.34V7.649ZM2.755,16.34C2.755,17.031%203.271,17.621%203.956,17.713H3.955C6.933,18.107%209.644,18.245%2012,18.245C14.977,18.245%2017.688,18.028%2020.074,17.713L20.198,17.69C20.812,17.549%2021.255,16.997%2021.255,16.35V7.66C21.255,6.969%2020.739,6.379%2020.054,6.287V6.286C17.076,5.892%2014.365,5.755%2012.01,5.755C9.032,5.755%206.321,5.971%203.935,6.286L3.936,6.287C3.259,6.378%202.755,6.959%202.755,7.649V16.34Z%22/%3E%3C/svg%3E");
++    --mcf-fx-icon-shield-checkmark: url("data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2024%2024%22%3E%3Cpath%20fill=%22context-fill%22%20d=%22M10.043,3.593C11.223,2.805%2012.75,2.797%2013.931,3.607C14.431,3.951%2014.974,4.298%2015.561,4.64L16.163,4.98L16.806,5.319C17.443,5.645%2018.06,5.928%2018.648,6.173C20.143,6.796%2020.969,8.38%2020.676,9.953L20.109,12.999C19.868,14.302%2019.424,15.613%2018.669,16.759L18.667,16.763C17.367,18.735%2015.621,20.408%2013.722,21.533C12.65,22.169%2011.314,22.148%2010.257,21.52H10.256C8.368,20.396%206.633,18.73%205.338,16.77C4.579,15.618%204.136,14.302%203.894,12.992L3.893,12.991L3.324,9.895V9.894C3.038,8.339%203.841,6.736%205.34,6.111C5.98,5.845%206.649,5.537%207.338,5.182H7.339C8.344,4.666%209.246,4.125%2010.043,3.593ZM12.941,5.05C12.362,4.653%2011.612,4.651%2011.015,5.049H11.014C10.378,5.473%209.679,5.903%208.919,6.322L8.139,6.738C7.59,7.021%207.052,7.276%206.53,7.506L6.013,7.727C5.313,8.018%204.9,8.791%205.044,9.577L5.615,12.674L5.702,13.102C5.924,14.09%206.278,15.014%206.799,15.806L7.02,16.131C8.148,17.74%209.604,19.095%2011.152,20.016H11.151C11.672,20.325%2012.322,20.329%2012.83,20.028C14.49,19.044%2016.043,17.561%2017.205,15.8L17.207,15.797C17.801,14.895%2018.177,13.822%2018.388,12.682L18.389,12.681L18.956,9.633L18.976,9.486C19.048,8.758%2018.645,8.068%2017.975,7.789L17.974,7.788C17.137,7.439%2016.245,7.019%2015.323,6.515V6.514C14.446,6.034%2013.652,5.538%2012.941,5.05Z%22/%3E%3Cpath%20fill=%22context-fill%22%20d=%22M11.203,15.362C10.769,15.362%2010.361,15.193%2010.054,14.886L8.257,13.089C7.915,12.748%207.914,12.193%208.257,11.852C8.6,11.511%209.154,11.51%209.494,11.852L11.204,13.561L14.507,10.257C14.849,9.915%2015.403,9.915%2015.745,10.257C16.086,10.599%2016.087,11.153%2015.745,11.494L12.353,14.886C12.045,15.193%2011.637,15.362%2011.204,15.362H11.203Z%22/%3E%3C/svg%3E");
++    --mcf-fx-icon-shield-slash: url("data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2024%2024%22%3E%3Cpath%20fill=%22context-fill%22%20d=%22M8.025,6.79C7.369,7.123%206.695,7.44%206.013,7.725C5.308,8.019%204.899,8.798%205.043,9.576L5.613,12.673C5.84,13.903%206.238,14.957%206.798,15.805C7.934,17.526%209.48,19.021%2011.15,20.015C11.674,20.326%2012.315,20.33%2012.829,20.027C14.477,19.05%2015.998,17.584%2017.132,15.896L18.379,17.144C17.124,18.926%2015.494,20.479%2013.72,21.531C13.192,21.843%2012.599,22%2012.004,22C11.4,22%2010.795,21.839%2010.254,21.517C8.361,20.391%206.615,18.704%205.336,16.767C4.648,15.722%204.162,14.451%203.892,12.989L3.322,9.892C3.03,8.308%203.879,6.717%205.339,6.109C5.803,5.916%206.255,5.692%206.708,5.473L8.025,6.79Z%22/%3E%3Cpath%20fill=%22context-fill%22%20d=%22M10.044,3.592C11.237,2.797%2012.763,2.803%2013.932,3.607C14.655,4.103%2015.406,4.564%2016.163,4.978C16.974,5.422%2017.81,5.823%2018.647,6.172C20.116,6.784%2020.969,8.373%2020.676,9.952L20.11,13C19.916,14.047%2019.605,14.994%2019.191,15.834L17.865,14.509C18.088,13.952%2018.266,13.345%2018.389,12.682L18.955,9.633C19.099,8.86%2018.687,8.085%2017.975,7.788C17.081,7.416%2016.189,6.987%2015.324,6.514C14.515,6.072%2013.713,5.58%2012.941,5.05C12.653,4.852%2012.317,4.752%2011.983,4.752C11.648,4.752%2011.31,4.85%2011.014,5.048C10.491,5.397%209.949,5.726%209.4,6.043L8.113,4.756C8.772,4.39%209.422,4.006%2010.044,3.592Z%22/%3E%3Cpath%20fill=%22context-fill%22%20d=%22M2.256,2.256C2.598,1.914%203.152,1.914%203.494,2.256L21.744,20.506C22.086,20.847%2022.086,21.402%2021.744,21.744C21.403,22.086%2020.848,22.086%2020.506,21.744L2.256,3.494C1.914,3.152%201.914,2.598%202.256,2.256Z%22/%3E%3C/svg%3E");
++    --mcf-fx-icon-shield-cross: url("data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2024%2024%22%3E%3Cpath%20fill=%22context-fill%22%20d=%22M10.043,3.093C11.223,2.305%2012.75,2.297%2013.931,3.107C14.431,3.451%2014.974,3.798%2015.561,4.14L16.163,4.48L16.806,4.819C17.443,5.145%2018.06,5.428%2018.648,5.673C20.143,6.296%2020.969,7.88%2020.676,9.453L20.109,12.499C19.868,13.802%2019.424,15.113%2018.669,16.259L18.667,16.263C17.367,18.235%2015.621,19.908%2013.722,21.033C12.65,21.669%2011.314,21.648%2010.257,21.02H10.256C8.368,19.896%206.633,18.23%205.338,16.27C4.579,15.118%204.136,13.802%203.894,12.492L3.893,12.491L3.324,9.395V9.394C3.038,7.839%203.841,6.236%205.34,5.611C5.98,5.345%206.649,5.037%207.338,4.682H7.339C8.344,4.166%209.246,3.625%2010.043,3.093ZM12.941,4.55C12.362,4.153%2011.612,4.151%2011.015,4.549H11.014C10.378,4.973%209.679,5.403%208.919,5.822L8.139,6.238C7.59,6.521%207.052,6.776%206.53,7.006L6.013,7.227C5.313,7.518%204.9,8.291%205.044,9.077L5.615,12.174L5.702,12.602C5.924,13.59%206.278,14.514%206.799,15.306L7.02,15.631C8.148,17.24%209.604,18.595%2011.152,19.516H11.151C11.672,19.825%2012.322,19.829%2012.83,19.528C14.49,18.544%2016.043,17.061%2017.205,15.3L17.207,15.297C17.801,14.395%2018.177,13.322%2018.388,12.182L18.389,12.181L18.956,9.133L18.976,8.986C19.048,8.258%2018.645,7.568%2017.975,7.289L17.974,7.288C17.137,6.939%2016.245,6.519%2015.323,6.015V6.014C14.446,5.534%2013.652,5.038%2012.941,4.55Z%22/%3E%3Cpath%20fill=%22context-fill%22%20d=%22M13.505,9.255C13.847,8.914%2014.402,8.914%2014.744,9.255C15.085,9.597%2015.085,10.152%2014.744,10.494L13.238,12L14.744,13.505C15.085,13.847%2015.085,14.402%2014.744,14.744C14.402,15.085%2013.847,15.085%2013.505,14.744L12,13.238L10.494,14.744C10.152,15.085%209.597,15.085%209.255,14.744C8.914,14.402%208.914,13.847%209.255,13.505L10.761,12L9.255,10.494C8.914,10.152%208.914,9.597%209.255,9.255C9.597,8.914%2010.152,8.914%2010.494,9.255L12,10.761L13.505,9.255Z%22/%3E%3C/svg%3E");
++    --mcf-fx-icon-globe: url("data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2024%2024%22%3E%3Cpath%20fill=%22context-fill%22%20d=%22M12,2C17.523,2%2022,6.477%2022,12C22,17.523%2017.523,22%2012,22C6.477,22%202,17.523%202,12C2,6.477%206.477,2%2012,2ZM7.063,12.002C6.029,12.16%204.93,12.38%203.78,12.68C4.064,16.154%206.498,19.016%209.75,19.937C8.066,17.737%207.064,14.986%207.063,12.002ZM16.937,12.002C16.936,14.987%2015.933,17.737%2014.248,19.937C17.501,19.017%2019.935,16.155%2020.219,12.681C19.264,12.432%2018.164,12.19%2016.937,12.002ZM12,11.625C11.073,11.625%2010.001,11.665%208.815,11.781C8.814,11.854%208.813,11.928%208.813,12.001C8.814,15.059%2010.028,17.83%2012,19.866C13.972,17.829%2015.187,15.058%2015.188,12C15.188,11.927%2015.185,11.854%2015.184,11.781C14.186,11.683%2013.122,11.625%2012,11.625ZM14.248,4.063C15.592,5.816%2016.502,7.92%2016.815,10.215C18.056,10.391%2019.179,10.621%2020.17,10.863C19.719,7.596%2017.358,4.941%2014.248,4.063ZM9.751,4.063C6.642,4.942%204.28,7.595%203.829,10.861C5.005,10.573%206.129,10.363%207.184,10.214C7.497,7.92%208.408,5.816%209.751,4.063ZM11.999,4.133C10.466,5.717%209.39,7.745%208.988,10.007C10.102,9.909%2011.113,9.875%2012,9.875C13.055,9.875%2014.06,9.924%2015.011,10.008C14.609,7.745%2013.533,5.716%2011.999,4.133Z%22/%3E%3C/svg%3E");
++    --mcf-fx-icon-page-portrait: url("data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2024%2024%22%3E%3Cpath%20fill=%22context-fill%22%20d=%22M12.5,2.005H12.734C13.352,2.005%2013.946,2.25%2014.384,2.687L18.812,7.102C19.251,7.541%2019.5,8.138%2019.5,8.76V18.48C19.5,20.04%2018.393,21.354%2016.87,21.604C15.265,21.867%2013.626,22.001%2012,22.001C10.357,22.001%208.703,21.865%207.087,21.597C5.588,21.35%204.5,20.04%204.5,18.483V5.462C4.5,3.92%205.589,2.624%207.089,2.381C8.868,2.09%2010.685,1.975%2012.5,2.005ZM12.5,3.754C10.78,3.725%209.058,3.832%207.371,4.108C6.731,4.213%206.25,4.793%206.25,5.461V18.483C6.25,19.167%206.732,19.763%207.372,19.868C10.4,20.371%2013.547,20.373%2016.587,19.876C17.261,19.765%2017.75,19.178%2017.75,18.48V8.488H13.5C12.948,8.488%2012.5,8.04%2012.5,7.487V3.754Z%22/%3E%3C/svg%3E");
++    --mcf-fx-icon-infinite-tabs: url("data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2024%2024%22%3E%3Cpath%20fill=%22context-fill%22%20d=%22M15%209C16.6572%209.00004%2018%2010.3428%2018%2012C18%2013.6572%2016.6572%2015%2015%2015C14.417%2015%2013.697%2014.8585%2013.0361%2014.3389C12.6305%2014.0198%2012.2663%2013.6248%2011.9854%2013.2832C11.7127%2013.6167%2011.362%2014.0037%2010.9697%2014.3193C10.313%2014.8482%209.5945%2015%209%2015C7.34279%2015%206%2013.6572%206%2012C6%2010.3428%207.34279%209%209%209C9.59297%209%2010.3104%209.14981%2010.9648%209.67871L10.9639%209.67969C11.367%2010.005%2011.7276%2010.406%2012.0039%2010.7461C12.2763%2010.41%2012.6305%2010.0132%2013.0264%209.69043L13.1494%209.59473C13.7684%209.13919%2014.4351%209.00001%2015%209ZM9%2010.5C8.17121%2010.5%207.5%2011.1712%207.5%2012C7.5%2012.8288%208.17121%2013.5%209%2013.5C9.33949%2013.5%209.7%2013.4165%2010.0293%2013.1514C10.3724%2012.8752%2010.7071%2012.4935%2010.9648%2012.1611C11.0069%2012.1069%2011.0426%2012.0521%2011.0791%2012.0029C11.0411%2011.9519%2011.0029%2011.8954%2010.959%2011.8389C10.6992%2011.505%2010.3652%2011.1222%2010.0225%2010.8457C9.69691%2010.5826%209.33903%2010.5%209%2010.5ZM15%2010.5C14.6626%2010.5%2014.3028%2010.5854%2013.9736%2010.8535C13.635%2011.1297%2013.3048%2011.5098%2013.0459%2011.8428C12.9953%2011.9078%2012.9502%2011.9714%2012.9072%2012.0293C12.9392%2012.0726%2012.9735%2012.1191%2013.0107%2012.167C13.2678%2012.4977%2013.6116%2012.882%2013.9639%2013.1592C14.2949%2013.4194%2014.6591%2013.5%2015%2013.5C15.8287%2013.5%2016.5%2012.8288%2016.5%2012C16.5%2011.1712%2015.8287%2010.5%2015%2010.5Z%22/%3E%3Cpath%20fill=%22context-fill%22%20d=%22M12%204C14.3628%204%2017.076%204.13318%2020.0566%204.51855C21.7385%204.73628%2023%206.17529%2023%207.86914V16.1338C23%2017.8126%2021.7642%2019.2609%2020.0801%2019.4785C17.6796%2019.7898%2014.9691%2020%2012%2020C9.63719%2020%206.92396%2019.8668%203.94336%2019.4814C2.2615%2019.2637%201%2017.8247%201%2016.1309V7.86621C1%206.18738%202.23575%204.73915%203.91992%204.52148C6.32038%204.21016%209.03094%204%2012%204ZM12%205.75C9.4739%205.75%207.14042%205.90659%205.0332%206.14844L4.14453%206.25684C3.3527%206.35917%202.75%207.04704%202.75%207.86621V16.1309C2.75%2016.9468%203.36019%2017.6415%204.16797%2017.7461C7.06537%2018.1207%209.70281%2018.25%2012%2018.25C14.8868%2018.25%2017.522%2018.0458%2019.8555%2017.7432L20.002%2017.7168C20.7205%2017.5539%2021.25%2016.9017%2021.25%2016.1338V7.86914C21.25%207.05324%2020.6398%206.3585%2019.832%206.25391C16.9346%205.87928%2014.2972%205.75%2012%205.75Z%22/%3E%3C/svg%3E");
++    --mcf-fx-icon-private-badge: url("data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2020%2020%22%3E%3Cpath%20fill=%22%23592acb%22%20stroke=%22%23f9f9fb%22%20stroke-width=%221%22%20d=%22M10,1.5C14.687,1.5%2018.5,5.313%2018.5,10C18.5,14.687%2014.687,18.5%2010,18.5C5.313,18.5%201.5,14.687%201.5,10C1.5,5.313%205.313,1.5%2010,1.5Z%22/%3E%3Cpath%20fill=%22%23fff%22%20d=%22M15.788,10.619C15.219,10.619%2014.929,10.207%2014.821,9.647C14.663,8.835%2014.39,8.068%2014.066,7.303C13.9,6.909%2013.595,6.005%2013.092,5.902C12.519,5.783%2012.014,6.092%2011.361,7.401C10.824,8.48%2010.462,9.233%2010.462,9.233V9.24L10.093,9.236C10.093,9.236%2010.089,9.236%2010.084,9.236C10.084,9.236%2010.061,9.236%2010.033,9.236C10.026,9.236%2010.02,9.236%2010.012,9.236C10.007,9.236%2010.001,9.236%209.996,9.236C9.99,9.236%209.984,9.236%209.979,9.236C9.971,9.236%209.964,9.236%209.958,9.236C9.93,9.236%209.908,9.236%209.908,9.236L9.898,9.238L9.53,9.242V9.234C9.53,9.234%209.167,8.48%208.63,7.403C7.979,6.092%207.472,5.785%206.899,5.904C6.396,6.007%206.091,6.913%205.925,7.305C5.601,8.07%205.328,8.835%205.171,9.649C5.062,10.209%204.774,10.619%204.204,10.621C4.058,10.621%203.96,10.772%204.011,10.907C4.133,11.233%204.507,11.44%204.819,11.56C4.679,11.597%204.26,11.512%204.241,11.722C4.226,11.894%204.664,12.068%204.782,12.124C5.884,12.654%206.898,13.606%208.202,13.438C8.768,13.364%209.182,12.965%209.646,12.717C9.865,12.6%2010.13,12.6%2010.349,12.717C10.813,12.965%2011.227,13.364%2011.793,13.438C13.097,13.606%2014.111,12.654%2015.213,12.124C15.331,12.066%2015.767,11.894%2015.754,11.722C15.737,11.514%2015.318,11.597%2015.176,11.56C15.488,11.44%2015.863,11.233%2015.984,10.907C16.035,10.772%2015.936,10.623%2015.791,10.621L15.788,10.619ZM6.551,10.898C6.535,10.722%206.916,10.587%207.055,10.565C7.878,10.429%208.969,10.75%209.234,11.602C8.478,12.292%206.922,11.817%206.551,10.9V10.898ZM10.755,11.602C11.021,10.75%2012.111,10.429%2012.935,10.565C13.073,10.587%2013.455,10.722%2013.438,10.898C13.066,11.815%2011.511,12.292%2010.755,11.6V11.602Z%22/%3E%3C/svg%3E");
++}
++
++/* Private mode: acornPrivateColorScheme (AcornColors.kt), the toolbar is
++ * tinted like the rest of the private UI. */
++:root[privatebrowsingmode="temporary"] {
++    --mcf-fx-surface: #180e30;
++    --mcf-fx-pill: #281d44;
++    --mcf-fx-on-surface: #f2f0f8;
++    --mcf-fx-on-surface-variant: rgb(242 240 248 / 70%);
++    --mcf-fx-divider: #332752;
++}
++
++/* Progress bar (FenixToolbar.sys.mjs): AnimatedProgressBar on the edge facing
++ * the page, 5dp, the accent gradient (AcornGradientScheme.kt: Violet30 to
++ * Orange30 in light, to Violet50 in dark), no track. */
++#mcf-progress {
++    display: none;
++}
++
++/* The estimate (FenixToolbar.sys.mjs): from 5 towards 90 percent, each
++ * 100 ms 6 percent closer, 90 - 85 * 0.94^(t / 100 ms): a keyframe per
++ * 500 ms, five steps each, so it moves ten times a second like before.
++ * A transform animation, so the compositor runs it and the main thread
++ * isn't involved. In steps, because the compositor only renders a frame
++ * when the value changes: a smooth bar renders and composites a frame on
++ * every vsync for as long as a page loads. */
++@keyframes mcf-progress {
++    0% { transform: scaleX(0.050); }
++    5% { transform: scaleX(0.276); }
++    10% { transform: scaleX(0.442); }
++    15% { transform: scaleX(0.564); }
++    20% { transform: scaleX(0.653); }
++    25% { transform: scaleX(0.719); }
++    30% { transform: scaleX(0.767); }
++    35% { transform: scaleX(0.803); }
++    40% { transform: scaleX(0.828); }
++    45% { transform: scaleX(0.847); }
++    50% { transform: scaleX(0.861); }
++    55% { transform: scaleX(0.872); }
++    60% { transform: scaleX(0.879); }
++    65% { transform: scaleX(0.885); }
++    70% { transform: scaleX(0.889); }
++    75% { transform: scaleX(0.892); }
++    80% { transform: scaleX(0.894); }
++    85% { transform: scaleX(0.896); }
++    90% { transform: scaleX(0.897); }
++    95% { transform: scaleX(0.898); }
++    100% { transform: scaleX(0.898); }
++}
++
++/* Not in the narrow layout: the buttons FenixToolbar.sys.mjs adds. */
++#mcf-newtab-button,
++#mcf-tabcounter-button {
++    display: none;
++}
++
++@media (max-width: 700px) {
++
++    #nav-bar {
++        position: relative;
++    }
++    #mcf-progress:not([hidden]) {
++        display: block;
++        position: absolute;
++        inset-inline: 0;
++        inset-block-start: 0;
++        height: 5px;
++        pointer-events: none;
++        z-index: 1;
++        background: linear-gradient(96deg, #b393ff 0%, light-dark(#ff8f5d, #764edd) 71%);
++        transform-origin: left;
++        animation: mcf-progress 10s steps(5, end) forwards;
++
++        &:-moz-locale-dir(rtl) {
++            transform-origin: right;
++        }
++
++        @media -moz-pref("mcf.toolbar.positionOnTop") {
++            inset-block: auto 0;
++        }
++    }
++    :root {
++        /* What the awesomebar, the find bar and the popups position
++         * against: the one toolbar. */
++        --mcf-toolbar-height: 64px;
++    }
++
++    /* One bar: the tab strip is only reachable through the tab counter. */
++    #TabsToolbar {
++        visibility: collapse !important;
++    }
++
++    #navigator-toolbox {
++        background-color: var(--mcf-fx-surface) !important;
++        border: 0 !important;
++        box-shadow: none !important;
++    }
++
++    #nav-bar {
++        --toolbar-bgcolor: var(--mcf-fx-surface);
++        --toolbar-color: var(--mcf-fx-on-surface);
++        --toolbarbutton-icon-fill: var(--mcf-fx-on-surface);
++        box-sizing: border-box !important;
++        height: var(--mcf-toolbar-height) !important;
++        min-height: var(--mcf-toolbar-height) !important;
++        margin: 0 !important;
++        padding: 0 !important;
++        border: 0 !important;
++        border-radius: 0 !important;
++        box-shadow: none !important;
++        background: var(--mcf-fx-surface) !important;
++        color: var(--mcf-fx-on-surface) !important;
++        align-items: center;
++        /* FullDisplayToolbar: the divider is on the edge facing the page. */
++        border-block-start: 1px solid var(--mcf-fx-divider) !important;
++        position: relative;
++
++        @media -moz-pref("mcf.toolbar.positionOnTop") {
++            border-block-start: 0 !important;
++            border-block-end: 1px solid var(--mcf-fx-divider) !important;
++        }
++    }
++
++    #nav-bar-customization-target {
++        flex: 1 1 0 !important;
++        min-width: 0 !important;
++        margin: 0 !important;
++        padding: 0 !important;
++        gap: 0 !important;
++    }
++
++    /* Only the address bar stays of everything desktop puts in the bar:
++     * back, forward, reload, home, downloads, extensions and their buttons,
++     * account, library, whatever else got added. The Fenix equivalents are in
++     * the menu. With vertical tabs the sidebar button is the tab counter. */
++    #nav-bar-customization-target > :not(#urlbar-container, #unified-extensions-button),
++    #nav-bar > :not(#nav-bar-customization-target, #PanelUI-button,
++                    #mcf-newtab-button, #mcf-tabcounter-button, #mcf-progress) {
++        display: none !important;
++    }
++
++    /* The extensions panel (menu > Extensions) anchors to the extensions
++     * button, so it stays in the layout, invisible, over the menu button. */
++    #unified-extensions-button {
++        position: absolute !important;
++        inset-block: 0;
++        inset-inline-end: 0;
++        width: 48px !important;
++        height: auto !important;
++        margin: 0 !important;
++        padding: 0 !important;
++        opacity: 0;
++        pointer-events: none;
++
++        /* Popups of extension buttons anchor to its icon: span the bar so
++         * they stop at its edge. */
++        > :is(.toolbarbutton-icon, .toolbarbutton-badge-stack) {
++            position: absolute;
++            inset: 0;
++            width: auto !important;
++            height: auto !important;
++            margin: 0 !important;
++            padding: 0 !important;
++        }
++    }
++
++    @media -moz-pref("sidebar.verticalTabs") {
++        #nav-bar-customization-target > #sidebar-button {
++            display: flex !important;
++        }
++    }
++
++    /* Address bar: the 48dp pill with 8dp around it (start, top, bottom;
++     * the buttons after it need no gap). */
++    #urlbar-container {
++        --urlbar-height: 48px;
++        --urlbar-min-height: 48px;
++        --urlbar-container-height: var(--mcf-toolbar-height);
++        box-sizing: border-box !important;
++        height: var(--mcf-toolbar-height) !important;
++        min-width: 0 !important;
++        margin: 0 !important;
++        padding: 8px 0 8px 8px !important;
++    }
++
++    #urlbar {
++        --urlbar-height: 48px;
++        --urlbar-min-height: 48px;
++        height: 48px !important;
++        min-height: 48px !important;
++        margin: 0 !important;
++        padding: 0 !important;
++        color: var(--mcf-fx-on-surface) !important;
++        font-size: 15px !important;
++    }
++
++    #urlbar:not([breakout-extend]) > .urlbar-background {
++        border: 0 !important;
++        border-radius: 24px !important;
++        outline: 0 !important;
++        box-shadow: none !important;
++        background: var(--mcf-fx-pill) !important;
++    }
++
++    #urlbar:not([breakout-extend]) .urlbar-input-container {
++        height: 48px !important;
++        min-height: 48px !important;
++        padding: 0 !important;
++        align-items: center;
++    }
++
++    /* Origin.kt: URL 15sp, onSurfaceVariant (the domain is emphasised by the
++     * URL formatting), fading out over its last 66dp. */
++    #urlbar-input {
++        font-size: 15px !important;
++        padding: 0 8px !important;
++        color: var(--mcf-fx-on-surface-variant) !important;
++        mask-image: none !important;
++    }
++    /* The fade is only there where the text is cut off (FadedText), and it
++     * is 66dp, not desktop's 3ch. Desktop reports the cut side in
++     * [textoverflow] ("right" is the end of an LTR URL, "left" its start). */
++    #urlbar:not([focused])[textoverflow="right"] #urlbar-input {
++        mask-image: linear-gradient(to left, transparent, black 66px) !important;
++    }
++    #urlbar:not([focused])[textoverflow="left"] #urlbar-input {
++        mask-image: linear-gradient(to right, transparent, black 66px) !important;
++    }
++    #urlbar:not([focused])[textoverflow="both"] #urlbar-input {
++        mask-image: linear-gradient(to right, transparent, black 66px, black calc(100% - 66px), transparent) !important;
++    }
++
++    #urlbar[focused] #urlbar-input {
++        mask-image: none !important;
++        color: var(--mcf-fx-on-surface) !important;
++    }
++
++    /* Everything desktop adds to the address bar that Fenix's pill hasn't:
++     * bookmark star, page actions, zoom, permissions... Reader mode stays
++     * (ToolbarAction.ReaderMode, page end action when available). */
++    #urlbar:not([focused]) #page-action-buttons > :not(#reader-mode-button),
++    #urlbar #star-button-box,
++    #urlbar #pageActionButton,
++    #urlbar #urlbar-zoom-button,
++    #urlbar #translations-button,
++    #urlbar #picture-in-picture-button,
++    #urlbar #identity-permission-box,
++    #urlbar:not([focused]) .searchmode-switcher:not([open]) {
++        display: none !important;
++    }
++
++    /* Site info (SiteInfo action, start of the pill): a 48dp button with the
++     * shield that Fenix shows for the connection (BrowserToolbarMiddleware.kt
++     * ToolbarAction.SiteInfo): checkmark for a secure page, slashed for an
++     * insecure one, a page for local files, a globe otherwise. The FF 149+
++     * trust icon and the older identity box both. */
++    #urlbar #trust-icon-container,
++    #urlbar #identity-box {
++        box-sizing: border-box;
++        width: 48px !important;
++        height: 48px !important;
++        min-width: 48px;
++        margin: 0 !important;
++        padding: 12px !important;
++        border-radius: 50% !important;
++        background: transparent !important;
++        outline: 0 !important;
++        align-items: center;
++        justify-content: center;
++        color: var(--mcf-fx-on-surface);
++        -moz-context-properties: fill, fill-opacity, stroke;
++        fill: var(--mcf-fx-on-surface) !important;
++        fill-opacity: 1 !important;
++        stroke: none;
++        --mcf-icon: var(--mcf-fx-icon-shield-checkmark);
++
++        &.insecure {
++            --mcf-icon: var(--mcf-fx-icon-shield-slash);
++        }
++    }
++    #urlbar #trust-icon-container > #trust-icon,
++    #urlbar #identity-icon {
++        width: 24px !important;
++        height: 24px !important;
++        margin: 0 !important;
++        padding: 0 !important;
++        fill: var(--mcf-fx-on-surface) !important;
++        fill-opacity: 1 !important;
++        -moz-context-properties: fill, fill-opacity;
++    }
++    /* One of the two, as in Firefox: the trust icon with its feature gate,
++     * the identity box without. */
++    @media -moz-pref("browser.urlbar.trustPanel.featureGate") {
++        #urlbar #identity-box {
++            display: none !important;
++        }
++    }
++    #urlbar #identity-box { --mcf-icon: var(--mcf-fx-icon-globe); }
++    #urlbar #identity-box:is(.verifiedDomain, .verifiedIdentity, .mixedActiveBlocked) { --mcf-icon: var(--mcf-fx-icon-shield-checkmark); }
++    #urlbar #identity-box:is(.notSecure, .insecure, .mixedActiveContent, .mixedDisplayContent, .weakCipher) { --mcf-icon: var(--mcf-fx-icon-shield-slash); }
++    #urlbar #identity-box:is(.localResource, .chromeUI, .extensionPage, .fileURI) { --mcf-icon: var(--mcf-fx-icon-page-portrait); }
++    #urlbar #identity-box > .identity-box-button,
++    #urlbar #identity-box #identity-icon-box {
++        padding: 0 !important;
++        margin: 0 !important;
++        background: transparent !important;
++    }
++
++    /* Buttons after the pill: 48dp touch targets with 24dp icons, pressed
++     * state a 12% circle (IconButton ripple). */
++    #mcf-newtab-button,
++    #mcf-tabcounter-button,
++    #PanelUI-button {
++        display: flex;
++        flex: none;
++        box-sizing: border-box;
++        width: 48px;
++        height: 48px;
++        margin: 0 !important;
++        padding: 0 !important;
++        align-items: center;
++        justify-content: center;
++    }
++
++    #mcf-newtab-button,
++    #mcf-tabcounter-button,
++    #PanelUI-menu-button {
++        -moz-context-properties: fill, fill-opacity;
++        fill: var(--mcf-fx-on-surface);
++        fill-opacity: 1;
++        color: var(--mcf-fx-on-surface);
++        width: 48px !important;
++        height: 48px !important;
++        min-width: 48px !important;
++        margin: 0 !important;
++        padding: 0 !important;
++        border: 0 !important;
++        border-radius: 50% !important;
++        background: transparent !important;
++        appearance: none !important;
++
++        &:active {
++            background: var(--mcf-fx-pressed) !important;
++        }
++
++        > .toolbarbutton-icon,
++        > .toolbarbutton-badge-stack,
++        > .toolbarbutton-badge-stack > .toolbarbutton-icon {
++            width: 24px !important;
++            height: 24px !important;
++            min-width: 0 !important;
++            padding: 0 !important;
++            margin: 0 !important;
++            border-radius: 0 !important;
++        }
++        > .toolbarbutton-badge-stack {
++            background: none !important;
++            width: 48px !important;
++            height: 48px !important;
++            display: flex;
++            align-items: center;
++            justify-content: center;
++        }
++    }
++
++    /* Icons are masks painted in the text colour: -moz-context-properties
++     * (context-fill) doesn't work in a user style sheet. */
++    #mcf-newtab-button > .toolbarbutton-icon,
++    #mcf-tabcounter-button > .toolbarbutton-icon,
++    #PanelUI-menu-button .toolbarbutton-icon,
++    #urlbar #trust-icon,
++    #urlbar #identity-icon {
++        list-style-image: none !important;
++        background-color: var(--mcf-fx-on-surface) !important;
++        mask-repeat: no-repeat;
++        mask-position: center;
++        mask-size: 24px 24px;
++        mask-image: var(--mcf-icon, none);
++    }
++    #PanelUI-menu-button { --mcf-icon: var(--mcf-fx-icon-ellipsis-vertical); }
++    #mcf-newtab-button { --mcf-icon: var(--mcf-fx-icon-plus); }
++
++    /* Tab counter: the tab icon with the count in it. */
++    #mcf-tabcounter-button {
++        position: relative;
++        --mcf-icon: var(--mcf-fx-icon-tab);
++
++        &[tabcount="∞"] {
++            --mcf-icon: var(--mcf-fx-icon-infinite-tabs);
++        }
++
++        &::after {
++            content: attr(tabcount);
++            position: absolute;
++            inset: 0;
++            display: grid;
++            place-items: center;
++            font-size: 12px;
++            font-weight: 700;
++            line-height: 1;
++            color: var(--mcf-fx-on-surface);
++            pointer-events: none;
++        }
++        &[tabcount-wide]::after {
++            font-size: 9.6px;
++        }
++        &[tabcount="∞"]::after {
++            content: none;
++        }
++
++        /* Private mode mask badge (showPrivacyBadge): top end of the icon,
++         * 8dp out of it. */
++        :root[privatebrowsingmode="temporary"] &::before {
++            content: "";
++            position: absolute;
++            width: 20px;
++            height: 20px;
++            top: 4px;
++            right: 4px;
++            background: var(--mcf-fx-icon-private-badge) center / 100% no-repeat;
++            pointer-events: none;
++            z-index: 1;
++        }
++    }
++
++    /* Editing the address (BrowserEditToolbar): the edit field takes the
++     * whole bar, the browser actions are gone. FF 157+ (the results are a
++     * popover); with the breakout of FF <= 156 the urlbar overlays them. */
++    #nav-bar:has(#urlbar[focused]:not([breakout])) :is(#mcf-newtab-button,
++        #mcf-tabcounter-button, #PanelUI-button) {
++        display: none !important;
++    }
++    #nav-bar:has(#urlbar[focused]:not([breakout])) #urlbar-container {
++        padding-inline-end: 8px !important;
++    }
++
++    /* Editing the address: Fenix shows the awesomebar over the whole page
++     * (SearchSuggestions below/above the edit toolbar, fenix
++     * AwesomeBarComposable), not a dropdown. Same pill while editing, no
++     * focus ring. FF 157+ popover results; the <= 156 path is in urlbar.css. */
++    #urlbar[focused] > .urlbar-background,
++    #urlbar[breakout][breakout-extend] > .urlbar-background,
++    #urlbar[popover-open] > .urlbar-background {
++        inset: 0 !important;
++        border: 0 !important;
++        outline: 0 !important;
++        box-shadow: none !important;
++        border-radius: 24px !important;
++        clip-path: none !important;
++        background: var(--mcf-fx-pill) !important;
++    }
++    #urlbar[focused], #urlbar[focused] :is(.urlbar-input-container, #urlbar-input, #urlbar-container) {
++        outline: 0 !important;
++        --focus-outline-color: transparent;
++    }
++    #urlbar > .urlbarView > .urlbarView-background {
++        display: none !important;
++    }
++    /* FF <= 156: the urlbar is always a breakout popover (a permanent
++     * [breakout]), so only while editing ([focused], or its results open) it
++     * becomes the edit pill over the toolbar's address bar, and its results (a child,
++     * fixed to the window once .urlbar's will-change is off) the awesomebar. */
++    /* At rest the breakout popover is as wide as the container measures,
++     * padding included; the container's 8dp end padding is the gap to the
++     * browser actions. */
++    #urlbar[breakout]:not([focused], [breakout-extend]) {
++        width: calc(var(--urlbar-width) - 8px) !important;
++    }
++    #urlbar[breakout]:is([focused], [breakout-extend]) {
++        will-change: auto !important;
++        translate: none !important;
++        position: fixed !important;
++        inset: auto 8px 8px 8px !important;
++        width: auto !important;
++        height: 48px !important;
++        margin: 0 !important;
++        z-index: 5 !important;
++        border-radius: 24px !important;
++        color: var(--mcf-fx-on-surface) !important;
++
++        @media -moz-pref("mcf.toolbar.positionOnTop") {
++            inset: 8px 8px auto 8px !important;
++        }
++    }
++    #urlbar[breakout]:is([focused], [breakout-extend]) > .urlbar-input-container {
++        height: 48px !important;
++        min-height: 48px !important;
++        padding: 0 !important;
++        outline: 0 !important;
++        border: 0 !important;
++        background: transparent !important;
++        box-shadow: none !important;
++    }
++
++    .urlbarView:popover-open,
++    #urlbar[breakout]:is([focused], [breakout-extend]) > .urlbarView {
++        position: fixed !important;
++        position-area: none !important;
++        inset: auto 0 var(--mcf-toolbar-height) 0 !important;
++        width: 100vw !important;
++        height: calc(100vh - var(--mcf-toolbar-height)) !important;
++        max-height: none !important;
++        margin: 0 !important;
++        border: 0 !important;
++        border-radius: 0 !important;
++        box-shadow: none !important;
++        overflow: hidden auto !important;
++        background: var(--mcf-fx-surface) !important;
++        color: var(--mcf-fx-on-surface) !important;
++
++        @media -moz-pref("mcf.toolbar.positionOnTop") {
++            inset: var(--mcf-toolbar-height) 0 auto 0 !important;
++        }
++    }
++    #urlbar[breakout]:is([focused], [breakout-extend]) > .urlbarView {
++        /* The pill is 8dp inside the window; the view is outside of it. */
++        left: 0 !important;
++        right: 0 !important;
++        box-sizing: border-box;
++        padding: 11px !important;
++    }
++    /* Rows as FF 158's results lay them out (wrapper-less, 24 radius). */
++    #urlbar[breakout]:is([focused], [breakout-extend]) .urlbarView-body-inner {
++        margin: 0 !important;
++        width: 100% !important;
++        border: 0 !important;
++    }
++    #urlbar[breakout]:is([focused], [breakout-extend]) .urlbarView-title-separator::before {
++        content: "\2022" !important;
++    }
++    #urlbar[breakout]:is([focused], [breakout-extend]) #urlbar-results {
++        padding: 0 !important;
++    }
++    #urlbar[breakout]:is([focused], [breakout-extend]) .urlbarView-row {
++        padding: 3.67px !important;
++        border-radius: 24px !important;
++    }
++    #urlbar[breakout]:is([focused], [breakout-extend]) .urlbarView-row-inner {
++        padding: 7.33px 3px !important;
++    }
++
++    /* Suggestions bottom-up with a bottom toolbar (AwesomeBarOrientation:
++     * BOTTOM_TO_TOP), the first one next to the edit bar; the list sticks to
++     * the bottom. A top toolbar lists them top-down. */
++    @media not (-moz-pref("mcf.toolbar.positionOnTop")) {
++        .urlbarView:popover-open,
++        #urlbar[breakout]:is([focused], [breakout-extend]) > .urlbarView {
++            display: flex !important;
++            /* Reversed so the list starts at the bottom and, when it is
++             * longer than the screen, is scrolled to the bottom. */
++            flex-direction: column-reverse !important;
++        }
++        #urlbar-results {
++            display: flex !important;
++            flex-direction: column-reverse;
++        }
++    }
++
++    /* The tab counter is the sidebar button with vertical tabs. */
++    @media -moz-pref("sidebar.verticalTabs") {
++        #mcf-tabcounter-button {
++            display: none !important;
++        }
++    }
++}
+diff --git a/src/themes/shared/chrome/urlbar.css b/src/themes/shared/chrome/urlbar.css
+index 680963c..495b633 100644
+--- a/src/themes/shared/chrome/urlbar.css
++++ b/src/themes/shared/chrome/urlbar.css
+@@ -43,31 +43,6 @@
+         }
+     }
+ 
+-    /* Show the forward button if the back button is disabled */
+-    #back-button[disabled] ~ #forward-button {
+-        display: flex !important;
+-    }
+-
+-    #back-button[disabled] {
+-        display: none !important;
+-    }
+-
+-    #urlbar {
+-        padding: 0px 5px;
+-    }
+-
+-    /* Smaller font: show more of the URL */
+-    #urlbar-input {
+-        font-size: 9pt !important;
+-        padding: 0px 4px !important;
+-        /* Fade rightmost part with a gradient so it's clear that the URL is truncated */
+-        mask-image: linear-gradient(to right, black 90%, transparent 100%);
+-    }
+-
+-    #urlbar[focused] #urlbar-input {
+-        mask-image: none;
+-    }
+-
+     #identity-box {
+         margin: 0 !important;
+     }
+@@ -97,29 +72,8 @@
+     }
+ 
+ 
+-    /* Fixing invisible URL bar on FF 133+
+-     * Making the active URL bar wider for better text input and
+-     * a wider popout */
+-    #urlbar[breakout][breakout-extend] {
+-        left: 11vw !important; /* should be 10, but 10 looks off-center */
+-        width: 80vw !important;
+-        bottom: 0 !important;
+-        z-index: 5 !important;
+-    }
+-
+-    @media not (-moz-pref("mcf.toolbar.positionOnTop")) {
+-        #urlbar[breakout][breakout-extend] {
+-            top: 0 !important;
+-            align-content: flex-end !important;
+-        }
+-    }
+-
+-    @media -moz-pref("mcf.toolbar.positionOnTop") {
+-        #urlbar[breakout][breakout-extend] {
+-            top: calc(1.1 * --urlbar-container-height) !important;
+-            align-content: flex-start !important;
+-        }
+-    }
++    /* FF <= 156: the focused urlbar is a breakout popover; toolbar.css
++     * lays it out as the edit toolbar over the nav-bar. */
+ 
+     /* Label of "identity icons", e.g. firefox specific pages look weird
+      * when ellipsed, e.g. "F..x" instead of "Firefox". So just hide this
+@@ -139,7 +93,7 @@
+      * being below the urlbar. */
+     .urlbarView {
+         position: fixed !important;
+-        inset: 84px 0px 0px 0px;
++        inset: var(--mcf-toolbar-height, 84px) 0px 0px 0px;
+         width: 100% !important;
+         background: var(--arrowpanel-background);
+         margin: 0px !important;
+@@ -152,7 +106,7 @@
+ 
+     @media not (-moz-pref("mcf.toolbar.positionOnTop")) {
+         .urlbarView {
+-            inset: 0px 0px 84px 0px;
++            inset: 0px 0px var(--mcf-toolbar-height, 84px) 0px;
+         }
+     }
+ 
+@@ -175,7 +129,7 @@
+ 
+     vbox.urlbarView {
+         position: fixed !important;
+-        bottom: 82px !important;
++        bottom: var(--mcf-toolbar-height, 82px) !important;
+         box-shadow: rgba(0, 0, 0, 0.05) 0px -8px 8px 3px !important;
+         left: 0 !important;
+         right: 0 !important;
+diff --git a/src/themes/shared/main.css b/src/themes/shared/main.css
+index 9e2e4bd..056493f 100644
+--- a/src/themes/shared/main.css
++++ b/src/themes/shared/main.css
+@@ -14,6 +14,7 @@
+ @import "chrome://mobileconfigfirefox/content/themes/shared/chrome/sidebar.css";
+ @import "chrome://mobileconfigfirefox/content/themes/shared/chrome/tabcounter.css";
+ @import "chrome://mobileconfigfirefox/content/themes/shared/chrome/tabmenu.css";
++@import "chrome://mobileconfigfirefox/content/themes/shared/chrome/toolbar.css";
+ @import "chrome://mobileconfigfirefox/content/themes/shared/chrome/touch.css";
+ @import "chrome://mobileconfigfirefox/content/themes/shared/chrome/urlbar.css";
+ 

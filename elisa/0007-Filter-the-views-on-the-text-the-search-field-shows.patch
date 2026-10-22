@@ -1,0 +1,43 @@
+From 0df7176844c442e5106668c5ad04471c1de58f86 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 16:56:51 +0900
+Subject: [PATCH] Filter the views on the text the search field shows
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The views were filtered on the search field's text, which only holds
+committed input. Text an input method is still composing is shown in
+the field but is not part of text: the syllable being typed with a
+Korean input method (plasma-keyboard, ibus-hangul, fcitx5-hangul commit
+a syllable only once the next one starts), Chinese and Japanese input
+before the candidate is chosen, or a word of a predictive keyboard. A
+Korean search therefore always ran without its last syllable, and a one
+syllable search such as 꿈 did not filter at all, while the field showed
+the whole query.
+
+Use displayText, which is what the field shows: the committed text with
+the composing text at the cursor. QQuickTextInput emits
+displayTextChanged() at the end of every input method event, also when
+only the preedit changed, so the filter follows each composed jamo, and
+clearing the field (which cancels the preedit) still resets it.
+---
+ src/qml/NavigationActionBar.qml | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/qml/NavigationActionBar.qml b/src/qml/NavigationActionBar.qml
+index 0b1426a..4a2aa9d 100644
+--- a/src/qml/NavigationActionBar.qml
++++ b/src/qml/NavigationActionBar.qml
+@@ -30,7 +30,10 @@ Item {
+ 
+     property string labelText
+     property bool showRating: !Kirigami.Settings.isMobile
+-    property alias filterText: filterTextInput.text
++    // What the field shows, including the syllable or word an input method is
++    // still composing (Korean, Chinese, Japanese, predictive keyboards): text
++    // only holds committed input.
++    readonly property string filterText: filterTextInput.displayText
+     property alias filterRating: ratingFilter.starRating
+     property bool enableGoBack: true
+     property bool expandedFilterView

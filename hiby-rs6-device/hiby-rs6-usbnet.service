@@ -1,0 +1,13 @@
+[Unit]
+Description=USB network gadget (SSH over the cable at 172.16.42.1)
+Requires=sys-kernel-config.mount
+After=sys-kernel-config.mount
+Before=NetworkManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/hiby-rs6/hiby-rs6-usbnet start
+ExecStop=/usr/lib/hiby-rs6/hiby-rs6-usbnet stop
+
+# Started by 90-hiby-rs6-usbnet.rules when the UDC appears (coldplug replays it at boot).

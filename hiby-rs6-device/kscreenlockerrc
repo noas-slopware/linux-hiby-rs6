@@ -1,0 +1,4 @@
+# HiBy RS6: plasma-mobile.service starts the session without a login, so the lock screen is the
+# login (as postmarketos-ui-plasma-mobile sets it up)
+[Daemon]
+LockOnStart=true

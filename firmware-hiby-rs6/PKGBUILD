@@ -1,0 +1,111 @@
+# Maintainer: Noa Himesaka <himesaka@noa.codes>
+#
+# Firmware for the HiBy RS6: HiBy's stock firmware 2.10 plus one Xiaomi SDM660 file (a530 PFP
+# 0x5ff11a), every file listed with its sha256, source and version in MANIFEST.tsv.
+# The files live on the `firmware` branch of noas-slopware/linux-hiby-rs6; the HiBy ones are made
+# from a stock 1.80 EDL dump plus HiBy's 1.80->1.90->2.10 OTA deltas with tools/make-firmware-tarball.sh
+# (main branch). Same layout as the Nura package (pmos branch, firmware-hiby-rs6 2.10-r5).
+#
+# No file conflicts with Arch's linux-firmware-*: Arch ships its blobs .zst-compressed, these are
+# plain files, and the kernel tries the plain name first on every path, so the RS6 files win
+# where both exist (ath10k/WCN3990, qca/ Bluetooth). The a530 microcode goes to updates/, which
+# the kernel and mkinitcpio both search first. linux-firmware itself is not needed on the RS6.
+
+pkgname=firmware-hiby-rs6
+pkgver=2.10
+pkgrel=1
+pkgdesc='Firmware for the HiBy RS6 (stock firmware 2.10, newer Qualcomm a530 PFP)'
+url='https://github.com/noas-slopware/linux-hiby-rs6/tree/firmware'
+arch=(any)
+license=(LicenseRef-proprietary)
+makedepends=(python)
+optdepends=('mkinitcpio: GPU firmware in the initramfs (hiby-rs6-firmware hook)')
+options=(!strip !debug)
+_commit=d967e58b3b0132c0c215777d8d615cbc8d37c5bf   # firmware branch
+_qsak=1b102ba5126bbbdae0efa6f568ac2467392b49f4     # qca-swiss-army-knife, as Alpine's 0_git20220701
+source=(
+  "$pkgname-$_commit.tar.gz::https://github.com/noas-slopware/linux-hiby-rs6/archive/$_commit.tar.gz"
+  "qca-swiss-army-knife-$_qsak.tar.gz::https://github.com/qca/qca-swiss-army-knife/archive/$_qsak.tar.gz"
+  hiby-rs6-firmware.initcpio-install
+)
+sha512sums=('1ec0985ff615c67ee6c0316ea36f8f58b940264a17ad66c92a7be06721b147d04ad9179a54a0fe2a7d9b954eb1deebd69c41c3bbb1427e727d05546b7476cee3'
+            'e41d678f208cf09f02e78ebf4e1295837a43c2fd031d9f3b2be962772a7cdf2e2296f9751855847707ae5348b3da46f37f9c0aa858f7b7912cfd56e534f28f2f'
+            'c9128e24a8630998b092115feb7726d612983187561efd4de5229ad707ee5ccdf257ec3654f95221599c9d1c7400e6547aa2b43dd81cbedd0dc05762e53f9811')
+
+_fwdir=/usr/lib/firmware
+
+build() {
+  cd linux-hiby-rs6-$_commit
+  sha256sum -c SHA256SUMS
+
+  local ath10k="$srcdir/qca-swiss-army-knife-$_qsak/tools/scripts/ath10k"
+
+  # WCN3990 board data: bdwlan.bXX -> board id 0xXX, bdwlan.XXX -> 0xXXX,
+  # bdwlan.bin is the default for unprogrammed board ids (0xff).
+  local f ext id sep=''
+  {
+    echo "["
+    for f in "$PWD"/wlan/bdwlan.*; do
+      ext=${f##*.}
+      case $ext in
+        bin) id=ff ;;
+        b??) id=$(printf '%x' 0x${ext#b}) ;;
+        *) id=$(printf '%x' 0x$ext) ;;
+      esac
+      printf '%s{"names": ["bus=snoc,qmi-board-id=%s"], "data": "%s"}\n' "$sep" "$id" "$f"
+      sep=','
+    done
+    echo "]"
+  } > "$srcdir"/board-2.json
+  python "$ath10k"/ath10k-bdencoder -c "$srcdir"/board-2.json -o "$srcdir"/board-2.bin
+
+  cd "$srcdir"
+  python "$ath10k"/ath10k-fwencoder --create \
+    --features=wowlan,no-nwifi-decap-4addr-padding,allows-mesh-bcast,mgmt-tx-by-ref,non-bmi,single-chan-info-per-channel \
+    --set-wmi-op-version=tlv --set-htt-op-version=tlv \
+    --set-fw-api=5
+}
+
+package() {
+  cd linux-hiby-rs6-$_commit
+  local fw="$pkgdir$_fwdir"
+
+  install -Dm644 "$srcdir"/board-2.bin "$srcdir"/firmware-5.bin -t "$fw/ath10k/WCN3990/hw1.0/"
+  # zap shader: the RS6 DT asks for firmware-name "a512_zap.mbn"
+  install -Dm644 gpu/a512_zap.mbn "$fw/a512_zap.mbn"
+  # CP microcode: stock PM4 0x5ff066 and the Xiaomi tulip PFP 0x5ff11a (CP_WHERE_AM_I/YIELD rptr
+  # write-back, needed for preemption on mainline; docs/gpu-a5xx.md on the docs branch)
+  install -Dm644 gpu/a530_pm4.fw "$fw/updates/qcom/a530_pm4.fw"
+  install -Dm644 gpu/a530_pfp-0x5ff11a.fw "$fw/updates/qcom/a530_pfp.fw"
+  # hm100 FPGA bitstreams (data + 8-byte checksum); -gw1n9c for units with a GW1N-9C (by IDCODE)
+  install -Dm644 hiby/hm100-pcm.bin hiby/hm100-dsd.bin hiby/hm100-fir-default.bin \
+    hiby/hm100-pcm-gw1n9c.bin hiby/hm100-dsd-gw1n9c.bin -t "$fw/hiby/rs6/"
+  install -Dm644 MANIFEST.tsv -t "$pkgdir/usr/share/doc/$pkgname/"
+
+  # NON-HLOS image/ flat (mba, modem, adsp, cdsp, venus, ...), .mbn aliases of the .mdt split
+  # images, venus in its subdirs, Bluetooth under qca/
+  install -dm755 "$fw"
+  cp -r image/. "$fw/"
+  find "$fw" -maxdepth 1 -type f -exec chmod 644 {} +
+  for f in "$fw"/*.mdt; do
+    [[ -e ${f%.mdt}.mbn ]] || ln -s "${f##*/}" "${f%.mdt}.mbn"
+  done
+  local v
+  for v in venus-4.4 venus-x; do
+    install -dm755 "$fw/qcom/$v"
+    for f in "$fw"/venus.*; do
+      ln -s "../../${f##*/}" "$fw/qcom/$v/${f##*/}"
+    done
+  done
+  install -Dm644 bt/* -t "$fw/qca/"
+
+  # stock Settings' Darwin filters with filter.json (order, titles), for darwinctl
+  install -Dm644 darwin/* -t "$pkgdir/usr/share/hiby-rs6/darwin/"
+
+  # SMGR sensor registry, served by the kernel's qcom_sns_reg (sns.reg-<root compatible>)
+  install -Dm644 sensors/sns.reg "$fw/qcom/sensors/sns.reg-hiby,rs6"
+
+  # GPU firmware into the initramfs (replaces the Nura mkinitfs 30-initramfs-*.files list)
+  install -Dm644 "$srcdir"/hiby-rs6-firmware.initcpio-install \
+    "$pkgdir/usr/lib/initcpio/install/hiby-rs6-firmware"
+}

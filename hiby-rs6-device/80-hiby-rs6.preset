@@ -1,0 +1,20 @@
+# HiBy RS6 (hiby-rs6-system): what runs on the device. Applied by `systemctl preset-all` when the
+# image is made, and by `systemctl preset <unit>` for a newly installed one.
+enable NetworkManager.service
+enable systemd-resolved.service
+enable systemd-timesyncd.service
+enable systemd-oomd.service
+enable bluetooth.service
+enable sshd.service
+enable tailscaled.service
+enable nftables.service
+enable rtkit-daemon.service
+enable rmtfs.service
+enable tqftpserv.service
+enable swclock-offset-boot.service
+enable swclock-offset-shutdown.service
+enable nura-swap.service
+enable rs6-touchboost.service
+enable rs6-vt-lock.service
+enable darwinctl-restore.service
+enable plasma-mobile.service

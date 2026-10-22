@@ -1,0 +1,178 @@
+From 58c1ea3833354bf9d43a28168c4ee1251bcc9b46 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 10:02:11 +0900
+Subject: [PATCH] Decode embedded covers at the requested size
+
+EmbeddedCoverageImageProvider decoded every embedded cover at full
+resolution with QImage::fromData() and only then scaled it down to the
+thumbnail the view asked for. A 6000x6000 cover costs 137 MiB per
+request, every album is requested twice (grid and list sizes), and the
+provider ran one request per core. A view full of high-resolution covers
+pushed Elisa to well over a gigabyte, and covers above Qt's 256 MB image
+allocation limit were rejected and never shown.
+
+Read the cover through QImageReader instead: take the size from the
+header, ask the handler for the target size (libjpeg decodes JPEG
+directly at 1/2, 1/4 or 1/8 scale), and only fall back to scaling the
+decoded image when the handler cannot. Keep at most two requests in
+flight, since formats without scaled decoding (PNG, WebP) still need a
+full-size buffer per running request.
+
+Two QML backgrounds requested the cover without a sourceSize, which made
+the provider return it at full size: the Now Playing background (whose
+BUG431607 workaround only set sourceSize after the full-size image had
+loaded, and then loaded it again) and the mobile minimized player
+background. Give both a sourceSize up front.
+
+Offline test library (380 tracks, 38 albums, covers 600 px JPEG up to
+9000 px JPEG, 3000 px PNG), Qt 6.11.1, musl, offscreen, mobile controls,
+peak RSS (VmHWM), three runs each:
+
+  albums view, first index:     520-824 MiB  ->  287-294 MiB
+  albums view, relaunch:      1515-1605 MiB  ->  271-273 MiB
+  now playing a 6000 px cover:  946-956 MiB  ->  285-302 MiB
+
+Indexing alone, with no covers on screen, peaks at 220 MiB.
+
+The 9000 px cover is no longer rejected and now shows.
+
+A sourceSize with only the width (or height) set arrives as W x 0; derive
+the other side from the cover's aspect ratio and only ever scale down, so
+the mobile minimized player and footer backgrounds are covered too.
+---
+ src/embeddedcoverageimageprovider.cpp         | 57 ++++++++++++++++---
+ src/qml/ContextView.qml                       | 11 ++--
+ .../mobile/MobileMinimizedPlayerControl.qml   |  3 +
+ 3 files changed, 58 insertions(+), 13 deletions(-)
+
+diff --git a/src/embeddedcoverageimageprovider.cpp b/src/embeddedcoverageimageprovider.cpp
+index 9ff49be..6b9320e 100644
+--- a/src/embeddedcoverageimageprovider.cpp
++++ b/src/embeddedcoverageimageprovider.cpp
+@@ -10,8 +10,13 @@
+ #include <KFileMetaData/ExtractorCollection>
+ #include <KFileMetaData/SimpleExtractionResult>
+ 
++#include <algorithm>
++
++#include <QBuffer>
+ #include <QImage>
++#include <QImageReader>
+ #include <QMimeDatabase>
++#include <QThread>
+ 
+ namespace
+ {
+@@ -61,21 +66,55 @@ public:
+           return;
+         }
+ 
+-        if (imageData.contains(KFileMetaData::EmbeddedImageData::FrontCover)) {
+-          mCoverImage = QImage::fromData(imageData[KFileMetaData::EmbeddedImageData::FrontCover]);
+-        } else {
+-          mCoverImage = QImage::fromData(imageData.first());
++        QByteArray encodedImage = imageData.contains(KFileMetaData::EmbeddedImageData::FrontCover)
++            ? imageData.value(KFileMetaData::EmbeddedImageData::FrontCover)
++            : imageData.first();
++        imageData.clear();
++
++        // Embedded covers are often several thousand pixels wide while the
++        // views only ask for thumbnails. Decoding them at full size first
++        // costs width * height * 4 bytes per request (137 MiB for a 6000x6000
++        // cover) and makes Qt reject the biggest ones outright. Read the size
++        // from the header and let the image handler decode straight to the
++        // requested size (JPEG decodes at 1/2, 1/4 or 1/8 scale in libjpeg).
++        QBuffer encodedImageBuffer(&encodedImage);
++        encodedImageBuffer.open(QIODevice::ReadOnly);
++        QImageReader imageReader(&encodedImageBuffer);
++
++        QSize targetSize;
++        const auto nativeSize = imageReader.size();
++        if (nativeSize.isValid() && !nativeSize.isEmpty()) {
++          if (mRequestedSize.width() > 0 && mRequestedSize.height() > 0) {
++            targetSize = nativeSize.scaled(mRequestedSize, Qt::KeepAspectRatio);
++          } else if (mRequestedSize.width() > 0 && mRequestedSize.width() < nativeSize.width()) {
++            // sourceSize.width only (arrives as W x 0): keep the aspect, only ever scale down
++            targetSize = QSize(mRequestedSize.width(),
++                               qMax(1, qRound(qreal(nativeSize.height()) * mRequestedSize.width() / nativeSize.width())));
++          } else if (mRequestedSize.height() > 0 && mRequestedSize.height() < nativeSize.height()) {
++            targetSize = QSize(qMax(1, qRound(qreal(nativeSize.width()) * mRequestedSize.height() / nativeSize.height())),
++                               mRequestedSize.height());
++          }
++          if (targetSize.isValid() && (targetSize.width() < nativeSize.width() || targetSize.height() < nativeSize.height())) {
++            imageReader.setScaledSize(targetSize);
++          }
+         }
+ 
++        mCoverImage = imageReader.read();
++        encodedImageBuffer.close();
++        encodedImage.clear();
++
+         if (mCoverImage.isNull()) {
+           mErrorMessage = QString{QLatin1String{"Invalid embedded cover image in "} + mId};
+           Q_EMIT finished();
+           return;
+         }
+ 
+-        auto newCoverImage = mCoverImage.scaled(mRequestedSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+-        if (!newCoverImage.isNull()) {
+-          mCoverImage = std::move(newCoverImage);
++        if (targetSize.isValid() && mCoverImage.size() != targetSize) {
++          // covers smaller than the requested size, or handlers that ignored the scaled size
++          auto newCoverImage = mCoverImage.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
++          if (!newCoverImage.isNull()) {
++            mCoverImage = std::move(newCoverImage);
++          }
+         }
+ 
+         Q_EMIT finished();
+@@ -96,6 +135,10 @@ public:
+ EmbeddedCoverageImageProvider::EmbeddedCoverageImageProvider()
+     : QQuickAsyncImageProvider()
+ {
++    // A view full of covers queues one request per delegate. Formats without
++    // scaled decoding (PNG, WebP) still need a full-size buffer per running
++    // request, so keep only a couple of them in flight instead of one per core.
++    pool.setMaxThreadCount(std::min(2, std::max(1, QThread::idealThreadCount())));
+ }
+ 
+ QQuickImageResponse *EmbeddedCoverageImageProvider::requestImageResponse(const QString &id, const QSize &requestedSize)
+diff --git a/src/qml/ContextView.qml b/src/qml/ContextView.qml
+index ec25fd3..fb33a29 100644
+--- a/src/qml/ContextView.qml
++++ b/src/qml/ContextView.qml
+@@ -226,12 +226,11 @@ Kirigami.Page {
+                 asynchronous: true
+                 fillMode: Image.PreserveAspectCrop
+ 
+-                // HACK: set sourceSize to a fixed value to prevent background flickering (BUG431607)
+-                onStatusChanged: {
+-                    if (status === Image.Ready && (sourceSize.width > Kirigami.Units.gridUnit * 50 || sourceSize.height > Kirigami.Units.gridUnit * 50)) {
+-                        sourceSize = Qt.size(Kirigami.Units.gridUnit * 50, Kirigami.Units.gridUnit * 50);
+-                    }
+-                }
++                // Use a fixed sourceSize to prevent background flickering (BUG431607).
++                // Set it before loading: without it the cover is first decoded at
++                // full size (137 MiB for a 6000x6000 embedded cover) and then
++                // loaded a second time at this size.
++                sourceSize: Qt.size(Kirigami.Units.gridUnit * 50, Kirigami.Units.gridUnit * 50)
+ 
+                 StackView.onRemoved: {
+                     destroy();
+diff --git a/src/qml/mobile/MobileMinimizedPlayerControl.qml b/src/qml/mobile/MobileMinimizedPlayerControl.qml
+index 89ed5c7..3c1f4b8 100644
+--- a/src/qml/mobile/MobileMinimizedPlayerControl.qml
++++ b/src/qml/mobile/MobileMinimizedPlayerControl.qml
+@@ -44,6 +44,9 @@ BasePlayerControl {
+         fallback: Theme.defaultBackgroundImage
+         asynchronous: true
+ 
++        // blurred anyway, never needs the cover's full resolution
++        sourceSize.width: Screen.width
++
+         anchors.fill: parent
+         fillMode: Image.PreserveAspectCrop
+ 
+-- 
+2.56.0
+

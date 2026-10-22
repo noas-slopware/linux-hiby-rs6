@@ -1,0 +1,298 @@
+# HiBy RS6 on top of Arch Linux Ports' aarch64 kernel config (config.aarch64 next to this file:
+# bschnei/linux, branch aarch64, commit df552a59d849, the config of [core] linux 7.2.11.arch1-1 on
+# arch.bens.haus). Merged in prepare() with scripts/kconfig/merge_config.sh, then olddefconfig.
+# Generated from the Nura RS6 config (config-postmarketos-qcom-sdm660.aarch64, pmos branch) by these rules:
+#  - Arch's value stays for everything outside drivers/ and sound/ (scheduler, HZ, preemption, LSMs incl.
+#    Landlock, filesystems incl. F2FS as a module with compression, crypto, networking, debug info, compiler);
+#  - SDM660/RS6 symbols that Arch's config does not have at all (sdm660-mainline and our series) take the Nura value;
+#  - a driver the Nura config enables more strongly (n < m < y) keeps the Nura level: the SoC base drivers
+#    (clocks, pinctrl, RPM/SMD, regulators, interconnect, CPR, rpmpd, SDHCI, PHYs, DRM, simpledrm, rpmsg) stay
+#    built in as on every RS6 boot so far (sync_state and handoff timing were tuned that way);
+#  - except a short list where Arch's choice wins (generic, not RS6 hardware, or other SoCs), see mkfragment.py;
+#  - plus the RS6 overrides at the end.
+# Do not edit by hand: regenerate with mkfragment.py (next to this file), then review the diff.
+
+
+# ---- not in the Arch config: sdm660-mainline and RS6 series symbols (27)
+# arch/arm64/Kconfig
+CONFIG_CMDLINE_DROP_DANGEROUS_ANDROID_OPTIONS=y
+# drivers/crypto/Kconfig
+CONFIG_CRYPTO_DEV_QCE_AEAD=y
+CONFIG_CRYPTO_DEV_QCE_ENABLE_ALL=y
+CONFIG_CRYPTO_DEV_QCE_SHA=y
+CONFIG_CRYPTO_DEV_QCE_SKCIPHER=y
+CONFIG_CRYPTO_DEV_QCE_SW_MAX_LEN=512
+# drivers/gpu/drm/panel/Kconfig
+CONFIG_DRM_PANEL_BOE_BV045FHM_L00=m
+CONFIG_DRM_PANEL_FT8716U=m
+CONFIG_DRM_PANEL_NOVATEK_NT51021=m
+CONFIG_DRM_PANEL_SAMSUNG_AMS601NT12=m
+CONFIG_DRM_PANEL_SHARP_LS050T1SX18=m
+CONFIG_DRM_PANEL_SYNAPTICS_TD4310=m
+CONFIG_DRM_PANEL_TIANMA_TD4310=m
+CONFIG_DRM_PANEL_TRULY_TD4322=m
+# drivers/iio/accel/Kconfig
+CONFIG_IIO_QCOM_SMGR_ACCEL=m
+# drivers/iio/common/qcom_smgr/Kconfig
+CONFIG_IIO_QCOM_SMGR=m
+# drivers/iio/gyro/Kconfig
+CONFIG_IIO_QCOM_SMGR_GYRO=m
+# drivers/iio/magnetometer/Kconfig
+CONFIG_IIO_QCOM_SMGR_MAG=m
+# drivers/iio/pressure/Kconfig
+CONFIG_IIO_QCOM_SMGR_PRESSURE=m
+# drivers/iio/proximity/Kconfig
+CONFIG_IIO_QCOM_SMGR_PROX=m
+# drivers/input/misc/Kconfig
+CONFIG_INPUT_HIBY_RING_KEYS=m
+CONFIG_INPUT_QCOM_SPMI_HAPTICS=m
+# drivers/pmdomain/qcom/Kconfig
+CONFIG_QCOM_CPR3=y
+# drivers/power/supply/Kconfig
+CONFIG_BATTERY_PMI8998_FG=m
+# drivers/soc/qcom/Kconfig
+CONFIG_QCOM_SNS_REG=m
+# sound/soc/codecs/Kconfig
+CONFIG_SND_SOC_HIBY_HM100=m
+CONFIG_SND_SOC_TAS2557=m
+
+# ---- drivers the RS6 needs built in / enabled (Arch has them lower) (89)
+# drivers/clk/qcom/Kconfig
+# Arch: off
+CONFIG_QCOM_CLK_SMD_RPM=y
+# Arch: m
+CONFIG_SDM_GCC_660=y
+# Arch: m
+CONFIG_SDM_GPUCC_660=y
+# Arch: m
+CONFIG_SDM_MMCC_660=y
+# drivers/cpufreq/Kconfig.arm
+# Arch: m
+CONFIG_ARM_QCOM_CPUFREQ_HW=y
+# drivers/crypto/Kconfig
+# Arch: off
+CONFIG_CRYPTO_DEV_QCE=m
+# Arch: off
+CONFIG_CRYPTO_DEV_QCOM_RNG=m
+# drivers/devfreq/Kconfig
+# Arch: m
+CONFIG_DEVFREQ_GOV_PASSIVE=y
+# drivers/dma/qcom/Kconfig
+# Arch: m
+CONFIG_QCOM_BAM_DMA=y
+# Arch: m
+CONFIG_QCOM_GPI_DMA=y
+# drivers/extcon/Kconfig
+# Arch: m
+CONFIG_EXTCON_GPIO=y
+# Arch: m
+CONFIG_EXTCON_SM5502=y
+# Arch: m
+CONFIG_EXTCON_USB_GPIO=y
+# drivers/firmware/qcom/Kconfig
+# Arch: off
+CONFIG_QCOM_TZMEM_MODE_GENERIC=y
+# drivers/gpu/drm/Kconfig
+# Arch: m
+CONFIG_DRM=y
+# Arch: m
+CONFIG_DRM_GEM_SHMEM_HELPER=y
+# Arch: m
+CONFIG_DRM_KMS_HELPER=y
+# drivers/gpu/drm/bridge/Kconfig
+# Arch: m
+CONFIG_DRM_AUX_BRIDGE=y
+# drivers/gpu/drm/clients/Kconfig
+# Arch: m
+CONFIG_DRM_CLIENT_LIB=y
+# Arch: m
+CONFIG_DRM_CLIENT_SELECTION=y
+# drivers/gpu/drm/panel/Kconfig
+# Arch: m
+CONFIG_DRM_PANEL_DSI_CM=y
+# Arch: m
+CONFIG_DRM_PANEL_SIMPLE=y
+# drivers/gpu/drm/sysfb/Kconfig
+# Arch: m
+CONFIG_DRM_SIMPLEDRM=y
+# Arch: m
+CONFIG_DRM_SYSFB_HELPER=y
+# drivers/i2c/Kconfig
+# Arch: m
+CONFIG_I2C_MUX=y
+# drivers/i2c/algos/Kconfig
+# Arch: m
+CONFIG_I2C_ALGOBIT=y
+# drivers/i2c/busses/Kconfig
+# Arch: m
+CONFIG_I2C_GPIO=y
+# Arch: m
+CONFIG_I2C_QUP=y
+# drivers/iio/Kconfig
+# Arch: m
+CONFIG_IIO=y
+# drivers/iio/adc/Kconfig
+# Arch: off
+CONFIG_QCOM_SPMI_IADC=m
+# Arch: off
+CONFIG_QCOM_SPMI_RRADC=m
+# Arch: off
+CONFIG_QCOM_SPMI_VADC=m
+# drivers/input/Kconfig
+# Arch: m
+CONFIG_INPUT_FF_MEMLESS=y
+# drivers/input/keyboard/Kconfig
+# Arch: m
+CONFIG_KEYBOARD_GPIO=y
+# Arch: m
+CONFIG_KEYBOARD_GPIO_POLLED=y
+# drivers/input/misc/Kconfig
+# Arch: m
+CONFIG_INPUT_PM8941_PWRKEY=y
+# Arch: m
+CONFIG_INPUT_PM8XXX_VIBRATOR=y
+# drivers/interconnect/qcom/Kconfig
+# Arch: m
+CONFIG_INTERCONNECT_QCOM_SDM660=y
+# Arch: m
+CONFIG_INTERCONNECT_QCOM_SMD_RPM=y
+# drivers/iommu/Kconfig
+# Arch: off
+CONFIG_IOMMU_DEFAULT_DMA_STRICT=y
+# drivers/leds/trigger/Kconfig
+# Arch: m
+CONFIG_LEDS_TRIGGER_DEFAULT_ON=y
+# drivers/mailbox/Kconfig
+# Arch: m
+CONFIG_QCOM_APCS_IPC=y
+# drivers/mfd/Kconfig
+# Arch: m
+CONFIG_MFD_QCOM_RPM=y
+# drivers/mmc/core/Kconfig
+# Arch: m
+CONFIG_MMC_BLOCK=y
+# drivers/mmc/host/Kconfig
+# Arch: m
+CONFIG_MMC_SDHCI_MSM=y
+# drivers/net/ipa/Kconfig
+# Arch: off
+CONFIG_QCOM_IPA=m
+# drivers/net/wireless/ath/ath10k/Kconfig
+# Arch: off
+CONFIG_ATH10K_SNOC=m
+# drivers/phy/qualcomm/Kconfig
+# Arch: m
+CONFIG_PHY_QCOM_EUSB2_REPEATER=y
+# Arch: m
+CONFIG_PHY_QCOM_QMP=y
+# Arch: m
+CONFIG_PHY_QCOM_QMP_COMBO=y
+# Arch: m
+CONFIG_PHY_QCOM_QMP_UFS=y
+# Arch: m
+CONFIG_PHY_QCOM_QMP_USB=y
+# Arch: m
+CONFIG_PHY_QCOM_QUSB2=y
+# Arch: m
+CONFIG_PHY_QCOM_USB_HS=y
+# drivers/pinctrl/qcom/Kconfig
+# Arch: m
+CONFIG_PINCTRL_QCOM_SSBI_PMIC=y
+# Arch: m
+CONFIG_PINCTRL_SDM660=y
+# drivers/pmdomain/qcom/Kconfig
+# Arch: m
+CONFIG_QCOM_RPMPD=y
+# drivers/power/reset/Kconfig
+# Arch: m
+CONFIG_NVMEM_REBOOT_MODE=y
+# Arch: m
+CONFIG_POWER_RESET_QCOM_PON=y
+# Arch: m
+CONFIG_REBOOT_MODE=y
+# Arch: m
+CONFIG_SYSCON_REBOOT_MODE=y
+# drivers/regulator/Kconfig
+# Arch: m
+CONFIG_REGULATOR_PWM=y
+# Arch: off
+CONFIG_REGULATOR_QCOM_SMD_RPM=y
+# Arch: m
+CONFIG_REGULATOR_QCOM_SPMI=y
+# Arch: m
+CONFIG_REGULATOR_QCOM_USB_VBUS=y
+# drivers/remoteproc/Kconfig
+# Arch: off
+CONFIG_QCOM_Q6V5_MSS=m
+# Arch: off
+CONFIG_QCOM_Q6V5_WCSS=m
+# Arch: off
+CONFIG_QCOM_WCNSS_PIL=m
+# drivers/reset/Kconfig
+# Arch: m
+CONFIG_RESET_GPIO=y
+# drivers/rpmsg/Kconfig
+# Arch: m
+CONFIG_RPMSG=y
+# Arch: m
+CONFIG_RPMSG_CHAR=y
+# Arch: m
+CONFIG_RPMSG_CTRL=y
+# Arch: m
+CONFIG_RPMSG_NS=y
+# Arch: m
+CONFIG_RPMSG_QCOM_GLINK=y
+# Arch: m
+CONFIG_RPMSG_QCOM_GLINK_RPM=y
+# Arch: m
+CONFIG_RPMSG_QCOM_GLINK_SMEM=y
+# Arch: off
+CONFIG_RPMSG_QCOM_SMD=y
+# drivers/rtc/Kconfig
+# Arch: m
+CONFIG_RTC_DRV_PM8XXX=y
+# drivers/soc/qcom/Kconfig
+# Arch: m
+CONFIG_QCOM_SMD_RPM=y
+# Arch: m
+CONFIG_QCOM_SOCINFO=y
+# Arch: m
+CONFIG_QCOM_SPM=y
+# drivers/spi/Kconfig
+# Arch: m
+CONFIG_SPI_QUP=y
+# drivers/usb/dwc3/Kconfig
+# Arch: m
+CONFIG_USB_DWC3_OF_SIMPLE=y
+# drivers/usb/misc/Kconfig
+# Arch: off
+CONFIG_USB_QCOM_EUD=m
+# drivers/usb/typec/Kconfig
+# Arch: m
+CONFIG_TYPEC=y
+# drivers/usb/typec/ucsi/Kconfig
+# Arch: m
+CONFIG_TYPEC_UCSI=y
+# drivers/video/backlight/Kconfig
+# Arch: m
+CONFIG_BACKLIGHT_LP855X=y
+# Arch: m
+CONFIG_BACKLIGHT_PWM=y
+# Arch: m
+CONFIG_BACKLIGHT_QCOM_WLED=y
+
+# ---- RS6 needs outside drivers/ (1)
+# kernel/dma/Kconfig
+# the SDM660 DTs define no default CMA pool; Nura ran with 32 MiB
+# Arch: 0
+CONFIG_CMA_SIZE_MBYTES=32
+
+# ---- RS6 overrides of Arch choices (2)
+# drivers/firmware/psci/Kconfig
+# boot-time PSCI hotplug/suspend self-test: never run with the RS6 OSI cluster idle / CPRh bring-up
+# Arch: y
+# CONFIG_ARM_PSCI_CHECKER is not set
+# drivers/misc/Kconfig
+# Arch has RPMB=m, which caps MMC_BLOCK at m; the RS6 root is on eMMC with mmc_block built in
+# Arch: m
+CONFIG_RPMB=y

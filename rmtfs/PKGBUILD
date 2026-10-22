@@ -1,0 +1,28 @@
+# Maintainer: Noa Himesaka <himesaka@noa.codes>
+#
+# Qualcomm remote filesystem service, 1.3 as on Alpine/Nura. On SDM660 the WCN3990 Wi-Fi runs on the
+# modem DSP, which needs rmtfs. Upstream's own units and udev rule (started when /dev/qcom_rmtfs_mem*
+# appears); the RS6 uses rmtfs.service (-r -P -s), as on Nura. Not in the Arch Ports repos (the AUR
+# has 1.2).
+
+pkgname=rmtfs
+pkgver=1.3
+pkgrel=1
+pkgdesc='Qualcomm Remote Filesystem Service Implementation'
+url='https://github.com/linux-msm/rmtfs'
+arch=(aarch64)
+license=(BSD-3-Clause)
+depends=(glibc qrtr systemd-libs)
+source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver/rmtfs-v$pkgver.tar.gz")
+sha256sums=('4b6c398806a1046e2256a685d592833de0f37b7245b8adc4797e1791f0e117ee')
+
+build() {
+  cd $pkgname-$pkgver
+  make prefix=/usr CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS -lqrtr -ludev -lpthread" rmtfs rmtfs.service rmtfs-dir.service
+}
+
+package() {
+  cd $pkgname-$pkgver
+  make prefix=/usr DESTDIR="$pkgdir" install
+  install -Dm644 LICENSE -t "$pkgdir"/usr/share/licenses/$pkgname/
+}
