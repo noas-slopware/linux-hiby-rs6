@@ -4,6 +4,8 @@
 # /usr/share/hiby-rs6/modules-initfs (userspace/system/modules-initfs on main, the same list
 # Nura's mkinitfs uses): display, panel, backlight, charger, battery; plus f2fs for the root
 # filesystem (a module in Arch's config). Storage (SDHCI-MSM, mmc_block) and ext4 are built in.
+# hiby-rs6-growroot.service grows the F2FS root to the whole arch_root partition before it is
+# mounted (images ship it sized to its content); add_systemd_unit (systemd hook) adds resize.f2fs.
 
 build() {
     local m
@@ -12,10 +14,15 @@ build() {
         add_module "$m"
     done < /usr/share/hiby-rs6/modules-initfs
     add_module f2fs
+
+    add_systemd_unit hiby-rs6-growroot.service
+    add_symlink /usr/lib/systemd/system/initrd-root-fs.target.wants/hiby-rs6-growroot.service \
+        /usr/lib/systemd/system/hiby-rs6-growroot.service
 }
 
 help() {
     cat <<HELPEOF
-Adds the HiBy RS6 early modules (msm, panel, backlight, charger, fuel gauge).
+Adds the HiBy RS6 early modules (msm, panel, backlight, charger, fuel gauge) and grows
+the F2FS root on arch_root to the whole partition before it is mounted.
 HELPEOF
 }

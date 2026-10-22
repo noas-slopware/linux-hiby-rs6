@@ -10,7 +10,8 @@
 #   hiby-rs6-device    meta package: everything below plus kernel, DTBs and firmware
 #   hiby-rs6-system    udev, tmpfiles, logind, shutdown watchdog, swap + zram, preset, firewall, touch
 #                      boost, VT lock, USB network, no cellular
-#   hiby-rs6-boot      extlinux.conf for U-Boot, mkinitcpio hook + config (F2FS root)
+#   hiby-rs6-boot      extlinux.conf for U-Boot, mkinitcpio hook + config (F2FS root, grown to the
+#                      whole arch_root partition in the initramfs)
 #   hiby-rs6-audio     UCM, PipeWire/WirePlumber config and scripts, darwinctl, Plasma volume step
 #   hiby-rs6-firefox   Venus V4L2 decoding shim, wrapper, desktop override, prefs
 #   hiby-rs6-plasma    KWin effects config, lock screen at session start, no X11 tray/menu proxies,
@@ -26,7 +27,7 @@ pkgname=(
   hiby-rs6-plasma
 )
 pkgver=1
-pkgrel=5
+pkgrel=6
 pkgdesc='HiBy RS6'
 url='https://github.com/noas-slopware/linux-hiby-rs6'
 arch=(aarch64)
@@ -54,11 +55,12 @@ source=(
   hiby-rs6-swap.service
   NetworkManager-hiby-rs6-wifi.conf
   86-hiby-rs6-usbnet-nm.rules
+  hiby-rs6-growroot.service
 )
 sha512sums=('b7ce99f8a91c928bc4d56850e4636d82d333b3a54f0e366ae6d4523cf902f639330773857543e8b56cbc5333351eb79fe4dffec3ba33655c2a24e8f7b1774e13'
             '802ab1021fa45a01da87d02dc087d5eb4937a004645319d6d832eae93cb91127748da9c00df9ed7ad25e6e9ec45dc5021bf613f99f794c0def43dc884c330f05'
             'e62eca3562027a7f456932cf7a7b983fb29648e99de00267b818e99db9c99c5dac53b5638fc083d48f690f829674ab11c863355dce103fb7784f394275b0a72d'
-            '20747792e4fe229f9a254bbe303efd942d80a8d3e909e969167fbf0a916144f28c569496d820d2cb64e19dc7b21db2fa841efac638c21478fcffaf69b5768c6b'
+            '8186a2e0a5b242f1b51729cd98b6fbfafe93be128326c0766127dcd2e11f716b96679cc2d1188cd85dcb730f6a069e08b1891566564a342994a036c25fd7413e'
             '7d89511c1cd396c6df5436a7e260a3929983f2858f5eb001d72553b058ae93b7d092c4658369465dd42ffbbc549acb175cb1071029cab6f5eeb188c5c5588dc9'
             '0ae69bd6d68541c4cca7db645e68aeed1f82d198434b3b2f3d45671a0d7bc527631340749ce2c6062f0149db9ccb8f4492da9c4e1ff0b955cd508d2df09a52a2'
             '90ed76a5b0523443605c1af28a633799048fda9ff34a309cf8d586ebc6dd5dadfd84a491856e4543e61b79d2ccfab2c112918fc552358a2a7a58c6c4265b5c2b'
@@ -73,7 +75,8 @@ sha512sums=('b7ce99f8a91c928bc4d56850e4636d82d333b3a54f0e366ae6d4523cf902f639330
             '5e590ef6b56aa71aa585e54693d713553258a481e5b14dd0bd842dba676f3877bc416106b033d189812972f44028daf61970e8cecf6b0c6fd0934996ab4797a9'
             'f304c3554b54a7c09e078a58e014da3c9f7c777371aca53c9aa1dc073b31a4fc1513ac4bd4c1a82816a3a6774481996d48d3c37efef08917bcbad9ad326d06bb'
             'ea07405abdbcdfa94681d10e9821d96d759beef5380bb20d8341b2b7f574b869952083bb486cc48df04b70331803f6a52140018e2800167a58b7f02953058ac3'
-            '33336caf63182636051a2a56c1078da5ece89d55f197394dac3d10ad2921643062a2ceac89cf87ba1a6cdbd01f7c57007a1339016b4f568833b8b200f02b8a31')
+            '33336caf63182636051a2a56c1078da5ece89d55f197394dac3d10ad2921643062a2ceac89cf87ba1a6cdbd01f7c57007a1339016b4f568833b8b200f02b8a31'
+            '218de11e9c241bfa92d691f376951ed13123bbec20fdcf33da7fc13fa57487b27ddfaece2811fc0afcb2ed12bc84919e9b391db94cc6532323a485211308b02e')
 
 _us() { echo "$srcdir/linux-hiby-rs6-$_rs6commit/userspace"; }
 
@@ -198,6 +201,8 @@ package_hiby-rs6-boot() {
 
   install -Dm644 "$us"/system/modules-initfs -t "$pkgdir"/usr/share/hiby-rs6/
   install -Dm644 "$srcdir"/hiby-rs6.initcpio-install "$pkgdir"/usr/lib/initcpio/install/hiby-rs6
+  # initramfs only (the hook adds it): grows the F2FS root to the whole arch_root partition
+  install -Dm644 "$srcdir"/hiby-rs6-growroot.service -t "$pkgdir"/usr/lib/systemd/system/
   install -Dm644 "$srcdir"/mkinitcpio-hiby-rs6.conf "$pkgdir"/etc/mkinitcpio.conf.d/hiby-rs6.conf
 }
 

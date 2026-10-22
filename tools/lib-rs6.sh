@@ -39,8 +39,12 @@ fi
 
 mkdir -p "$W"/{pacdb/sync,pkgcache,srcdest,ccache,out,logs,makepkg-gnupg} "$REPO"
 
-# pacman for the fetcher: bens + [rs6] (the repo dir mounted at /repo), AArch64 databases
-PAC=(pacman --config /tools/pacman-rs6.conf --arch aarch64 --dbpath /w/pacdb --cachedir /w/pkgcache
+# pacman for the fetcher: bens + [rs6] (the repo dir mounted at /repo), AArch64 databases.
+# RS6_PACMAN_CONF names another pacman.conf in tools/: pacman-rs6-published.conf takes [rs6] from the
+# published repository instead (mkpublic-rs6.sh, with its own RS6_WORK)
+PACCONF=/tools/${RS6_PACMAN_CONF:-pacman-rs6.conf}
+[ -f "$TOOLS/${PACCONF#/tools/}" ] || { echo "no $TOOLS/${PACCONF#/tools/}" >&2; exit 1; }
+PAC=(pacman --config "$PACCONF" --arch aarch64 --dbpath /w/pacdb --cachedir /w/pkgcache
      --gpgdir /w/gnupg --noconfirm)
 
 # fetcher as root (pacman), with the full download sandbox

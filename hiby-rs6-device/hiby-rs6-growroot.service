@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: MIT
+# HiBy RS6 (hiby-rs6-boot), initramfs only: grow the F2FS root to the whole arch_root partition.
+# Images ship the root file system sized to its content; F2FS can only grow offline, so this runs
+# before the root is checked and mounted. On a file system that already fills the partition
+# resize.f2fs prints "Nothing to resize." and writes nothing; on one that was not unmounted
+# cleanly it refuses (the kernel replays the log at mount) and the next boot grows it.
+# -F only skips resize.f2fs's interactive "continue? [y/n]" prompt.
+[Unit]
+Description=Grow the root file system to the arch_root partition
+DefaultDependencies=no
+ConditionPathExists=/etc/initrd-release
+ConditionKernelCommandLine=root=PARTLABEL=arch_root
+BindsTo=dev-disk-by\x2dpartlabel-arch_root.device
+After=dev-disk-by\x2dpartlabel-arch_root.device
+Before=systemd-fsck-root.service sysroot.mount
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/resize.f2fs -F /dev/disk/by-partlabel/arch_root
+StandardInput=null
+StandardOutput=journal+console
