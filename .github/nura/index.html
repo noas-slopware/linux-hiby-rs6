@@ -15,19 +15,22 @@
 </head>
 <body>
 <h1>linux-hiby-rs6 apk repository</h1>
-<p>Nura edge packages for the HiBy RS6 (aarch64), built by GitHub Actions from the
+<p>Nura packages for the HiBy RS6 (aarch64, built against edge), built by GitHub Actions from the
 <a href="https://github.com/noas-slopware/linux-hiby-rs6/tree/pmos"><code>pmos</code> branch</a> of
 <a href="https://github.com/noas-slopware/linux-hiby-rs6">linux-hiby-rs6</a>
 (commit <code>@PMOS_SHA@</code>).</p>
 <p>To use it on the RS6, as root:</p>
 <pre><code>wget -O /etc/apk/keys/@KEY_NAME@.pub @REPO_URL@/@KEY_NAME@.pub
-echo @REPO_URL@/edge &gt;&gt; /etc/apk/repositories
+echo @REPO_URL@/main &gt;&gt; /etc/apk/repositories
 apk update
 apk upgrade</code></pre>
-<p>The same repository is mirrored at <code>https://mirror.funami.tech/linux-hiby-rs6/nura/edge</code>
-(YuruMirror, Seoul): use that line instead of the one above, or both.</p>
-<p>Files: <a href="edge/aarch64/APKINDEX.tar.gz">edge/aarch64/APKINDEX.tar.gz</a>,
-<a href="edge/aarch64/packages.txt">package list</a>, <a href="edge/aarch64/built.json">build hashes</a>,
+<p>The same repository is mirrored at <code>https://mirror.funami.tech/linux-hiby-rs6/nura/main</code>
+(YuruMirror, Seoul): use that line instead of the one above, or both. The layout is upstream's
+(<code>&lt;base&gt;/main/&lt;arch&gt;/APKINDEX.tar.gz</code>, with an empty signed index for x86_64),
+so pmbootstrap can use <code>@REPO_URL@</code> or <code>https://mirror.funami.tech/linux-hiby-rs6/nura</code>
+as a mirror base.</p>
+<p>Files: <a href="main/aarch64/APKINDEX.tar.gz">main/aarch64/APKINDEX.tar.gz</a>,
+<a href="main/aarch64/packages.txt">package list</a>, <a href="main/aarch64/built.json">build hashes</a>,
 <a href="@KEY_NAME@.pub">signing key</a>.</p>
 <p>Arch Linux Ports packages for the RS6: <a href="arch/">arch/</a>.</p>
 </body>

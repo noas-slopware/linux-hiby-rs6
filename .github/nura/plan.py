@@ -22,7 +22,8 @@ Writes GitHub Actions outputs (to $GITHUB_OUTPUT, or stdout):
   build_<group>=true|false     whether the group's job has anything to build
   pkgs_<group>=<json>          [{"name", "key"}] to build in that job, in build order
   restore=<json>               [{"name", "key"}] to take from the actions cache
-  any=true|false               whether there is anything to publish
+  any=true|false               whether there is anything to publish (or the site to bring to the
+                               main/ layout)
   versions=<json>              {pkgname: version} of every package on the branch
   manifest=<json>              the built.json to publish when every job succeeds
 and a summary table to $GITHUB_STEP_SUMMARY when set.
@@ -119,7 +120,7 @@ def legacy_hashes(pmos: str, site: str, dirs: dict, pmb: str, pmaports: str) -> 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pmos", required=True, help="checkout of the pmos branch")
-    ap.add_argument("--site", required=True, help="URL of the published site (has edge/aarch64/)")
+    ap.add_argument("--site", required=True, help="URL of the published site (has main/aarch64/)")
     ap.add_argument("--force", action="store_true", help="build everything")
     args = ap.parse_args()
     pmb, pmaports = os.environ["PMB_COMMIT"], os.environ["PMAPORTS_COMMIT"]
@@ -142,7 +143,13 @@ def main() -> None:
     if max(len(p) for p in GROUPS.values()) > MAX_PER_GROUP:
         sys.exit(f"a group has more than {MAX_PER_GROUP} packages: add slots to nura-build")
 
-    repo = f"{args.site}/edge/aarch64"
+    # main/aarch64: upstream's layout; edge/aarch64: where sites before it had the repository
+    repo = f"{args.site}/main/aarch64"
+    layout_ok = all(pkgid.fetch(f"{args.site}/main/{a}/APKINDEX.tar.gz") is not None for a in ("aarch64", "x86_64"))
+    if pkgid.fetch(f"{repo}/APKINDEX.tar.gz") is None and pkgid.fetch(f"{args.site}/edge/aarch64/APKINDEX.tar.gz"):
+        repo = f"{args.site}/edge/aarch64"
+    print(f"published repository: {repo}" + ("" if layout_ok else " (publishing it in the main/ layout)"),
+          file=sys.stderr)
     index = published_index(f"{repo}/APKINDEX.tar.gz")
     manifest = pkgid.fetch_json(f"{repo}/built.json")
     legacy = {}
@@ -186,7 +193,8 @@ def main() -> None:
         outputs[f"build_{group}"] = "true" if todo else "false"
         outputs[f"pkgs_{group}"] = json.dumps(todo)
     outputs["restore"] = json.dumps(restore)
-    outputs["any"] = "true" if new["packages"] != published else "false"
+    # anything new to publish, or a published site that is not in the main/ layout yet
+    outputs["any"] = "true" if new["packages"] != published or (index and not layout_ok) else "false"
     outputs["versions"] = json.dumps(versions, sort_keys=True)
     outputs["manifest"] = json.dumps(new, sort_keys=True)
     pkgid.write_outputs(outputs)

@@ -1,8 +1,10 @@
 # Builds the Nura packages of the pmos branch for aarch64 with pmbootstrap, natively
 # on GitHub's arm64 runners, and publishes them as an apk repository on GitHub Pages and on
 # YuruMirror:
-#   https://noas-slopware.github.io/linux-hiby-rs6/edge
-#   https://mirror.funami.tech/linux-hiby-rs6/nura/edge
+#   https://noas-slopware.github.io/linux-hiby-rs6/main
+#   https://mirror.funami.tech/linux-hiby-rs6/nura/main
+# in upstream's layout: <base>/main/aarch64/APKINDEX.tar.gz, plus an empty signed
+# <base>/main/x86_64/APKINDEX.tar.gz, since pmbootstrap reads <base>/main/<arch>/ for the host too.
 # Only packages whose build is not published yet are built (or all of them with force): plan.py
 # gives every package a hash of its pmos directory plus the pmbootstrap and pmaports pins and
 # compares it with built.json next to the published APKINDEX. Each package is saved in the actions
@@ -295,7 +297,7 @@ jobs:
           VERSIONS: ${{ needs.plan.outputs.versions }}
           MANIFEST: ${{ needs.plan.outputs.manifest }}
         run: |
-          .github/nura/seed.sh "$NURA_REPO_URL/edge" "$RUNNER_TEMP/run-apks"
+          .github/nura/seed.sh "$NURA_REPO_URL" "$RUNNER_TEMP/run-apks"
           repo=$NURA_WORK/packages/edge/aarch64
           printf '%s' "$VERSIONS" > "$RUNNER_TEMP/versions.json"
           python3 -I .github/nura/apkindex.py prune "$repo/APKINDEX.tar.gz" "$RUNNER_TEMP/versions.json" \
@@ -306,21 +308,30 @@ jobs:
             pmbootstrap -y --details-to-stdout index
           fi
           site=$RUNNER_TEMP/site
-          mkdir -p "$site/edge/aarch64"
-          cp "$repo"/*.apk "$repo/APKINDEX.tar.gz" "$site/edge/aarch64/"
+          mkdir -p "$site/main/aarch64" "$site/main/x86_64"
+          cp "$repo"/*.apk "$repo/APKINDEX.tar.gz" "$site/main/aarch64/"
+          # an empty index for the host arch, signed like the others (abuild-sign, our key)
+          pmbootstrap -y chroot --user -- sh -euc 'mkdir -p /tmp/x86_64 && cd /tmp/x86_64 &&
+            apk -q index --output APKINDEX.tar.gz_ --description "linux-hiby-rs6 (no x86_64 packages)" \
+              --rewrite-arch x86_64 && abuild-sign APKINDEX.tar.gz_ && mv APKINDEX.tar.gz_ APKINDEX.tar.gz'
+          sudo cp "$NURA_WORK/chroot_native/tmp/x86_64/APKINDEX.tar.gz" "$site/main/x86_64/"
+          sudo chown "$(id -u):$(id -g)" "$site/main/x86_64/APKINDEX.tar.gz"
+          idx=$(tar -tzf "$site/main/x86_64/APKINDEX.tar.gz")
+          echo "$idx"
+          grep -qxF ".SIGN.RSA.$KEY_NAME.pub" <<< "$idx"
           cp "keys/$KEY_NAME.pub" "$site/"
           sed -e "s|@KEY_NAME@|$KEY_NAME|g" -e "s|@REPO_URL@|$NURA_REPO_URL|g" \
             -e "s|@PMOS_SHA@|${{ needs.plan.outputs.pmos_sha }}|g" \
             .github/nura/index.html > "$site/index.html"
-          python3 -I .github/nura/apkindex.py files "$site/edge/aarch64/APKINDEX.tar.gz" | sort > "$site/edge/aarch64/packages.txt"
-          printf '%s\n' "$MANIFEST" | python3 -m json.tool --sort-keys > "$site/edge/aarch64/built.json"
+          python3 -I .github/nura/apkindex.py files "$site/main/aarch64/APKINDEX.tar.gz" | sort > "$site/main/aarch64/packages.txt"
+          printf '%s\n' "$MANIFEST" | python3 -m json.tool --sort-keys > "$site/main/aarch64/built.json"
           python3 -I .github/common/site.py list "$site" nura
           python3 -I .github/common/site.py fetch "$NURA_REPO_URL" arch "$site"
           du -sh "$site"
           {
             echo "## Published"
             echo
-            echo "$(wc -l < "$site/edge/aarch64/packages.txt") packages, $(du -sh "$site" | cut -f1), pmos ${{ needs.plan.outputs.pmos_sha }}"
+            echo "$(wc -l < "$site/main/aarch64/packages.txt") packages, $(du -sh "$site" | cut -f1), pmos ${{ needs.plan.outputs.pmos_sha }}"
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-pages-artifact@v5
         with:

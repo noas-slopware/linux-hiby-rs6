@@ -2,12 +2,14 @@
 """The GitHub Pages site is shared by two workflows, and every Pages deployment replaces the whole
 site. Each workflow owns one part and carries the other part over from the live site unchanged:
 
-  nura  everything outside arch/: index.html, the apk signing key, edge/   (nura-packages.yml)
+  nura  everything outside arch/: index.html, the apk signing key, main/   (nura-packages.yml)
   arch  arch/                                                              (arch-packages.yml)
 
-Each part lists its files in <part dir>/files.txt (edge/files.txt, arch/files.txt; paths relative to
-the site root), which is what the other workflow downloads by. Both publish jobs share one
-concurrency group, so a deployment never drops what the other one just published.
+Each part lists its files in <part dir>/files.txt (main/files.txt, arch/files.txt; paths relative to
+the site root), which is what the other workflow downloads by. Sites from before the main/ layout
+had the nura part's list at edge/files.txt, or none (edge/aarch64/packages.txt is read then).
+Both publish jobs share one concurrency group, so a deployment never drops what the other one just
+published.
 
   site.py list <site dir> <part>               write the part's files.txt
   site.py fetch <site URL> <part> <site dir>   download the live part into <site dir>
@@ -21,7 +23,8 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-LISTS = {"nura": "edge/files.txt", "arch": "arch/files.txt"}
+LISTS = {"nura": "main/files.txt", "arch": "arch/files.txt"}
+OLD_LISTS = {"nura": ["edge/files.txt"], "arch": []}
 
 
 def in_part(rel: str, part: str) -> bool:
@@ -74,9 +77,14 @@ def legacy_nura(url: str) -> list[str] | None:
 
 
 def fetch_part(url: str, part: str, site: str) -> None:
-    listing = get(f"{url}/{LISTS[part]}")
-    if listing is not None:
-        files = [line for line in listing.decode().splitlines() if line] + [LISTS[part]]
+    files = None
+    for name in [LISTS[part]] + OLD_LISTS[part]:
+        listing = get(f"{url}/{name}")
+        if listing is not None:
+            files = [line for line in listing.decode().splitlines() if line] + [name]
+            break
+    if files is not None:
+        pass
     elif part == "nura":
         files = legacy_nura(url)
     else:

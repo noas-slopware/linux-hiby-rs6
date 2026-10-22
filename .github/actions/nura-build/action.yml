@@ -65,7 +65,7 @@ runs:
 
     - name: Seed the local repository
       shell: bash
-      run: .github/nura/seed.sh "$NURA_REPO_URL/edge" "$RUNNER_TEMP/run-apks"
+      run: .github/nura/seed.sh "$NURA_REPO_URL" "$RUNNER_TEMP/run-apks"
 
     # One build step and one cache step per package slot (GitHub has no loops over steps). A build
     # step runs when its slot is filled and nothing before it failed; the cache step right after it
