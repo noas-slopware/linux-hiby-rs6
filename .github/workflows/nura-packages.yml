@@ -1,4 +1,4 @@
-# Builds the postmarketOS (Nura) packages of the pmos branch for aarch64 with pmbootstrap, natively
+# Builds the Nura packages of the pmos branch for aarch64 with pmbootstrap, natively
 # on GitHub's arm64 runners, and publishes them as an apk repository on GitHub Pages:
 #   https://noas-slopware.github.io/linux-hiby-rs6/edge
 # Only packages whose APKBUILD version is not published yet are built (or all of them with
