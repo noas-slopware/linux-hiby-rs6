@@ -52,7 +52,7 @@ for s, v in sorted(pm.items(), key=lambda x: (kmap.get(x[0], '~'), x[0])):
     f = kmap.get(s, '?')
     if s in NONDRIVER_RS6:
         sections['nondrv'].append((s, v, f, a, NONDRIVER_RS6[s])); continue
-    if not isdrv(f) and s != 'CMDLINE_DROP_DANGEROUS_ANDROID_OPTIONS':
+    if not isdrv(f):
         continue
     if s in ARCH_WINS: continue
     if a is None:

@@ -26,7 +26,7 @@ pkgname=(
   hiby-rs6-plasma
 )
 pkgver=1
-pkgrel=1
+pkgrel=5
 pkgdesc='HiBy RS6'
 url='https://github.com/noas-slopware/linux-hiby-rs6'
 arch=(aarch64)
@@ -51,15 +51,18 @@ source=(
   nftables-hiby-rs6.conf
   nftables-hiby-rs6.service.conf
   plasma-mobile.service
+  hiby-rs6-swap.service
+  NetworkManager-hiby-rs6-wifi.conf
+  86-hiby-rs6-usbnet-nm.rules
 )
 sha512sums=('b7ce99f8a91c928bc4d56850e4636d82d333b3a54f0e366ae6d4523cf902f639330773857543e8b56cbc5333351eb79fe4dffec3ba33655c2a24e8f7b1774e13'
-            'b2e7f9f011698e2f7ff7848bfe412c6eb20bc5169844a807b17b78733a6fcce5aabd1ee7347110d92332a3b9ea160793e80e005c2c4849d44a916e52b864444c'
+            '802ab1021fa45a01da87d02dc087d5eb4937a004645319d6d832eae93cb91127748da9c00df9ed7ad25e6e9ec45dc5021bf613f99f794c0def43dc884c330f05'
             'e62eca3562027a7f456932cf7a7b983fb29648e99de00267b818e99db9c99c5dac53b5638fc083d48f690f829674ab11c863355dce103fb7784f394275b0a72d'
             '20747792e4fe229f9a254bbe303efd942d80a8d3e909e969167fbf0a916144f28c569496d820d2cb64e19dc7b21db2fa841efac638c21478fcffaf69b5768c6b'
             '7d89511c1cd396c6df5436a7e260a3929983f2858f5eb001d72553b058ae93b7d092c4658369465dd42ffbbc549acb175cb1071029cab6f5eeb188c5c5588dc9'
-            'e6cab62b68aa3fb9f844d816591b5f4520c695a528719274e03fe4e7f76bd883792db77cbfc01edd4fb54df19ea634f1f41665e919eeedc0cf61325621b9a294'
+            '0ae69bd6d68541c4cca7db645e68aeed1f82d198434b3b2f3d45671a0d7bc527631340749ce2c6062f0149db9ccb8f4492da9c4e1ff0b955cd508d2df09a52a2'
             '90ed76a5b0523443605c1af28a633799048fda9ff34a309cf8d586ebc6dd5dadfd84a491856e4543e61b79d2ccfab2c112918fc552358a2a7a58c6c4265b5c2b'
-            'f62850b3a7c7433283d6785daf6c8e81b3d7098c56653d859585bcda818aac01ebc332b10795ae2468768e6851dcc42e6148b8e33b3db09787797b11b53cc185'
+            '1457a624e3bcc3bd71fb02c7df7d48e561d0c912b9b4ba8286fe4d25f1241928aa72cb087976b797760480a94d7f1edcee4460e0ded69f8f2fe2cfd89bee4ef9'
             '56d02356dad676a3bbaab5639b16d605044ef37ab26a65fd9d2b8c89fcd59a5d3bf944ad3ec80d70fb3890cc6cb9a5d172b319f5733ed184a24e884a36738c6b'
             '843f415cc79f8e462cf686c60d5c578fb1b59058f610f567f8cb2a7b98b967453301d4d60b3c3eec801e1651121e1aa2c43eaee3933e445c96491802da6caae4'
             '52d65a68618e06a61eefb7ecfe4e7e8c3c872e2ef8d0658a70f38bed5dcee69c6931c1acf9a999353494aa72d5b04834feb02683469ea63e415f2caf9bc8ffd7'
@@ -67,7 +70,10 @@ sha512sums=('b7ce99f8a91c928bc4d56850e4636d82d333b3a54f0e366ae6d4523cf902f639330
             '161ca64fb862ee7897921ef02a2e7ae78209dd85ac1153af1b1eb54fce176537a2b3dd019ec78168436eaf6a100ba484b783223bca73cfcc2151896534cbaf4b'
             '47cd879fa2d8d0e4071506eff21f4c170d65a7b2eccc4549c84919c9595e5f9ff52f9bd0ed1133459eb9d63aa1643d1894bea2af0628aaec96a9122bc3a22b53'
             '247d57449254b9948294a69405c9080c508e18886b12f680be021ce1bc8a58d50388fa84e25f1f26538c101595d6b4fbed36d3a9608e00850940c719c551fc87'
-            '5e590ef6b56aa71aa585e54693d713553258a481e5b14dd0bd842dba676f3877bc416106b033d189812972f44028daf61970e8cecf6b0c6fd0934996ab4797a9')
+            '5e590ef6b56aa71aa585e54693d713553258a481e5b14dd0bd842dba676f3877bc416106b033d189812972f44028daf61970e8cecf6b0c6fd0934996ab4797a9'
+            'f304c3554b54a7c09e078a58e014da3c9f7c777371aca53c9aa1dc073b31a4fc1513ac4bd4c1a82816a3a6774481996d48d3c37efef08917bcbad9ad326d06bb'
+            'ea07405abdbcdfa94681d10e9821d96d759beef5380bb20d8341b2b7f574b869952083bb486cc48df04b70331803f6a52140018e2800167a58b7f02953058ac3'
+            '33336caf63182636051a2a56c1078da5ece89d55f197394dac3d10ad2921643062a2ceac89cf87ba1a6cdbd01f7c57007a1339016b4f568833b8b200f02b8a31')
 
 _us() { echo "$srcdir/linux-hiby-rs6-$_rs6commit/userspace"; }
 
@@ -76,8 +82,6 @@ prepare() {
   # Arch has no /usr/libexec convention: the VT lock helper lives with the other RS6 helpers
   # (userspace/ should move it there for every distro, dumps/arch-ports-plan.md section 8)
   sed -i 's|/usr/libexec/rs6-vt-lock|/usr/lib/hiby-rs6/rs6-vt-lock|' vt-lock/rs6-vt-lock.service
-  sed -i 's|^ExecStart=/sbin/swapon|ExecStart=/usr/bin/swapon|; s|^ExecStop=/sbin/swapoff|ExecStop=/usr/bin/swapoff|' \
-    system/nura-swap.service
 }
 
 build() {
@@ -118,6 +122,7 @@ package_hiby-rs6-system() {
     iio-sensor-proxy
     networkmanager
     nftables
+    qcom-diag
     rmtfs
     swclock-offset
     systemd
@@ -132,8 +137,8 @@ package_hiby-rs6-system() {
   install -Dm644 "$us"/system/90-hiby-rs6-perf.rules -t "$pkgdir"/usr/lib/udev/rules.d/
   install -Dm644 "$us"/system/hiby-rs6-perf.conf -t "$pkgdir"/usr/lib/tmpfiles.d/
 
-  # 8 GiB swap on nura_swap1 + nura_swap2 behind zram
-  install -Dm644 "$us"/system/nura-swap.service -t "$pkgdir"/usr/lib/systemd/system/
+  # 8 GiB swap on arch_swap1 + arch_swap2 behind zram
+  install -Dm644 "$srcdir"/hiby-rs6-swap.service -t "$pkgdir"/usr/lib/systemd/system/
   install -Dm644 "$srcdir"/zram-generator.conf -t "$pkgdir"/usr/lib/systemd/
   install -Dm644 "$srcdir"/90-hiby-rs6-zram.sysctl "$pkgdir"/usr/lib/sysctl.d/90-hiby-rs6-zram.conf
 
@@ -167,7 +172,9 @@ package_hiby-rs6-system() {
   install -Dm755 "$srcdir"/hiby-rs6-usbnet -t "$pkgdir"/usr/lib/hiby-rs6/
   install -Dm644 "$srcdir"/hiby-rs6-usbnet.service -t "$pkgdir"/usr/lib/systemd/system/
   install -Dm644 "$srcdir"/90-hiby-rs6-usbnet.rules -t "$pkgdir"/usr/lib/udev/rules.d/
+  install -Dm644 "$srcdir"/86-hiby-rs6-usbnet-nm.rules -t "$pkgdir"/usr/lib/udev/rules.d/
   install -Dm600 "$srcdir"/hiby-rs6-usb.nmconnection -t "$pkgdir"/usr/lib/NetworkManager/system-connections/
+  install -Dm644 "$srcdir"/NetworkManager-hiby-rs6-wifi.conf "$pkgdir"/usr/lib/NetworkManager/conf.d/60-hiby-rs6-wifi.conf
 
   install -Dm644 "$srcdir"/80-hiby-rs6.preset -t "$pkgdir"/usr/lib/systemd/system-preset/
 }

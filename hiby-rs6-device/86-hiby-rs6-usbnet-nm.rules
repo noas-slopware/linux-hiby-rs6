@@ -1,0 +1,4 @@
+# HiBy RS6: NetworkManager's 85-nm-unmanaged.rules leaves USB gadget interfaces unmanaged, expecting
+# whatever made the gadget to set it up. hiby-rs6-usbnet makes usb0 for NetworkManager's
+# hiby-rs6-usb profile (shared: 172.16.42.1 + DHCP for the host), so hand it back to NetworkManager.
+ACTION!="remove", SUBSYSTEM=="net", ENV{DEVTYPE}=="gadget", KERNEL=="usb0", ENV{NM_UNMANAGED}="0"

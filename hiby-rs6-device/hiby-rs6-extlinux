@@ -1,14 +1,14 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
 # hiby-rs6-extlinux: write /boot/extlinux/extlinux.conf for the RS6's U-Boot (sdm660-mainline, bootstd
-# extlinux on nura_boot) from the installed linux-hiby-rs6* kernels; run by 95-hiby-rs6-extlinux.hook.
+# extlinux on arch_boot) from the installed linux-hiby-rs6* kernels; run by 95-hiby-rs6-extlinux.hook.
 # Replaces Nura's boot-deploy, keeping its extlinux.d idea: extra, hand-made entries in
 # /usr/share/hiby-rs6/extlinux.d/*.conf and /etc/hiby-rs6/extlinux.d/*.conf are appended on every run
 # (copy a kernel/initramfs/DTB somewhere under /boot yourself and point an entry at it).
 #
-# /boot is the nura_boot partition, so paths in extlinux.conf are relative to /boot.
+# /boot is the arch_boot partition, so paths in extlinux.conf are relative to /boot.
 # Kernel command line: /etc/kernel/cmdline if it exists (used verbatim), else
-# "root=PARTLABEL=nura_root rootfstype=f2fs rw quiet" plus /usr/share/hiby-rs6/kernel-cmdline.conf.
+# "root=PARTLABEL=arch_root rootfstype=f2fs rw quiet" plus /usr/share/hiby-rs6/kernel-cmdline.conf.
 set -eu
 
 BOOT=${BOOT:-/boot}
@@ -26,7 +26,7 @@ cmdline() {
 		return
 	fi
 	{
-		echo "root=PARTLABEL=nura_root rootfstype=f2fs rw quiet"
+		echo "root=PARTLABEL=arch_root rootfstype=f2fs rw quiet"
 		[ -f "$SHARE/kernel-cmdline.conf" ] && grep -v '^[[:space:]]*#' "$SHARE/kernel-cmdline.conf"
 	} | tr -s '\n\t' '  ' | sed 's/^ *//; s/ *$//'
 }

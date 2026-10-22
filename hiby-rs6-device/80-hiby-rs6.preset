@@ -9,11 +9,12 @@ enable sshd.service
 enable tailscaled.service
 enable nftables.service
 enable rtkit-daemon.service
+enable diag-router.service
 enable rmtfs.service
 enable tqftpserv.service
 enable swclock-offset-boot.service
 enable swclock-offset-shutdown.service
-enable nura-swap.service
+enable hiby-rs6-swap.service
 enable rs6-touchboost.service
 enable rs6-vt-lock.service
 enable darwinctl-restore.service

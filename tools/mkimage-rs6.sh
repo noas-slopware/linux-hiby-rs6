@@ -8,7 +8,7 @@
 #   [USERNAME=archlinux PASSWORD=archlinux ROOT_PASSWORD=root] mkimage-rs6.sh <outdir> [root image size, default 8G]
 # Flash: U-Boot menu -> USB Mass Storage, then on the host
 #   tools/flash-nura-ums.sh /dev/sdX rs6-boot.img rs6-root.img   (main branch: name/hole checks + readback)
-#   resize.f2fs /dev/sdX<nura_root>                              (grow F2FS to the whole partition)
+#   resize.f2fs /dev/sdX<arch_root>                              (grow F2FS to the whole partition)
 set -euo pipefail
 
 out=${1:?usage: $0 <outdir> [root size]}
@@ -55,11 +55,11 @@ boot_img=$out/rs6-boot.img
 root_img=$out/rs6-root.img
 mkdir -p "$out"
 [ ! -e "$boot_img" ] && [ ! -e "$root_img" ] || { echo "$out already has images; use a new directory" >&2; exit 1; }
-truncate -s 1G "$boot_img"	# nura_boot is exactly 1 GiB
+truncate -s 1G "$boot_img"	# arch_boot is exactly 1 GiB
 truncate -s "$rootsize" "$root_img"
 # ext4 with e2fsprogs' defaults: U-Boot reads them (metadata_csum_seed is in its lazy read-only set)
-mkfs.ext4 -q -L nura_boot "$boot_img"
-mkfs.f2fs -q -l nura_root -O extra_attr,inode_checksum,sb_checksum "$root_img"
+mkfs.ext4 -q -L arch_boot "$boot_img"
+mkfs.f2fs -q -l arch_root -O extra_attr,inode_checksum,sb_checksum "$root_img"
 
 mnt=$(mktemp -d)
 mount -o loop "$root_img" "$mnt"
@@ -82,14 +82,16 @@ fi
 
 # the device's pacman.conf: [rs6] from rs6-mirrorlist between [core] and [extra], sandbox on (the kernel has
 # Landlock); the bens key in the target keyring too (pacstrap -K only populated archlinux)
-sed -e 's|^Server = file:///repo$|Include = /etc/pacman.d/rs6-mirrorlist|' "$conf" > "$mnt/etc/pacman.conf"
+# [rs6] goes first, above [core], so our packages (mesa and the rest) always win over bens'
+awk '/^\[rs6\]/ { skip = 1; next } /^\[/ { if (!done && $0 == "[core]") { print "[rs6]\nInclude = /etc/pacman.d/rs6-mirrorlist\n"; done = 1 } skip = 0 }
+	!skip' "$conf" > "$mnt/etc/pacman.conf"
 [ -n "${RS6_IN_CONTAINER:-}" ] ||
 	arch-chroot "$mnt" sh -c "curl -fsSL https://arch.bens.haus/$bens_key.asc | pacman-key --add - && pacman-key --lsign-key $bens_key"
 
 cat > "$mnt/etc/fstab" <<'FSTAB'
 # HiBy RS6: partitions by GPT name (tools/repartition-nura.sh layout)
-PARTLABEL=nura_root	/	f2fs	rw,noatime,lazytime	0 1
-PARTLABEL=nura_boot	/boot	ext4	rw,noatime	0 2
+PARTLABEL=arch_root	/	f2fs	rw,noatime,lazytime	0 1
+PARTLABEL=arch_boot	/boot	ext4	rw,noatime	0 2
 FSTAB
 echo hiby-rs6 > "$mnt/etc/hostname"
 echo LANG=C.UTF-8 > "$mnt/etc/locale.conf"

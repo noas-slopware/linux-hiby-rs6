@@ -13,9 +13,7 @@
 # Do not edit by hand: regenerate with mkfragment.py (next to this file), then review the diff.
 
 
-# ---- not in the Arch config: sdm660-mainline and RS6 series symbols (27)
-# arch/arm64/Kconfig
-CONFIG_CMDLINE_DROP_DANGEROUS_ANDROID_OPTIONS=y
+# ---- not in the Arch config: sdm660-mainline and RS6 series symbols (26)
 # drivers/crypto/Kconfig
 CONFIG_CRYPTO_DEV_QCE_AEAD=y
 CONFIG_CRYPTO_DEV_QCE_ENABLE_ALL=y
