@@ -13,8 +13,11 @@ repartition test) is on the `docs` branch in `docs/re-tools/`.
 - `extract-hm100-blobs.py`: cuts the FPGA bitstreams and FIR table out of the stock kernel.
 - `edl-check.sh`: read-only EDL check (loader hash, GPT, slot flags).
 - `repartition-nura.sh`, `repartition-nura-ums.sh`, `lib/nura-gpt.sh`: repartition the eMMC for Nura and write
-  the images, over EDL or over U-Boot USB Mass Storage.
-- `flash-nura-ums.sh`: write new boot/root images over U-Boot USB Mass Storage, partition table untouched.
+  the images, over EDL or over U-Boot USB Mass Storage. `RS6_PART_PREFIX=arch` names the four new entries
+  `arch_boot`, `arch_swap1`, `arch_swap2`, `arch_root` (Arch Linux Ports) instead of `nura_*`; same layout.
+- `flash-nura-ums.sh`: write new boot/root images over U-Boot USB Mass Storage, partition table untouched
+  (`RS6_PART_PREFIX` as above). Images with a `.bmap` go through `bmaptool` (only mapped blocks written, compressed
+  images decompressed on the fly) and `bmap-readback.py` (only mapped blocks read back and checked).
 - `abslot.py`: show or switch the A/B slot flags on a raw eMMC (e.g. the U-Boot USB Mass Storage block device),
   the way `edl setactiveslot` does on this unit, without EDL.
 

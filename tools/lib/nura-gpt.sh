@@ -14,7 +14,16 @@
 #   #last+1 (appended)     -> system_b    1 MiB dummy at 0x220020000 (gap after storsec)
 # misc is cleared by the caller (U-Boot's "fastboot reboot-bootloader" leaves "bootonce-bootloader"
 # there; ABL itself only acts on "boot-recovery" and "ffbm-").
+# The four OS entries are named <prefix>_boot, _swap1, _swap2, _root: RS6_PART_PREFIX=nura (default,
+# Nura) or arch (Arch Linux Ports). Both behave the same under ABL's name rules: <prefix>_boot
+# contains "_b" (bit 50 on slot B, cosmetic), the swaps contain neither "_a" nor "_b" (no A/B pair).
 export LC_ALL=C
+RS6_PART_PREFIX=${RS6_PART_PREFIX:-nura}
+case $RS6_PART_PREFIX in
+	nura|arch) ;;
+	*) echo "RS6_PART_PREFIX must be nura or arch, not '$RS6_PART_PREFIX'" >&2; exit 1 ;;
+esac
+PFX=$RS6_PART_PREFIX
 
 NURA_TOTAL=122142720		# sectors, from edl printgpt (an RS6 eMMC user area is 122142720 sectors)
 
@@ -74,15 +83,15 @@ nura_chk() {
 nura_validate() {
 	local img=$1 n s e want used last
 	sgdisk -v "$img" | grep -q 'No problems found' || { sgdisk -v "$img"; echo "sgdisk -v reports problems; stopping"; exit 1; }
-	for n in nura_boot nura_swap1 nura_swap2 nura_root system_a system_b misc boot_a boot_b; do
+	for n in "${PFX}_boot" "${PFX}_swap1" "${PFX}_swap2" "${PFX}_root" system_a system_b misc boot_a boot_b; do
 		[ -n "$(nura_num "$img" "$n")" ] || { echo "no $n entry; stopping"; exit 1; }
 	done
 	read -r used last < <(nura_counts "$img")
 	[ "$used" = "$last" ] || { echo "GPT has holes ($used entries, last is $last); stopping"; exit 1; }
-	for want in "nura_boot:$SYS_START:$((SYS_START + BOOT_SECT - 1))" \
-		"nura_swap1:$SWAP1_START:$((SYS_END - 1))" \
-		"nura_swap2:$UD_START:$((UD_START + SWAP2_SECT - 1))" \
-		"nura_root:$ROOT_START:$((NURA_TOTAL - 34))" \
+	for want in "${PFX}_boot:$SYS_START:$((SYS_START + BOOT_SECT - 1))" \
+		"${PFX}_swap1:$SWAP1_START:$((SYS_END - 1))" \
+		"${PFX}_swap2:$UD_START:$((UD_START + SWAP2_SECT - 1))" \
+		"${PFX}_root:$ROOT_START:$((NURA_TOTAL - 34))" \
 		"system_a:$SA_START:$((SA_START + DUMMY_SECT - 1))" \
 		"system_b:$SB_START:$((SB_START + DUMMY_SECT - 1))"; do
 		IFS=: read -r n s e <<< "$want"
@@ -144,11 +153,11 @@ nura_build_gpt() {
 	cp --sparse=always "$ORIG" "$IMG"
 	sgdisk -d "$N_SA" -d "$N_SB" -d "$N_VA" -d "$N_VB" -d "$N_UD" "$IMG" >/dev/null
 	sgdisk -a 1 \
-		-n "$N_SA:$SYS_START:+$BOOT_SECT" -t "$N_SA:8300" -c "$N_SA:nura_boot" \
-		-n "$N_SB:$SWAP1_START:$((SYS_END - 1))" -t "$N_SB:8200" -c "$N_SB:nura_swap1" \
-		-n "$N_VA:$UD_START:+$SWAP2_SECT" -t "$N_VA:8200" -c "$N_VA:nura_swap2" \
+		-n "$N_SA:$SYS_START:+$BOOT_SECT" -t "$N_SA:8300" -c "$N_SA:${PFX}_boot" \
+		-n "$N_SB:$SWAP1_START:$((SYS_END - 1))" -t "$N_SB:8200" -c "$N_SB:${PFX}_swap1" \
+		-n "$N_VA:$UD_START:+$SWAP2_SECT" -t "$N_VA:8200" -c "$N_VA:${PFX}_swap2" \
 		-n "$N_VB:$SA_START:+$DUMMY_SECT" -t "$N_VB:8300" -c "$N_VB:system_a" \
-		-n "$N_UD:$ROOT_START:0" -t "$N_UD:8300" -c "$N_UD:nura_root" \
+		-n "$N_UD:$ROOT_START:0" -t "$N_UD:8300" -c "$N_UD:${PFX}_root" \
 		-n "$N_NEW:$SB_START:+$DUMMY_SECT" -t "$N_NEW:8300" -c "$N_NEW:system_b" \
 		"$IMG" >/dev/null
 	# sgdisk keeps the backup array where the dump had it; pin it where ABL writes it

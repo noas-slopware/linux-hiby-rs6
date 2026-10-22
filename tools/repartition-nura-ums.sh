@@ -4,6 +4,7 @@
 # Offline tests: NURA_NO_ELEVATE=1 skips pkexec when DEV is a regular file you own (images
 # only, see docs/re-tools/test-repartition-nura.sh on the docs branch); NURA_OUT overrides the output directory (default ./repartition-<date>).
 #   tools/repartition-nura-ums.sh /dev/sdX <pmOS_boot img> <pmOS_root img> [swap GiB, default 8]
+# Arch Linux Ports: RS6_PART_PREFIX=arch names the four entries arch_* instead of nura_* (lib/nura-gpt.sh).
 # U-Boot: volume up at boot -> menu -> USB Mass Storage; /dev/sdX is the whole eMMC user area.
 set -euo pipefail
 SELF=$(realpath "$0")
@@ -28,7 +29,7 @@ if [ "$(id -u)" != 0 ]; then
 		export OWNER="$(id -u):$(id -g)"	# test mode: regular image file, stay unprivileged
 	else
 		exec systemd-run --user --wait --pipe --quiet -p WorkingDirectory="$PWD" \
-			pkexec env OWNER="$(id -u):$(id -g)" "$SELF" "$DEV" "$BOOT" "$ROOT" "$SWAP_GIB"
+			pkexec env RS6_PART_PREFIX="$PFX" OWNER="$(id -u):$(id -g)" "$SELF" "$DEV" "$BOOT" "$ROOT" "$SWAP_GIB"
 	fi
 fi
 
@@ -54,20 +55,20 @@ cmp "$OUT/gpt-backup.new" <(dd if="$DEV" bs=512 skip=$((TOTAL - 33)) count=33 st
 sgdisk -v "$DEV" | grep -q 'No problems found' || { echo "sgdisk -v on the device reports problems"; exit 1; }
 sgdisk -p "$DEV" | tee "$OUT/sgdisk.dev.txt"
 
-nura_swaphdr nura_swap1 "$SWAP1_SECT" | dd of="$DEV" bs=512 seek="$SWAP1_START" conv=notrunc,fsync status=none
-nura_swaphdr nura_swap2 "$SWAP2_SECT" | dd of="$DEV" bs=512 seek="$UD_START" conv=notrunc,fsync status=none
+nura_swaphdr "${PFX}_swap1" "$SWAP1_SECT" | dd of="$DEV" bs=512 seek="$SWAP1_START" conv=notrunc,fsync status=none
+nura_swaphdr "${PFX}_swap2" "$SWAP2_SECT" | dd of="$DEV" bs=512 seek="$UD_START" conv=notrunc,fsync status=none
 dd if="$BOOT" of="$DEV" bs=4M seek=$((SYS_START * 512)) oflag=seek_bytes conv=notrunc,fsync status=progress
 dd if="$ROOT" of="$DEV" bs=4M seek=$((ROOT_START * 512)) oflag=seek_bytes conv=notrunc,fsync status=progress
 # clear misc: a leftover bootonce-bootloader makes ABL drop to fastboot
 dd if=/dev/zero of="$DEV" bs=512 seek="$MISC_START" count="$MISC_SECT" conv=notrunc,fsync status=none
 sync
 cmp "$BOOT" <(dd if="$DEV" bs=4M skip=$((SYS_START * 512)) iflag=skip_bytes,count_bytes count=$(stat -c%s "$BOOT") status=none) &&
-	echo "nura_boot readback matches"
+	echo "${PFX}_boot readback matches"
 cmp "$ROOT" <(dd if="$DEV" bs=4M skip=$((ROOT_START * 512)) iflag=skip_bytes,count_bytes count=$(stat -c%s "$ROOT") status=none) &&
-	echo "nura_root readback matches"
+	echo "${PFX}_root readback matches"
 cmp <(head -c $((MISC_SECT * 512)) /dev/zero) <(dd if="$DEV" bs=512 skip="$MISC_START" count="$MISC_SECT" status=none) &&
 	echo "misc is zero"
 blkid -p -O $((SWAP1_START * 512)) "$DEV"
 blkid -p -O $((UD_START * 512)) "$DEV"
 chown -R "${OWNER:-$(id -u):$(id -g)}" "$OUT"
-echo "saved to $OUT; eject UMS in U-Boot and boot: U-Boot (boot_a) -> ABL -> extlinux on nura_boot -> Nura"
+echo "saved to $OUT; eject UMS in U-Boot and boot: U-Boot (boot_a) -> ABL -> extlinux on ${PFX}_boot"

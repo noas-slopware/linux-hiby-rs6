@@ -2,6 +2,7 @@
 # Give the whole user area of the RS6 eMMC to Nura. Run on the machine the RS6 is plugged
 # into (EDL, 05c6:9008):
 #   RS6_LOADER=prog_emmc_ufs_firehose_Sdm660_ddr.elf tools/repartition-nura.sh <pmOS_boot img> <pmOS_root img> [swap GiB, default 8]
+# Arch Linux Ports: RS6_PART_PREFIX=arch names the four entries arch_* instead of nura_* (lib/nura-gpt.sh).
 # RS6_LOADER is the firehose programmer from HiBy's official burn package (not shipped here).
 # EDL is the bkerler edl executable (default: edl from PATH).
 #
@@ -50,7 +51,7 @@ if [ "$(id -u)" != 0 ]; then
 		fi
 		lsusb | grep -q 05c6:9008 || { echo "no 05c6:9008 device; enter EDL by hand and rerun"; exit 1; }
 		exec systemd-run --user --wait --pipe --quiet -p WorkingDirectory="$PWD" \
-			pkexec env RS6_LOADER="$L" EDL="${EDL:-$(command -v edl)}" OWNER="$(id -u):$(id -g)" "$SELF" "$BOOT" "$ROOT" "$SWAP_GIB"
+			pkexec env RS6_PART_PREFIX="$PFX" RS6_LOADER="$L" EDL="${EDL:-$(command -v edl)}" OWNER="$(id -u):$(id -g)" "$SELF" "$BOOT" "$ROOT" "$SWAP_GIB"
 	fi
 fi
 
@@ -69,8 +70,8 @@ edl printgpt > "$OUT/printgpt.orig.txt" 2>&1
 nura_build_gpt "$OUT" "$SWAP_GIB"
 
 # 3. swap signatures for the exact partition sizes (mkswap on sparse files, first 4 KiB)
-nura_swaphdr nura_swap1 "$SWAP1_SECT" > "$OUT/swap1.hdr"
-nura_swaphdr nura_swap2 "$SWAP2_SECT" > "$OUT/swap2.hdr"
+nura_swaphdr "${PFX}_swap1" "$SWAP1_SECT" > "$OUT/swap1.hdr"
+nura_swaphdr "${PFX}_swap2" "$SWAP2_SECT" > "$OUT/swap2.hdr"
 head -c $((MISC_SECT * 512)) /dev/zero > "$OUT/misc.zero"
 
 # 4. write: GPT first (backup, then primary), then the contents by sector
@@ -91,12 +92,12 @@ edl ws "$ROOT_START" "$ROOT" 2>&1 | tail -n 2
 # clear misc: a leftover bootonce-bootloader makes ABL drop to fastboot
 edl ws "$MISC_START" "$OUT/misc.zero" 2>&1 | tail -n 1
 edl rs "$SYS_START" $(( $(stat -c%s "$BOOT") / 512 )) "$OUT/boot.readback" 2>&1 | tail -n 1
-cmp "$BOOT" "$OUT/boot.readback" && echo "nura_boot readback matches"
+cmp "$BOOT" "$OUT/boot.readback" && echo "${PFX}_boot readback matches"
 edl rs "$MISC_START" "$MISC_SECT" "$OUT/misc.readback" 2>&1 | tail -n 1
 cmp "$OUT/misc.zero" "$OUT/misc.readback" && echo "misc is zero"
 rm -f "$OUT/boot.readback" "$OUT/misc.readback" "$OUT/misc.zero"
 edl printgpt > "$OUT/printgpt.new.txt" 2>&1
-grep -E '^(nura_|system_|boot_|modem_|dsp_|bluetooth_|persist|keystore|frp|devcfg)' "$OUT/printgpt.new.txt"
+grep -E "^(${PFX}_|system_|boot_|modem_|dsp_|bluetooth_|persist|keystore|frp|devcfg)" "$OUT/printgpt.new.txt"
 edl reset 2>&1 | tail -n 2
 chown -R "$OWNER" "$OUT"
-echo "saved to $OUT; U-Boot (boot_a) -> ABL -> extlinux on nura_boot -> Nura"
+echo "saved to $OUT; U-Boot (boot_a) -> ABL -> extlinux on ${PFX}_boot"
