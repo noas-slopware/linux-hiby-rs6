@@ -1,0 +1,114 @@
+From b16e3d0e645770381b9bca62f866084a4e8ac508 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 18:25:02 +0900
+Subject: [PATCH 34/94] Bluetooth: hci_qca: set the WCN3990 supply voltages
+
+Read per-supply voltages from vdd*-microvolt properties and set them when
+enabling the regulators (released on disable), so the rails run at the
+stock voltages. vddio is not required.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ .../net/bluetooth/qcom,wcn3990-bt.yaml        |  7 ++++-
+ drivers/bluetooth/hci_qca.c                   | 30 +++++++++++++++++--
+ 2 files changed, 34 insertions(+), 3 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/net/bluetooth/qcom,wcn3990-bt.yaml b/Documentation/devicetree/bindings/net/bluetooth/qcom,wcn3990-bt.yaml
+index 89ceb1f7d..141f7e1d6 100644
+--- a/Documentation/devicetree/bindings/net/bluetooth/qcom,wcn3990-bt.yaml
++++ b/Documentation/devicetree/bindings/net/bluetooth/qcom,wcn3990-bt.yaml
+@@ -36,10 +36,15 @@ properties:
+   vddxo-supply:
+     description: VDD_XO supply regulator handle
+ 
++patternProperties:
++  "^vdd(ch0|ch1|io|rf|xo)-microvolt$":
++    description:
++      Voltage range (min max, uV) to vote on the matching supply while
++      Bluetooth is on.
++
+ required:
+   - compatible
+   - vddch0-supply
+-  - vddio-supply
+   - vddrf-supply
+   - vddxo-supply
+ 
+diff --git a/drivers/bluetooth/hci_qca.c b/drivers/bluetooth/hci_qca.c
+index 1222f9780..27326c27c 100644
+--- a/drivers/bluetooth/hci_qca.c
++++ b/drivers/bluetooth/hci_qca.c
+@@ -213,6 +213,8 @@ struct qca_device_data {
+ struct qca_power {
+ 	struct device *dev;
+ 	struct regulator_bulk_data *vreg_bulk;
++	/* optional "<supply>-microvolt" min/max, voted only while powered */
++	u32 (*vreg_uV)[2];
+ 	int num_vregs;
+ 	bool vregs_on;
+ 	struct pwrseq_desc *pwrseq;
+@@ -2316,7 +2318,7 @@ static int qca_hci_shutdown(struct hci_dev *hdev)
+ static int qca_regulator_enable(struct qca_serdev *qcadev)
+ {
+ 	struct qca_power *power = qcadev->bt_power;
+-	int ret;
++	int ret, i;
+ 
+ 	if (power->pwrseq)
+ 		return pwrseq_power_on(power->pwrseq);
+@@ -2327,6 +2329,16 @@ static int qca_regulator_enable(struct qca_serdev *qcadev)
+ 
+ 	BT_DBG("enabling %d regulators)", power->num_vregs);
+ 
++	for (i = 0; i < power->num_vregs; i++) {
++		if (!power->vreg_uV[i][1])
++			continue;
++		ret = regulator_set_voltage(power->vreg_bulk[i].consumer,
++					    power->vreg_uV[i][0],
++					    power->vreg_uV[i][1]);
++		if (ret)
++			return ret;
++	}
++
+ 	ret = regulator_bulk_enable(power->num_vregs, power->vreg_bulk);
+ 	if (ret)
+ 		return ret;
+@@ -2343,6 +2355,7 @@ static int qca_regulator_enable(struct qca_serdev *qcadev)
+ static void qca_regulator_disable(struct qca_serdev *qcadev)
+ {
+ 	struct qca_power *power;
++	int i;
+ 
+ 	if (!qcadev)
+ 		return;
+@@ -2356,6 +2369,10 @@ static void qca_regulator_disable(struct qca_serdev *qcadev)
+ 	regulator_bulk_disable(power->num_vregs, power->vreg_bulk);
+ 	power->vregs_on = false;
+ 
++	for (i = 0; i < power->num_vregs; i++)
++		if (power->vreg_uV[i][1])
++			regulator_set_voltage(power->vreg_bulk[i].consumer, 0, INT_MAX);
++
+ 	clk_disable_unprepare(qcadev->susclk);
+ }
+ 
+@@ -2370,8 +2387,17 @@ static int qca_init_regulators(struct qca_power *qca,
+ 	if (!bulk)
+ 		return -ENOMEM;
+ 
+-	for (i = 0; i < num_vregs; i++)
++	qca->vreg_uV = devm_kcalloc(qca->dev, num_vregs, sizeof(*qca->vreg_uV), GFP_KERNEL);
++	if (!qca->vreg_uV)
++		return -ENOMEM;
++
++	for (i = 0; i < num_vregs; i++) {
++		char prop[32];
++
+ 		bulk[i].supply = vregs[i].name;
++		snprintf(prop, sizeof(prop), "%s-microvolt", vregs[i].name);
++		of_property_read_u32_array(qca->dev->of_node, prop, qca->vreg_uV[i], 2);
++	}
+ 
+ 	ret = devm_regulator_bulk_get(qca->dev, num_vregs, bulk);
+ 	if (ret < 0)

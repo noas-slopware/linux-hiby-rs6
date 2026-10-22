@@ -1,0 +1,108 @@
+From 8dd3137e9c8d920ea14b0bd055e39bca2dc3a131 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 18:25:02 +0900
+Subject: [PATCH 33/94] ASoC: qcom: sm8250: codec-clocked secondary MI2S
+
+qcom,sec-mi2s-clock-consumer: the codec provides BCLK and WS on the
+secondary MI2S. Point the LPASS bit clock at the external pin (EBIT, as
+the downstream msm_mi2s_snd_startup does for CBM_CFM) and run the AFE
+at a fixed 384 kHz, so the DSP never resamples.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ .../bindings/sound/qcom,sm8250.yaml           |  7 +++++
+ sound/soc/qcom/sm8250.c                       | 27 +++++++++++++++++++
+ 2 files changed, 34 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/sound/qcom,sm8250.yaml b/Documentation/devicetree/bindings/sound/qcom,sm8250.yaml
+index 1d7f2ae4d..d6e8de308 100644
+--- a/Documentation/devicetree/bindings/sound/qcom,sm8250.yaml
++++ b/Documentation/devicetree/bindings/sound/qcom,sm8250.yaml
+@@ -69,6 +69,13 @@ properties:
+     $ref: /schemas/types.yaml#/definitions/string
+     description: User visible long sound card name
+ 
++  qcom,sec-mi2s-clock-consumer:
++    type: boolean
++    description:
++      The external codec on the secondary MI2S port provides the bit clock and
++      word select. The LPASS bit clock is then taken from the external pin and
++      the port rate is fixed to 384000 Hz.
++
+ patternProperties:
+   ".*-dai-link$":
+     description:
+diff --git a/sound/soc/qcom/sm8250.c b/sound/soc/qcom/sm8250.c
+index 76dc3a3f4..2e47fb4fc 100644
+--- a/sound/soc/qcom/sm8250.c
++++ b/sound/soc/qcom/sm8250.c
+@@ -20,6 +20,7 @@
+ 
+ struct sm8250_snd_data {
+ 	bool stream_prepared[AFE_PORT_MAX];
++	bool sec_mi2s_clk_consumer;
+ 	struct snd_soc_card *card;
+ 	struct snd_soc_jack jack;
+ 	struct snd_soc_jack usb_offload_jack;
+@@ -58,6 +59,7 @@ static void sm8250_snd_exit(struct snd_soc_pcm_runtime *rtd)
+ static int sm8250_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+ 				     struct snd_pcm_hw_params *params)
+ {
++	struct sm8250_snd_data *data = snd_soc_card_get_drvdata(rtd->card);
+ 	struct snd_interval *rate = hw_param_interval(params,
+ 					SNDRV_PCM_HW_PARAM_RATE);
+ 	struct snd_interval *channels = hw_param_interval(params,
+@@ -65,6 +67,14 @@ static int sm8250_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+ 	struct snd_mask *fmt = hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT);
+ 
+ 	rate->min = rate->max = 48000;
++	/*
++	 * Codec-clocked SEC MI2S (HiBy RS6 FPGA DAC): the codec picks the real frame rate, the
++	 * AFE runs at a fixed nominal 384000 like the stock msm_dai_q6_mi2s_hw_params
++	 * (hiby_fixed_samplerate), so the DSP never resamples.
++	 */
++	if (data->sec_mi2s_clk_consumer &&
++	    snd_soc_rtd_to_cpu(rtd, 0)->id == SECONDARY_MI2S_RX)
++		rate->min = rate->max = 384000;
+ 	channels->min = channels->max = 2;
+ 	snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S16_LE);
+ 
+@@ -78,6 +88,7 @@ static int sm8250_snd_startup(struct snd_pcm_substream *substream)
+ 	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+ 	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+ 	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
++	struct sm8250_snd_data *data = snd_soc_card_get_drvdata(rtd->card);
+ 
+ 	switch (cpu_dai->id) {
+ 	case PRIMARY_MI2S_RX:
+@@ -89,6 +100,20 @@ static int sm8250_snd_startup(struct snd_pcm_substream *substream)
+ 		snd_soc_dai_set_fmt(codec_dai, codec_dai_fmt);
+ 		break;
+ 	case SECONDARY_MI2S_RX:
++		if (data->sec_mi2s_clk_consumer) {
++			/*
++			 * The codec provides BCLK and WS: point the LPASS bit clock at the
++			 * external pin (EBIT, as the downstream msm_mi2s_snd_startup does for
++			 * CBM_CFM) and let the AFE take an external WS.
++			 */
++			snd_soc_dai_set_sysclk(cpu_dai,
++				Q6AFE_LPASS_CLK_ID_SEC_MI2S_EBIT,
++				MI2S_BCLK_RATE, SNDRV_PCM_STREAM_PLAYBACK);
++			snd_soc_dai_set_fmt(cpu_dai, SND_SOC_DAIFMT_BC_FC);
++			snd_soc_dai_set_fmt(codec_dai, SND_SOC_DAIFMT_BP_FP |
++					    SND_SOC_DAIFMT_NB_NF | SND_SOC_DAIFMT_I2S);
++			break;
++		}
+ 		codec_dai_fmt |= SND_SOC_DAIFMT_NB_NF | SND_SOC_DAIFMT_I2S;
+ 		snd_soc_dai_set_sysclk(cpu_dai,
+ 			Q6AFE_LPASS_CLK_ID_SEC_MI2S_IBIT,
+@@ -200,6 +225,8 @@ static int sm8250_platform_probe(struct platform_device *pdev)
+ 		return ret;
+ 
+ 	card->driver_name = of_device_get_match_data(dev);
++	data->sec_mi2s_clk_consumer = of_property_read_bool(dev->of_node,
++						"qcom,sec-mi2s-clock-consumer");
+ 	sm8250_add_be_ops(card);
+ 	return devm_snd_soc_register_card(dev, card);
+ }

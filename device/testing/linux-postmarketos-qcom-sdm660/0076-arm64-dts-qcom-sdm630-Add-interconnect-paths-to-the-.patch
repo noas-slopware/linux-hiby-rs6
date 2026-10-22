@@ -1,0 +1,108 @@
+From 1543df5424b812d511744cb84062e7e7b77bc1ea Mon Sep 17 00:00:00 2001
+From: Fabricio Akio <fabricioakio@gmail.com>
+Date: Fri, 9 Oct 2026 17:49:30 -0300
+Subject: [PATCH 76/94] arm64: dts: qcom: sdm630: Add interconnect paths to the
+ BLSP I2C and SPI controllers
+
+The QUP I2C and SPI controllers move their data through the BLSP BAM
+DMA engines, which reach DDR as the aggregation NoC masters BLSP_1 and
+BLSP_2. No path is described for them, so nothing requests bandwidth for
+those masters while a transfer runs.
+
+Describe the path from each controller's BLSP master to DDR, as the
+vendor kernel votes it. On a Motorola Moto X4 (SDM630), with the
+boot-time interconnect votes released and system-level sleep enabled,
+an I2C transfer running as the SoC entered that sleep hung the SoC
+without these paths; with them, 5,000 transfers ran through about 3,000
+sleep entries.
+
+Signed-off-by: Fabricio Akio <fabricioakio@gmail.com>
+---
+ arch/arm64/boot/dts/qcom/sdm630.dtsi | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sdm630.dtsi b/arch/arm64/boot/dts/qcom/sdm630.dtsi
+index 4ec487a05..e97158cfd 100644
+--- a/arch/arm64/boot/dts/qcom/sdm630.dtsi
++++ b/arch/arm64/boot/dts/qcom/sdm630.dtsi
+@@ -1858,6 +1858,8 @@ blsp_i2c1: i2c@c175000 {
+ 			dmas = <&blsp1_dma 4>, <&blsp1_dma 5>;
+ 			dma-names = "tx", "rx";
+ 
++			interconnects = <&a2noc MASTER_BLSP_1 &bimc SLAVE_EBI>;
++
+ 			pinctrl-names = "default", "sleep";
+ 			pinctrl-0 = <&i2c1_default>;
+ 			pinctrl-1 = <&i2c1_sleep>;
+@@ -1878,6 +1880,8 @@ blsp_i2c2: i2c@c176000 {
+ 			dmas = <&blsp1_dma 6>, <&blsp1_dma 7>;
+ 			dma-names = "tx", "rx";
+ 
++			interconnects = <&a2noc MASTER_BLSP_1 &bimc SLAVE_EBI>;
++
+ 			pinctrl-names = "default", "sleep";
+ 			pinctrl-0 = <&i2c2_default>;
+ 			pinctrl-1 = <&i2c2_sleep>;
+@@ -1898,6 +1902,8 @@ blsp_i2c3: i2c@c177000 {
+ 			dmas = <&blsp1_dma 8>, <&blsp1_dma 9>;
+ 			dma-names = "tx", "rx";
+ 
++			interconnects = <&a2noc MASTER_BLSP_1 &bimc SLAVE_EBI>;
++
+ 			pinctrl-names = "default", "sleep";
+ 			pinctrl-0 = <&i2c3_default>;
+ 			pinctrl-1 = <&i2c3_sleep>;
+@@ -1918,6 +1924,8 @@ blsp_i2c4: i2c@c178000 {
+ 			dmas = <&blsp1_dma 10>, <&blsp1_dma 11>;
+ 			dma-names = "tx", "rx";
+ 
++			interconnects = <&a2noc MASTER_BLSP_1 &bimc SLAVE_EBI>;
++
+ 			pinctrl-names = "default", "sleep";
+ 			pinctrl-0 = <&i2c4_default>;
+ 			pinctrl-1 = <&i2c4_sleep>;
+@@ -1966,6 +1974,8 @@ blsp_i2c5: i2c@c1b5000 {
+ 			dmas = <&blsp2_dma 4>, <&blsp2_dma 5>;
+ 			dma-names = "tx", "rx";
+ 
++			interconnects = <&a2noc MASTER_BLSP_2 &bimc SLAVE_EBI>;
++
+ 			pinctrl-names = "default", "sleep";
+ 			pinctrl-0 = <&i2c5_default>;
+ 			pinctrl-1 = <&i2c5_sleep>;
+@@ -1986,6 +1996,8 @@ blsp_i2c6: i2c@c1b6000 {
+ 			dmas = <&blsp2_dma 6>, <&blsp2_dma 7>;
+ 			dma-names = "tx", "rx";
+ 
++			interconnects = <&a2noc MASTER_BLSP_2 &bimc SLAVE_EBI>;
++
+ 			pinctrl-names = "default", "sleep";
+ 			pinctrl-0 = <&i2c6_default>;
+ 			pinctrl-1 = <&i2c6_sleep>;
+@@ -2006,6 +2018,8 @@ blsp_i2c7: i2c@c1b7000 {
+ 			dmas = <&blsp2_dma 8>, <&blsp2_dma 9>;
+ 			dma-names = "tx", "rx";
+ 
++			interconnects = <&a2noc MASTER_BLSP_2 &bimc SLAVE_EBI>;
++
+ 			pinctrl-names = "default", "sleep";
+ 			pinctrl-0 = <&i2c7_default>;
+ 			pinctrl-1 = <&i2c7_sleep>;
+@@ -2026,6 +2040,8 @@ blsp_spi7: spi@c1b7000 {
+ 			dmas = <&blsp2_dma 8>, <&blsp2_dma 9>;
+ 			dma-names = "tx", "rx";
+ 
++			interconnects = <&a2noc MASTER_BLSP_2 &bimc SLAVE_EBI>;
++
+ 			pinctrl-names = "default", "sleep";
+ 			pinctrl-0 = <&spi7_default>;
+ 			pinctrl-1 = <&spi7_sleep>;
+@@ -2046,6 +2062,8 @@ blsp_i2c8: i2c@c1b8000 {
+ 			dmas = <&blsp2_dma 10>, <&blsp2_dma 11>;
+ 			dma-names = "tx", "rx";
+ 
++			interconnects = <&a2noc MASTER_BLSP_2 &bimc SLAVE_EBI>;
++
+ 			pinctrl-names = "default", "sleep";
+ 			pinctrl-0 = <&i2c8_default>;
+ 			pinctrl-1 = <&i2c8_sleep>;

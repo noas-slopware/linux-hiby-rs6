@@ -1,0 +1,95 @@
+# Forked from Alpine aports community/elisa (26.08.2-r0) for the HiBy RS6:
+# adds a Subsonic/OpenSubsonic (Navidrome) music source and a bit-perfect
+# output setting, decodes embedded covers at the requested size instead
+# of full resolution, emits cover responses' finished() on the pixmap reader
+# thread (use-after-free when scrolling fast) and filters on the search
+# field's displayText (input method preedit). pkgrel is above Alpine's so
+# this build wins.
+maintainer="Noa Himesaka <himesaka@noa.codes>"
+pkgname=elisa
+pkgver=26.08.2
+pkgrel=6
+# armhf blocked by extra-cmake-modules
+arch="all !armhf"
+url="https://kde.org/applications/multimedia/org.kde.elisa"
+pkgdesc="A simple music player aiming to provide a nice experience for its users"
+license="LGPL-3.0-or-later"
+depends="
+	kirigami
+	kirigami-addons
+	qqc2-desktop-style
+	qt6-qtbase-sqlite
+	vlc
+	"
+makedepends="
+	baloo-dev
+	extra-cmake-modules
+	kcmutils-dev
+	kconfig-dev
+	kconfigwidgets-dev
+	kcoreaddons-dev
+	kcrash-dev
+	kdbusaddons-dev
+	kdeclarative-dev
+	kdoctools-dev
+	kfilemetadata-dev
+	ki18n-dev
+	kio-dev
+	kirigami-dev
+	kirigami-addons-dev
+	kpackage-dev
+	kxmlgui-dev
+	qqc2-desktop-style-dev
+	qt6-qtbase-dev
+	qt6-qtdeclarative-dev
+	qt6-qtdeclarative-private-dev
+	qt6-qtmultimedia-dev
+	qt6-qtsvg-dev
+	samurai
+	vlc-dev
+	"
+checkdepends="
+	cmd:dbus-run-session
+	xvfb-run
+	"
+# check() needs dbus + xvfb running inside the (cross) build chroot
+options="!check"
+subpackages="$pkgname-lang"
+_repo_url="https://invent.kde.org/multimedia/elisa.git"
+source="https://download.kde.org/stable/release-service/$pkgver/src/elisa-$pkgver.tar.xz
+	0001-Add-a-Subsonic-OpenSubsonic-Navidrome-music-source.patch
+	0002-Add-a-bit-perfect-output-setting.patch
+	0003-Open-mobile-drawers-after-the-tap.patch
+	0004-Decode-embedded-covers-at-the-requested-size.patch
+	0005-Do-not-scale-cover-sourceSize-by-the-device-pixel-ratio-twice.patch
+	0006-Emit-finished-of-embedded-cover-responses-on-the-pixmap-reader-thread.patch
+	0007-Filter-the-views-on-the-text-the-search-field-shows.patch
+	"
+
+build() {
+	cmake -B build -G Ninja \
+		-DCMAKE_BUILD_TYPE=RelWithDebInfo \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DBUILD_TESTING=ON
+	cmake --build build
+}
+
+check() {
+	dbus-run-session -- xvfb-run -a ctest --test-dir build -E "databaseInterfaceTest"
+}
+
+package() {
+	DESTDIR="$pkgdir" cmake --install build
+}
+
+sha512sums="
+4b6b6698336538418a1b47a00083d9fffee7194532da7244844635974e32ed2185acb7bd9a19a8196df3b1bc281c5879dce2fa1d74244e163d43aca6cd32be3e  elisa-26.08.2.tar.xz
+91e6984a6bbabdcb53c424f03a98aa3df9d55ddcd0485701882e2cc951e83ac447c57db8e52478aedf6960f677029bec70443f78439f47b4a030b032ffccf7c1  0001-Add-a-Subsonic-OpenSubsonic-Navidrome-music-source.patch
+c423ad2088f0593776024e621bdbe6d37eea33fe3c040f1d2b42f20434cf11587a48dd12be5a016edb7fec87bcfd35440ad27a325514a60ae9f4dee570b2d613  0002-Add-a-bit-perfect-output-setting.patch
+8f710efcf99bcc643e29a7ca5b7cd1b2c8f5030f141467c834a0811952b9689cd5db6cb233c2dc2be44cf526717d28c2ee327d5554b783e768181344ffc7a83b  0003-Open-mobile-drawers-after-the-tap.patch
+284c3476b6116c99889dd9a57f4681ffd2b5c74d845938366b2b667d218056d417791b3923bd372239e61dfc18aa55a9de4cc45033bb8861f3edf0080c684cdc  0004-Decode-embedded-covers-at-the-requested-size.patch
+af54100b57cc6790301d022bc70a87e1db280784c3b94f99bb68eab22cc5fa86481d08a6966637af656d2290f07c41837bebde4d4e06f2e78867a8eb4a9951d0  0005-Do-not-scale-cover-sourceSize-by-the-device-pixel-ratio-twice.patch
+97b18dbd4104d8f85f03b2e26a4efd5d2ade6f8a0345a3aa2e693f876ce5d545d8b1c9ba3752284e74db06dcb6cc68553c2ea6043c49af0db68fbfcdcfdfe70d  0006-Emit-finished-of-embedded-cover-responses-on-the-pixmap-reader-thread.patch
+85ea9f3dd983e103819feb1e58e71bb5d3097cb42a90e88c9a3a6ce559c099e132416db04ac6d34e8872e29d32978e03609bda9833f5e4ff1064779ee4c7422d  0007-Filter-the-views-on-the-text-the-search-field-shows.patch
+"

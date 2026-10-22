@@ -1,0 +1,230 @@
+From 9ff66bd6ad374501ade3e239ff97e40bdc9e5c0c Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 12:28:36 +0900
+Subject: [PATCH 68/94] ASoC: codecs: hiby-hm100: keep DSD muted across pauses
+ and restarts
+
+On PAUSE_PUSH or SUSPEND the AFE port, still clocked, sends 0x0000
+words, and at START, RESUME or PAUSE_RELEASE it sends them until the
+stream's own data comes through. For PCM that is the zero level; for
+DSD every bit 0 is the most negative level, a DC step at the output,
+and stock (which never paused) left the output open.
+
+Mute a DSD stream on PAUSE_PUSH and SUSPEND as on STOP, and let its
+unmute wait dsd_unmute_ms (50 by default, a margin over a start-up
+latency that was never measured) from the latest restart. The mute work
+now runs on the high-priority queue, since it races the DSP draining
+the stream's last words. The mute and unmute works no longer cancel
+each other, which lost the unmute when a pause and its release came
+within one worker latency: each acts only in the state that queued it,
+except that a DSD mute always mutes and queues the unmute again after
+itself.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ sound/soc/codecs/hiby-hm100.c | 113 ++++++++++++++++++++++++----------
+ 1 file changed, 82 insertions(+), 31 deletions(-)
+
+diff --git a/sound/soc/codecs/hiby-hm100.c b/sound/soc/codecs/hiby-hm100.c
+index 9f969ff2c..6d0dcaa2c 100644
+--- a/sound/soc/codecs/hiby-hm100.c
++++ b/sound/soc/codecs/hiby-hm100.c
+@@ -18,8 +18,12 @@
+  *                   native DSD (a DSD_U32 FE, bit-interleaved to 16-bit words in q6asm-dai):
+  *                   DSD design ("mdsd"), pcm_dsd_sel = 1, reg0 = DSD word (mode 2)
+  *   trigger START:  RUN high, unmute work queued with no delay (per output target, as stock
+- *                   hiby_target_poweron_umute) only if a mute is pending
+- *   trigger STOP:   mute work queued with no delay
++ *                   hiby_target_poweron_umute) only if a mute is pending; a DSD stream waits
++ *                   dsd_unmute_ms first (not stock, see hm100_queue_unmute)
++ *   trigger STOP:   mute work queued with no delay; PAUSE_PUSH and SUSPEND too for DSD (not
++ *                   stock: the DSP then sends 0x0000 words, full-scale negative DSD). For
++ *                   DSD the mute work mutes even a stream that runs again by then and
++ *                   queues the delayed unmute after itself (not stock)
+  * With nothing plugged in, Output Auto selects Spdif (4), as the stock HAL did by mapping the
+  * speaker device to its spdif path: the FPGA alone, the analog side down. The FPGA is the I2S
+  * clock provider, so this is also what keeps a stream with no jack moving. The stream itself
+@@ -141,6 +145,16 @@ struct hm100 {
+ 	bool load_failed;		/* not stock: an FPGA load failed, no retry before the next open */
+ };
+ 
++/*
++ * Not stock: how long a native DSD stream stays muted after START, RESUME or PAUSE_RELEASE.
++ * Until the stream's own words get through ASM, ADM and the AFE, the AFE port sends 0x0000,
++ * which in DSD is every bit 0: the most negative level, a DC step at the output. 50 ms is a
++ * margin over that start-up latency, which was never measured (docs/spdif-dsd.md 11).
++ */
++static unsigned int dsd_unmute_ms = 50;
++module_param(dsd_unmute_ms, uint, 0644);
++MODULE_PARM_DESC(dsd_unmute_ms, "ms a DSD stream stays muted after it (re)starts (default 50)");
++
+ /* ---- bit-banged lines, back to back like stock gpiod_set_raw_value sequences ---- */
+ 
+ static void set(struct gpio_desc *d, int v)
+@@ -965,6 +979,27 @@ static int hm100_resolved(struct hm100 *h)
+ 	return t != T_NONE ? t : T_SPDIF;
+ }
+ 
++/*
++ * Not stock: stock queued its unmute work with no delay. A native DSD stream waits
++ * dsd_unmute_ms, so the 0x0000 words the AFE port sends before the stream's own data reaches it
++ * stay muted. Atomic context is fine (hm100_trigger).
++ */
++static void hm100_queue_unmute(struct hm100 *h)
++{
++	/* mod_: the wait counts from the latest (re)start, not from an earlier pending one */
++	mod_delayed_work(system_dfl_wq, &h->unmute_work,
++			 READ_ONCE(h->dsd) ? msecs_to_jiffies(READ_ONCE(dsd_unmute_ms)) : 0);
++}
++
++/*
++ * mute_work with no delay, on the high-priority queue (not stock): it races the DSP draining
++ * the last words of the stream before the zeros, a few ms at most.
++ */
++static void hm100_queue_mute(struct hm100 *h)
++{
++	queue_delayed_work(system_highpri_wq, &h->mute_work, 0);
++}
++
+ /*
+  * hiby_output_switch: old target off, new one on. T_NONE (Auto, nothing plugged) with no
+  * stream open powers off after 5 s (stock switch_work, 500 jiffies at HZ=100) and leaves the
+@@ -1010,7 +1045,7 @@ static void hm100_output_switch(struct hm100 *h, int t)
+ 				set(h->run, 1);
+ 		}
+ 		if (!ret && h->running)
+-			queue_delayed_work(system_dfl_wq, &h->unmute_work, 0);
++			hm100_queue_unmute(h);
+ 	}
+ 	if (h->idle_off && !h->streaming)
+ 		mod_delayed_work(system_dfl_wq, &h->idle_work, secs_to_jiffies(h->idle_off));
+@@ -1091,17 +1126,21 @@ static void hm100_unmute_work(struct work_struct *work)
+ 	struct hm100 *h = container_of(to_delayed_work(work), struct hm100, unmute_work);
+ 
+ 	/*
+-	 * Stock cancels the other work with cancel_delayed_work_sync; two works doing that to
+-	 * each other can deadlock, so cancel without waiting: h->lock serializes them anyway.
++	 * Stock cancels the other work with cancel_delayed_work_sync. Not stock: neither work
++	 * cancels the other, each acts only if the stream is in the state that queued it
++	 * (running for unmute, stopped or paused for mute), so a PAUSE_PUSH and PAUSE_RELEASE
++	 * close together, or a DSD unmute still waiting out dsd_unmute_ms, always end in the
++	 * state of the last trigger. The exception is a DSD mute, which mutes a running stream
++	 * too and then queues this work again (hm100_mute_work). Running also keeps a design
++	 * reload's mute (hm100_program_design) until the stream starts.
+ 	 */
+-	cancel_delayed_work(&h->mute_work);
+ 	mutex_lock(&h->lock);
+ 	/*
+ 	 * Not stock: S/PDIF cells (a stream with a spdif_table word) on an analog output, after
+ 	 * a jack plugged in during the stream, are full-scale noise: that output stays muted
+ 	 * until a PCM stream opens (hm100_startup).
+ 	 */
+-	if (h->mute_pending && h->powered &&
++	if (READ_ONCE(h->running) && h->mute_pending && h->powered &&
+ 	    !(h->spdif_fs && h->target != T_SPDIF)) {
+ 		/* hiby_target_poweron_umute */
+ 		switch (h->target) {
+@@ -1131,29 +1170,30 @@ static void hm100_unmute_work(struct work_struct *work)
+ static void hm100_mute_work(struct work_struct *work)
+ {
+ 	struct hm100 *h = container_of(to_delayed_work(work), struct hm100, mute_work);
++	bool running;
+ 
+-	cancel_delayed_work(&h->unmute_work);
+ 	mutex_lock(&h->lock);
+-	if (h->powered) {
+-		/* hiby_target_poweron_mute */
+-		switch (h->target) {
+-		case T_LO:
+-		case T_BALLO:
+-			hiby_iv_mute(h, 1);
+-			break;
+-		case T_PO:
+-			hiby_iv_mute(h, 1);
+-			hiby_po_mute(h, 1);
+-			break;
+-		case T_BAL:
+-			hiby_iv_mute(h, 1);
+-			set(h->line_mute, 0);
+-			set(h->lpf_mute, 0);
+-			gpo_set(h, IOB29B, 1);
+-			break;
+-		}
++	running = READ_ONCE(h->running);
++	/*
++	 * PCM: a stream that started again lets its unmute work decide. DSD: always mute (not
++	 * stock). A DSD stream that is already running again (PAUSE_RELEASE or RESUME right
++	 * after PAUSE_PUSH or SUSPEND) still has the DSP's 0x0000 words of its pause and of its
++	 * restart window ahead of its data, the window the delayed unmute is there for.
++	 */
++	if (!running || h->dsd) {
++		if (h->powered)
++			hiby_target_mute(h);	/* hiby_target_poweron_mute */
++		h->mute_pending = true;
++		/*
++		 * Every START, RESUME and PAUSE_RELEASE queues an unmute after this mute was
++		 * queued, but nothing orders the two works: different queues, mutex waiters may
++		 * be overtaken, and with dsd_unmute_ms = 0 both run at once. If the unmute ran
++		 * first, this mute would hold until the next trigger. Queue it again from here,
++		 * under the lock, so it always comes after the mute, dsd_unmute_ms from now.
++		 */
++		if (running)
++			hm100_queue_unmute(h);
+ 	}
+-	h->mute_pending = true;
+ 	mutex_unlock(&h->lock);
+ }
+ 
+@@ -1353,11 +1393,21 @@ static int hm100_trigger(struct snd_pcm_substream *substream, int cmd, struct sn
+ 	switch (cmd) {
+ 	case SNDRV_PCM_TRIGGER_STOP:
+ 		WRITE_ONCE(h->running, false);
+-		queue_delayed_work(system_dfl_wq, &h->mute_work, 0);
++		hm100_queue_mute(h);
+ 		break;
+ 	case SNDRV_PCM_TRIGGER_SUSPEND:
+ 	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
+ 		WRITE_ONCE(h->running, false);
++		/*
++		 * Stock does nothing here. q6asm pauses the ASM session and the AFE port, still
++		 * clocked (RUN stays high), sends 0x0000 words. For PCM that is mid-scale, the
++		 * silence it would be anyway. For DSD it is every bit 0, the most negative level
++		 * (DSD silence is 0x69, 0x3cc3 after the interleave): a DC step at the output,
++		 * scaled by the volume. Not stock: mute DSD as STOP does; RESUME/PAUSE_RELEASE
++		 * open it again after dsd_unmute_ms.
++		 */
++		if (READ_ONCE(h->dsd))
++			hm100_queue_mute(h);
+ 		break;
+ 	case SNDRV_PCM_TRIGGER_START:
+ 	case SNDRV_PCM_TRIGGER_RESUME:
+@@ -1365,7 +1415,7 @@ static int hm100_trigger(struct snd_pcm_substream *substream, int cmd, struct sn
+ 		WRITE_ONCE(h->running, true);
+ 		if (READ_ONCE(h->powered))
+ 			set(h->run, 1);	/* hm100_start */
+-		queue_delayed_work(system_dfl_wq, &h->unmute_work, 0);
++		hm100_queue_unmute(h);
+ 		break;
+ 	}
+ 	return 0;
+@@ -1919,7 +1969,8 @@ static void hm100_remove(struct spi_device *spi)
+ 	/*
+ 	 * No more trigger/hw_params/kcontrol calls before the works go (devm would only
+ 	 * unregister the component after .remove); then cancel the works that can queue
+-	 * others (jack -> switch path -> idle/poweroff) before the ones they queue.
++	 * others (jack -> switch path -> idle/poweroff, mute -> unmute) before the ones they
++	 * queue.
+ 	 */
+ 	snd_soc_unregister_component(&spi->dev);
+ 	cancel_delayed_work_sync(&h->jack_work);
+@@ -1927,8 +1978,8 @@ static void hm100_remove(struct spi_device *spi)
+ 	cancel_delayed_work_sync(&h->poweroff_work);
+ 	cancel_delayed_work_sync(&h->idle_work);
+ 	cancel_delayed_work_sync(&h->volume_work);
+-	cancel_delayed_work_sync(&h->unmute_work);
+ 	cancel_delayed_work_sync(&h->mute_work);
++	cancel_delayed_work_sync(&h->unmute_work);
+ 	mutex_lock(&h->lock);
+ 	if (h->powered)
+ 		hiby_target_poweroff(h, h->target);

@@ -1,0 +1,4 @@
+# HiBy RS6: one volume-wheel detent = 1% = one NJW1195A hardware step (the sink has
+# api.alsa.ignore-dB, so 0-100% maps straight onto the chip's 100 steps), like the stock wheel.
+[General]
+VolumeStep=1

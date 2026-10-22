@@ -1,0 +1,36 @@
+From 2c8a9532edafab6735528262b3437a035f5ab984 Mon Sep 17 00:00:00 2001
+From: Giuseppe Maggio <jertlok@proton.me>
+Date: Sun, 9 Aug 2026 18:37:15 +0200
+Subject: [PATCH 03/94] cpufreq: qcom-hw: only read a DCVS control register
+ that exists
+
+Per-core DCVS is probed by reading reg_dcvs_ctrl, but that offset is
+zero on OSM revisions that have no such register, so the driver reads
+whatever lives at the start of the frequency domain region and can
+conclude from an unrelated bit that per-core DCVS is available.  It then
+writes a performance state request per CPU, at reg_perf_state plus four
+bytes per core, into registers that are something else entirely.
+
+Only probe the register when the SoC data says there is one.
+
+Assisted-by: LLM
+Signed-off-by: Giuseppe Maggio <jertlok@proton.me>
+---
+ drivers/cpufreq/qcom-cpufreq-hw.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/cpufreq/qcom-cpufreq-hw.c b/drivers/cpufreq/qcom-cpufreq-hw.c
+index d2ddb73ad..2a503309f 100644
+--- a/drivers/cpufreq/qcom-cpufreq-hw.c
++++ b/drivers/cpufreq/qcom-cpufreq-hw.c
+@@ -1654,7 +1654,9 @@ static int qcom_cpufreq_hw_cpu_init(struct cpufreq_policy *policy)
+ 		return -ENODEV;
+ 	}
+ 
+-	if (readl_relaxed(data->base + qcom_cpufreq.soc_data->reg_dcvs_ctrl) & 0x1)
++	/* Offset zero is not a DCVS control register on every OSM revision */
++	if (qcom_cpufreq.soc_data->reg_dcvs_ctrl &&
++	    readl_relaxed(data->base + qcom_cpufreq.soc_data->reg_dcvs_ctrl) & 0x1)
+ 		data->per_core_dcvs = true;
+ 
+ 	ret = qcom_cpufreq_hw_read_lut(cpu_dev, policy);

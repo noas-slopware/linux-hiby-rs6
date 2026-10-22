@@ -1,0 +1,3 @@
+# darwinctl keeps the loaded Darwin filter here; the audio group (the user) may change it
+d /var/lib/hiby-rs6 0755 root root -
+d /var/lib/hiby-rs6/darwin 2775 root audio -

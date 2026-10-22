@@ -1,0 +1,71 @@
+From dc8dc65cf5104a169880dc1e6c17e012a60a5fff Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 18:25:02 +0900
+Subject: [PATCH 37/94] wifi: ath10k: keep a stopped device recoverable
+
+A firmware crash while the interface is down (e.g. on WCN3990 across
+suspend) could leave the device wedged for good: recovery counted every
+later crash as a failed recovery and set WEDGED even when the device was
+OFF, and only ath10k_stop() takes WEDGED back to OFF. Only wedge a
+started device, and clear the recovery counters in ath10k_stop().
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ drivers/net/wireless/ath/ath10k/core.c | 16 +++++++++++++---
+ drivers/net/wireless/ath/ath10k/mac.c  |  8 ++++++++
+ 2 files changed, 21 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath10k/core.c b/drivers/net/wireless/ath/ath10k/core.c
+index 7c2939cbd..f5d0625e5 100644
+--- a/drivers/net/wireless/ath/ath10k/core.c
++++ b/drivers/net/wireless/ath/ath10k/core.c
+@@ -2500,9 +2500,19 @@ static void ath10k_core_recovery_check_work(struct work_struct *work)
+ 	 * so avoid infinite recovery.
+ 	 */
+ 	if (atomic_read(&ar->fail_cont_count) >= ATH10K_RECOVERY_MAX_FAIL_COUNT) {
+-		ath10k_err(ar, "consecutive fail %d times, will shutdown driver!",
+-			   atomic_read(&ar->fail_cont_count));
+-		ar->state = ATH10K_STATE_WEDGED;
++		/* Only a started device can be wedged. ath10k_stop() is what
++		 * takes a WEDGED device back to OFF, and it is only called
++		 * for a device that mac80211 has started. If the interface
++		 * is already down, marking it WEDGED here would make every
++		 * later ath10k_start() fail for good.
++		 */
++		mutex_lock(&ar->conf_mutex);
++		if (ar->state != ATH10K_STATE_OFF) {
++			ath10k_err(ar, "consecutive fail %d times, will shutdown driver!",
++				   atomic_read(&ar->fail_cont_count));
++			ar->state = ATH10K_STATE_WEDGED;
++		}
++		mutex_unlock(&ar->conf_mutex);
+ 		return;
+ 	}
+ 
+diff --git a/drivers/net/wireless/ath/ath10k/mac.c b/drivers/net/wireless/ath/ath10k/mac.c
+index 9e5102211..caddb12ab 100644
+--- a/drivers/net/wireless/ath/ath10k/mac.c
++++ b/drivers/net/wireless/ath/ath10k/mac.c
+@@ -3205,6 +3205,7 @@ static void ath10k_bss_disassoc(struct ieee80211_hw *hw,
+ 			    arvif->vdev_id, ret);
+ 
+ 	arvif->def_wep_key_idx = -1;
++
+ 	arvif->is_up = false;
+ 
+ 	ath10k_mac_txpower_recalc(ar);
+@@ -5421,6 +5422,13 @@ static void ath10k_stop(struct ieee80211_hw *hw, bool suspend)
+ 	cancel_delayed_work_sync(&ar->scan.timeout);
+ 	cancel_work_sync(&ar->restart_work);
+ 	cancel_work_sync(&ar->recovery_check_work);
++
++	/* The device is down, so any recovery in flight is moot. Leaving
++	 * pending_recovery set would make every later crash count as a failed
++	 * recovery until the driver declares itself wedged.
++	 */
++	atomic_set(&ar->pending_recovery, 0);
++	atomic_set(&ar->fail_cont_count, 0);
+ }
+ 
+ static int ath10k_config_ps(struct ath10k *ar)

@@ -1,0 +1,169 @@
+From b71bd1114c44492e349903984e41621c3aac424d Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 12:24:08 +0900
+Subject: [PATCH 61/94] ASoC: qcom: q6asm-dai: native DSD on
+ qcom,s32-as-s16-pairs DAIs
+
+The HiBy RS6 DAC takes native DSD the way its stock HAL feeds it
+(output_proxy_callback, DSD branch): both 1-bit channels bit-interleaved
+in 16-bit I2S words, one byte of each channel per word, left on the
+even bits, right on the odd ones, oldest bytes first. One DSD_U32
+stereo frame is four such words in the same 8 bytes, so the stream to
+the DSP stays S16 stereo.
+
+Offer DSD_U32_LE and DSD_U32_BE on the qcom,s32-as-s16-pairs DAIs and
+interleave each period in place in ack, as S32 is split there. Stereo
+only, and only with qcom,fixed-rate: the stream must be declared at
+the fixed port rate, or the DSP would resample the words like PCM.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ sound/soc/qcom/qdsp6/q6asm-dai.c | 73 +++++++++++++++++++++++++++++++-
+ 1 file changed, 72 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6asm-dai.c b/sound/soc/qcom/qdsp6/q6asm-dai.c
+index 1cd23697c..6fe589ab6 100644
+--- a/sound/soc/qcom/qdsp6/q6asm-dai.c
++++ b/sound/soc/qcom/qdsp6/q6asm-dai.c
+@@ -18,6 +18,7 @@
+ #include <asm/div64.h>
+ #include <asm/dma.h>
+ #include <linux/dma-mapping.h>
++#include <linux/unaligned.h>
+ #include <sound/pcm_params.h>
+ #include "q6asm.h"
+ #include "q6routing.h"
+@@ -76,6 +77,8 @@ struct q6asm_dai_rtd {
+ 	uint32_t trailing_samples_drop;
+ 	bool notify_on_drain;
+ 	bool split_s32;		/* S32 samples sent as hi/lo S16 word pairs */
++	bool dsd;		/* DSD_U32 sent as L/R bit-interleaved S16 words */
++	bool dsd_be;		/* DSD_U32_BE, else DSD_U32_LE */
+ };
+ 
+ struct q6asm_dai_data {
+@@ -86,6 +89,9 @@ struct q6asm_dai_data {
+ 	bool split_s32[MAX_SESSIONS];
+ };
+ 
++/* native DSD on a qcom,s32-as-s16-pairs FE (the HiBy RS6 DAC), see q6asm_dai_dsd_interleave() */
++#define Q6ASM_DAI_DSD_FORMATS	(SNDRV_PCM_FMTBIT_DSD_U32_LE | SNDRV_PCM_FMTBIT_DSD_U32_BE)
++
+ static const struct snd_pcm_hardware q6asm_dai_hardware_capture = {
+ 	.info =                 (SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_BATCH |
+ 				SNDRV_PCM_INFO_BLOCK_TRANSFER |
+@@ -331,6 +337,44 @@ static int q6asm_dai_prepare(struct snd_soc_component *component,
+ 	return ret;
+ }
+ 
++/*
++ * Native DSD as the stock HiBy RS6 HAL feeds the DAC (output_proxy_callback, DSD branch, bit
++ * spread tables at 0xb6dd8 even / 0xb6dc8 odd): both 1-bit channels bit-interleaved in 16-bit
++ * I2S words, one byte of each channel per word, left on the even bits, right on the odd bits,
++ * oldest bytes first. Sent MSB first, a word is R7 L7 R6 L6 ... R0 L0, bit 7 of a DSD byte
++ * being its oldest bit. One DSD_U32 stereo frame (per channel a 32-bit word, MSB oldest) is
++ * four such words in the same 8 bytes, so the stream stays S16 stereo to the DSP and the
++ * transform is done in place.
++ */
++static u64 dsd_spread(u32 x)
++{
++	u64 v = x;
++
++	v = (v | v << 16) & 0x0000ffff0000ffffULL;
++	v = (v | v << 8) & 0x00ff00ff00ff00ffULL;
++	v = (v | v << 4) & 0x0f0f0f0f0f0f0f0fULL;
++	v = (v | v << 2) & 0x3333333333333333ULL;
++	return (v | v << 1) & 0x5555555555555555ULL;
++}
++
++static void q6asm_dai_dsd_interleave(u8 *p, unsigned int bytes, bool be)
++{
++	unsigned int n;
++	u32 l, r;
++	u64 m;
++
++	for (n = 0; n < bytes / 8; n++, p += 8) {
++		l = be ? get_unaligned_be32(p) : get_unaligned_le32(p);
++		r = be ? get_unaligned_be32(p + 4) : get_unaligned_le32(p + 4);
++		/* 16-bit lane k of m holds byte k of both channels; byte 3 is the oldest */
++		m = dsd_spread(l) | dsd_spread(r) << 1;
++		put_unaligned_le16(m >> 48, p);
++		put_unaligned_le16(m >> 32, p + 2);
++		put_unaligned_le16(m >> 16, p + 4);
++		put_unaligned_le16(m, p + 6);
++	}
++}
++
+ static int q6asm_dai_ack(struct snd_soc_component *component, struct snd_pcm_substream *substream)
+ {
+ 	struct snd_pcm_runtime *runtime = substream->runtime;
+@@ -347,6 +391,11 @@ static int q6asm_dai_ack(struct snd_soc_component *component, struct snd_pcm_sub
+ 
+ 				for (n = 0; n < prtd->pcm_count / 4; n++)
+ 					w[n] = ror32(w[n], 16);
++			} else if (prtd->dsd) {
++				u8 *p = runtime->dma_area +
++					frames_to_bytes(runtime, prtd->queue_ptr % runtime->buffer_size);
++
++				q6asm_dai_dsd_interleave(p, prtd->pcm_count, prtd->dsd_be);
+ 			}
+ 			ret = q6asm_write_async(prtd->audio_client, prtd->stream_id,
+ 					   prtd->pcm_count, 0, 0, 0);
+@@ -473,7 +522,8 @@ static int q6asm_dai_open(struct snd_soc_component *component,
+ 		runtime->dma_bytes = q6asm_dai_hardware_playback.buffer_bytes_max;
+ 		/* S32 = samples (word pairs), S16 = raw pre-split words; never S24 to the DAC */
+ 		if (pdata->split_s32[stream_id])
+-			runtime->hw.formats = SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S32_LE;
++			runtime->hw.formats = SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S32_LE |
++					      Q6ASM_DAI_DSD_FORMATS;
+ 	} else {
+ 		snd_soc_set_runtime_hwparams(substream, &q6asm_dai_hardware_capture);
+ 		runtime->dma_bytes = q6asm_dai_hardware_capture.buffer_bytes_max;
+@@ -530,11 +580,14 @@ static int q6asm_dai_hw_params(struct snd_soc_component *component,
+ 			       struct snd_pcm_hw_params *params)
+ {
+ 	struct snd_pcm_runtime *runtime = substream->runtime;
++	struct snd_soc_pcm_runtime *soc_prtd = snd_soc_substream_to_rtd(substream);
++	struct q6asm_dai_data *pdata = snd_soc_component_get_drvdata(component);
+ 	struct q6asm_dai_rtd *prtd = runtime->private_data;
+ 
+ 	prtd->pcm_size = params_buffer_bytes(params);
+ 	prtd->periods = params_periods(params);
+ 	prtd->split_s32 = false;
++	prtd->dsd = false;
+ 
+ 	switch (params_format(params)) {
+ 	case SNDRV_PCM_FORMAT_S16_LE:
+@@ -552,6 +605,21 @@ static int q6asm_dai_hw_params(struct snd_soc_component *component,
+ 		prtd->bits_per_sample = 16;
+ 		prtd->split_s32 = true;
+ 		break;
++	case SNDRV_PCM_FORMAT_DSD_U32_LE:
++	case SNDRV_PCM_FORMAT_DSD_U32_BE:
++		/*
++		 * Native DSD (qcom,s32-as-s16-pairs FEs only), stereo: ack turns every frame
++		 * into four 16-bit L/R bit-interleaved words in place, as the stock HAL writes
++		 * them. The stream must be declared at the fixed port rate, or the DSP would
++		 * resample the words like PCM.
++		 */
++		if (params_channels(params) != 2 ||
++		    !pdata->fixed_rate[soc_prtd->dai_link->id])
++			return -EINVAL;
++		prtd->bits_per_sample = 16;
++		prtd->dsd = true;
++		prtd->dsd_be = params_format(params) == SNDRV_PCM_FORMAT_DSD_U32_BE;
++		break;
+ 	}
+ 
+ 	return 0;
+@@ -1325,6 +1393,9 @@ static int of_q6asm_parse_dai_data(struct device *dev,
+ 
+ 		of_property_read_u32(node, "qcom,fixed-rate", &pdata->fixed_rate[id]);
+ 		pdata->split_s32[id] = of_property_read_bool(node, "qcom,s32-as-s16-pairs");
++		/* the same DAC takes native DSD as 16-bit words, see q6asm_dai_dsd_interleave() */
++		if (pdata->split_s32[id])
++			dai_drv->playback.formats |= Q6ASM_DAI_DSD_FORMATS;
+ 
+ 		ret = of_property_read_u32(node, "direction", &dir);
+ 		if (ret)

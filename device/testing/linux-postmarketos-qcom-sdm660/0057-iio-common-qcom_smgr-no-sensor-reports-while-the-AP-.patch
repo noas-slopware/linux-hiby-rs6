@@ -1,0 +1,387 @@
+From f4e18cf60f2b1fdaf89d31c1be6fdd1341359b75 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 12:23:23 +0900
+Subject: [PATCH 57/94] iio: common: qcom_smgr: no sensor reports while the AP
+ is suspended
+
+A streaming sensor kept sending reports through s2idle and woke the AP
+for each one. As the stock sensors HAL does for non-wakeup sensors,
+ask SMGR not to send indications during suspend in every ADD
+(notify-suspend, proc_type APPS), and remove the report of every
+streaming sensor from a PM notifier before the smp2p "sleepstate"
+notifier says the AP sleeps, adding it back after that says the AP is
+awake again, so that SMGR only gets requests from an awake AP. The IIO
+buffers stay enabled. A second notifier that runs last notices an
+aborted suspend, in which it would not hear PM_POST_SUSPEND.
+
+A mutex serialises the buffering requests with the streaming and
+suspend state: a buffer enable or disable while suspended only marks the
+sensor, and a rate written then is used by the resume.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ drivers/iio/common/qcom_smgr/qcom_smgr.c    | 210 +++++++++++++++++++-
+ drivers/iio/common/qcom_smgr/qmi/sns_smgr.h |   3 +
+ include/linux/iio/common/qcom_smgr.h        |   3 +
+ 3 files changed, 205 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/iio/common/qcom_smgr/qcom_smgr.c b/drivers/iio/common/qcom_smgr/qcom_smgr.c
+index 63d04515a..8f3c65d0d 100644
+--- a/drivers/iio/common/qcom_smgr/qcom_smgr.c
++++ b/drivers/iio/common/qcom_smgr/qcom_smgr.c
+@@ -5,17 +5,20 @@
+  * Copyright (c) 2021, Yassine Oudjana <y.oudjana@protonmail.com>
+  */
+ 
++#include <linux/cleanup.h>
+ #include <linux/iio/buffer.h>
+ #include <linux/iio/common/qcom_smgr.h>
+ #include <linux/iio/iio.h>
+ #include <linux/math64.h>
+ #include <linux/minmax.h>
+ #include <linux/module.h>
++#include <linux/mutex.h>
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <linux/remoteproc/qcom_rproc.h>
+ #include <linux/soc/qcom/qmi.h>
+ #include <linux/soc/qcom/qrtr.h>
++#include <linux/suspend.h>
+ #include <linux/types.h>
+ #include <net/sock.h>
+ 
+@@ -35,6 +38,14 @@
+  */
+ #define SMGR_DEFAULT_SAMPLE_RATE_HZ	15
+ 
++/*
++ * The SMGR report is removed before the "sleepstate" SMP2P notifier (priority
++ * 0) tells the ADSP that the AP is going to sleep, and added back after it
++ * said the AP is awake again, so the ADSP sees the requests from an awake AP.
++ */
++#define SMGR_PM_SUSPEND_PRIORITY	1
++#define SMGR_PM_RESUME_PRIORITY		-1
++
+ struct qcom_smgr {
+ 	struct device *dev;
+ 
+@@ -44,6 +55,18 @@ struct qcom_smgr {
+ 
+ 	u8 sensor_count;
+ 	struct qcom_smgr_sensor *sensors;
++
++	/*
++	 * Serializes buffering requests and protects @suspended, @armed and
++	 * streaming. Taken after the IIO device's mlock (postenable), never
++	 * before it.
++	 */
++	struct mutex lock;
++	bool suspended;
++	/* The resume notifier saw PM_SUSPEND_PREPARE and gets PM_POST_SUSPEND */
++	bool armed;
++	struct notifier_block suspend_nb;
++	struct notifier_block resume_nb;
+ };
+ 
+ static const char *const qcom_smgr_sensor_type_platform_names[] = {
+@@ -317,12 +340,13 @@ static int qcom_smgr_send_buffering(struct qcom_smgr *smgr,
+ 		 * of a separate set of IDs
+ 		 */
+ 		.report_id = sensor->id,
+-		.notify_suspend_valid = false
+ 	};
+ 	struct sns_smgr_buffering_resp resp = {};
+ 	struct qmi_txn txn;
+ 	int ret;
+ 
++	lockdep_assert_held(&smgr->lock);
++
+ 	*rejected = false;
+ 
+ 	if (enable) {
+@@ -357,8 +381,19 @@ static int qcom_smgr_send_buffering(struct qcom_smgr *smgr,
+ 		 */
+ 		req.items[0].val1 = 3;
+ 		req.items[0].val2 = 1;
+-	} else
++
++		/*
++		 * Like the stock sensors HAL for non-wakeup sensors
++		 * (SMGRSensor::SMGRPrepareAddMsg, ADD only): no reports while
++		 * the AP is suspended, as signalled through the "sleepstate"
++		 * SMP2P entry.
++		 */
++		req.notify_suspend_valid = true;
++		req.notify_suspend.proc_type = SNS_SMGR_PROC_TYPE_APPS;
++		req.notify_suspend.send_indications_during_suspend = false;
++	} else {
+ 		req.action = SNS_SMGR_BUFFERING_ACTION_DELETE;
++	}
+ 
+ 	ret = qmi_txn_init(&smgr->sns_smgr_hdl, &txn,
+ 			   sns_smgr_buffering_resp_ei, &resp);
+@@ -532,21 +567,46 @@ static const struct qmi_msg_handler qcom_smgr_msg_handlers[] = {
+ 	{}
+ };
+ 
++static struct qcom_smgr *qcom_smgr_from_iio(struct iio_dev *iio_dev)
++{
++	return dev_get_drvdata(iio_dev->dev.parent->parent);
++}
++
+ static int qcom_smgr_sensor_postenable(struct iio_dev *iio_dev)
+ {
+-	struct qcom_smgr *smgr = dev_get_drvdata(iio_dev->dev.parent->parent);
++	struct qcom_smgr *smgr = qcom_smgr_from_iio(iio_dev);
+ 	struct qcom_smgr_iio_priv *priv = iio_priv(iio_dev);
+ 	struct qcom_smgr_sensor *sensor = priv->sensor;
++	int ret;
++
++	guard(mutex)(&smgr->lock);
++
++	/* While suspending, the resume notifier adds the report */
++	if (!smgr->suspended) {
++		ret = qcom_smgr_start_report(smgr, sensor);
++		if (ret)
++			return ret;
++	}
++
++	sensor->streaming = true;
+ 
+-	return qcom_smgr_start_report(smgr, sensor);
++	return 0;
+ }
+ 
+ static int qcom_smgr_sensor_postdisable(struct iio_dev *iio_dev)
+ {
+-	struct qcom_smgr *smgr = dev_get_drvdata(iio_dev->dev.parent->parent);
++	struct qcom_smgr *smgr = qcom_smgr_from_iio(iio_dev);
+ 	struct qcom_smgr_iio_priv *priv = iio_priv(iio_dev);
+ 	struct qcom_smgr_sensor *sensor = priv->sensor;
+ 
++	guard(mutex)(&smgr->lock);
++
++	sensor->streaming = false;
++
++	/* The suspend notifier already removed the report */
++	if (smgr->suspended)
++		return 0;
++
+ 	return qcom_smgr_stop_report(smgr, sensor);
+ }
+ 
+@@ -611,23 +671,49 @@ static int qcom_smgr_iio_write_raw(struct iio_dev *iio_dev,
+ 				   struct iio_chan_spec const *chan, int val,
+ 				   int val2, long mask)
+ {
++	struct qcom_smgr *smgr = qcom_smgr_from_iio(iio_dev);
+ 	struct qcom_smgr_iio_priv *priv = iio_priv(iio_dev);
++	struct qcom_smgr_sensor *sensor = priv->sensor;
++	struct qcom_smgr_data_type_item *dt;
++	bool rejected;
++	u16 old;
++	int ret;
+ 
+ 	switch (mask) {
+ 	case IIO_CHAN_INFO_SAMP_FREQ:
+-		if (val < 1 || val > priv->sensor->data_types[0].max_sample_rate)
++		dt = &sensor->data_types[0];
++		if (val < 1 || val > dt->max_sample_rate)
+ 			return -EINVAL;
+ 
+-		priv->sensor->data_types[0].cur_sample_rate = val;
++		guard(mutex)(&smgr->lock);
++
++		old = dt->cur_sample_rate;
++		dt->cur_sample_rate = val;
+ 
+ 		/*
+ 		 * Send new SMGR buffering request with updated rates
+-		 * if buffer is enabled
++		 * if buffer is enabled. A buffer enable or a resume checks
++		 * the rate later (qcom_smgr_start_report()).
+ 		 */
+-		if (iio_buffer_enabled(iio_dev))
+-			return iio_dev->setup_ops->postenable(iio_dev);
++		if (!sensor->streaming || smgr->suspended)
++			return 0;
+ 
+-		return 0;
++		ret = qcom_smgr_send_buffering(smgr, sensor, true, val,
++					       &rejected);
++		if (!ret)
++			return 0;
++
++		/*
++		 * The old rate stays. A refused ADD may have dropped the
++		 * running report, so add it again; that falls back further if
++		 * SMGR refuses the old rate now as well.
++		 */
++		dt->cur_sample_rate = old;
++		if (rejected && qcom_smgr_start_report(smgr, sensor))
++			dev_err(smgr->dev, "0x%02x: no reports after a refused rate\n",
++				sensor->id);
++
++		return ret;
+ 	}
+ 
+ 	return -EINVAL;
+@@ -687,6 +773,93 @@ const struct iio_chan_spec_ext_info qcom_smgr_iio_ext_info[] = {
+ };
+ EXPORT_SYMBOL_GPL(qcom_smgr_iio_ext_info);
+ 
++/*
++ * A non-wakeup sensor has no business waking the AP during system suspend:
++ * remove the SMGR report of every streaming sensor before suspend and add it
++ * back afterwards. The IIO buffers stay enabled, so readers carry on as if
++ * nothing happened. Buffer enables and disables in between only update
++ * the streaming state, which is what gets restored.
++ */
++static void qcom_smgr_resume_reports(struct qcom_smgr *smgr)
++{
++	struct qcom_smgr_sensor *sensor;
++	u8 i;
++
++	lockdep_assert_held(&smgr->lock);
++
++	smgr->suspended = false;
++	smgr->armed = false;
++
++	for (i = 0; i < smgr->sensor_count; i++) {
++		sensor = &smgr->sensors[i];
++
++		if (sensor->streaming && qcom_smgr_start_report(smgr, sensor))
++			dev_err(smgr->dev,
++				"Failed to restart reports of 0x%02x after suspend\n",
++				sensor->id);
++	}
++}
++
++static int qcom_smgr_pm_suspend(struct notifier_block *nb,
++				unsigned long event, void *unused)
++{
++	struct qcom_smgr *smgr = container_of(nb, struct qcom_smgr, suspend_nb);
++	struct qcom_smgr_sensor *sensor;
++	u8 i;
++
++	if (event == PM_POST_SUSPEND) {
++		/*
++		 * pm_notifier_call_chain_robust() sends PM_POST_SUSPEND only
++		 * to the notifiers that ran before the one that failed
++		 * PM_SUSPEND_PREPARE, in the same order. If that kept it from
++		 * the resume notifier (not armed), add the reports back here.
++		 * After a normal suspend the resume notifier does it, later.
++		 */
++		guard(mutex)(&smgr->lock);
++		if (smgr->suspended && !smgr->armed)
++			qcom_smgr_resume_reports(smgr);
++		return NOTIFY_DONE;
++	}
++
++	if (event != PM_SUSPEND_PREPARE)
++		return NOTIFY_DONE;
++
++	guard(mutex)(&smgr->lock);
++
++	smgr->suspended = true;
++	smgr->armed = false;
++
++	for (i = 0; i < smgr->sensor_count; i++) {
++		sensor = &smgr->sensors[i];
++
++		if (sensor->streaming && qcom_smgr_stop_report(smgr, sensor))
++			dev_err(smgr->dev,
++				"Failed to stop reports of 0x%02x for suspend\n",
++				sensor->id);
++	}
++
++	return NOTIFY_DONE;
++}
++
++static int qcom_smgr_pm_resume(struct notifier_block *nb,
++			       unsigned long event, void *unused)
++{
++	struct qcom_smgr *smgr = container_of(nb, struct qcom_smgr, resume_nb);
++
++	if (event != PM_SUSPEND_PREPARE && event != PM_POST_SUSPEND)
++		return NOTIFY_DONE;
++
++	guard(mutex)(&smgr->lock);
++
++	if (event == PM_SUSPEND_PREPARE)
++		/* Every notifier before this one prepared: POST_SUSPEND comes here */
++		smgr->armed = true;
++	else if (smgr->suspended)
++		qcom_smgr_resume_reports(smgr);
++
++	return NOTIFY_DONE;
++}
++
+ static int qcom_smgr_probe(struct qrtr_device *qdev)
+ {
+ 	struct qcom_smgr *smgr;
+@@ -699,6 +872,10 @@ static int qcom_smgr_probe(struct qrtr_device *qdev)
+ 
+ 	smgr->dev = &qdev->dev;
+ 
++	ret = devm_mutex_init(&qdev->dev, &smgr->lock);
++	if (ret)
++		return ret;
++
+ 	smgr->sns_smgr_info.sq_family = AF_QIPCRTR;
+ 	smgr->sns_smgr_info.sq_node = qdev->node;
+ 	smgr->sns_smgr_info.sq_port = qdev->port;
+@@ -747,6 +924,14 @@ static int qcom_smgr_probe(struct qrtr_device *qdev)
+ 		qcom_smgr_register_sensor(smgr, &smgr->sensors[i]);
+ 	}
+ 
++	smgr->suspend_nb.notifier_call = qcom_smgr_pm_suspend;
++	smgr->suspend_nb.priority = SMGR_PM_SUSPEND_PRIORITY;
++	register_pm_notifier(&smgr->suspend_nb);
++
++	smgr->resume_nb.notifier_call = qcom_smgr_pm_resume;
++	smgr->resume_nb.priority = SMGR_PM_RESUME_PRIORITY;
++	register_pm_notifier(&smgr->resume_nb);
++
+ 	return 0;
+ }
+ 
+@@ -754,6 +939,9 @@ static void qcom_smgr_remove(struct qrtr_device *qdev)
+ {
+ 	struct qcom_smgr *smgr = dev_get_drvdata(&qdev->dev);
+ 
++	unregister_pm_notifier(&smgr->resume_nb);
++	unregister_pm_notifier(&smgr->suspend_nb);
++
+ 	qmi_handle_release(&smgr->sns_smgr_hdl);
+ }
+ 
+diff --git a/drivers/iio/common/qcom_smgr/qmi/sns_smgr.h b/drivers/iio/common/qcom_smgr/qmi/sns_smgr.h
+index ce386c1ed..7f7c6c53e 100644
+--- a/drivers/iio/common/qcom_smgr/qmi/sns_smgr.h
++++ b/drivers/iio/common/qcom_smgr/qmi/sns_smgr.h
+@@ -49,6 +49,9 @@
+ #define SNS_SMGR_BUFFERING_REPORT_MAX_INDICES	5
+ #define SNS_SMGR_BUFFERING_REPORT_MAX_SAMPLES	100
+ 
++/* sns_common proc_type of the application processor, as stock sends it */
++#define SNS_SMGR_PROC_TYPE_APPS			0
++
+ /*
+  * AckNak of a buffering response (SNS_SMGR_RESPONSE_*_V01). The stock sensors
+  * HAL (SMGRSensor::processBufferingResp) takes anything above ACK_MODIFIED as
+diff --git a/include/linux/iio/common/qcom_smgr.h b/include/linux/iio/common/qcom_smgr.h
+index e53c1d7a5..93388858a 100644
+--- a/include/linux/iio/common/qcom_smgr.h
++++ b/include/linux/iio/common/qcom_smgr.h
+@@ -51,6 +51,9 @@ struct qcom_smgr_sensor {
+ 	struct qcom_smgr_data_type_item *data_types;
+ 
+ 	struct iio_dev *iio_dev;
++
++	/* The IIO buffer is enabled (the SMGR report may be paused for suspend) */
++	bool streaming;
+ };
+ 
+ struct qcom_smgr_iio_priv {

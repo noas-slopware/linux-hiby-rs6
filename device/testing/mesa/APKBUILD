@@ -1,0 +1,562 @@
+# Alpine main/mesa 26.2.5-r0 + 0101-0103 (Mesa MR !45465, Fabricio Akio: A508 rendering fixes) and
+# 0104 (A509/A512 RB_CCU_CNTL from the RS6's stock Adreno 512 driver) and 0105 (A508/A509/A512
+# highest bank bit, ECO registers and 2D blits programmed like the stock driver) and 0106 (A8
+# read as A8 in 2D SCALE blits; fixes Qt text): Adreno 512 rendering artifacts (mesa#8442).
+# pkgrel above Alpine so this wins.
+maintainer="Noa Himesaka <himesaka@noa.codes>"
+pkgname=mesa
+pkgver=26.2.5
+pkgrel=3
+pkgdesc="Mesa DRI OpenGL library"
+url="https://www.mesa3d.org"
+arch="all"
+license="MIT AND SGI-B-2.0 AND BSL-1.0"
+subpackages="
+	$pkgname-dbg
+	$pkgname-dev
+	$pkgname-dri-gallium:_gallium
+	$pkgname-va-gallium:_va
+	$pkgname-egl
+	$pkgname-gl
+	$pkgname-gles
+	$pkgname-gbm
+	$pkgname-vulkan-ati:_vulkan
+	$pkgname-vulkan-swrast:_vulkan
+	$pkgname-vulkan-layers:_vulkan_layers
+	"
+_llvmver=23
+depends_dev="
+	libdrm-dev
+	libxdamage-dev
+	libxshmfence-dev
+	"
+# pmbootstrap resolves build dependencies without evaluating the $CARCH case
+# below, so the aarch64 (rusticl, clc) deps are listed explicitly. This package
+# is cross-compiled with pmb:cross-native2: makedepends_build is installed in
+# the native chroot (tools and native llvm/clang for mesa_clc), makedepends_host
+# in the aarch64 sysroot (libraries to link against).
+makedepends_build="
+	binutils
+	bison
+	cbindgen
+	clang$_llvmver-dev
+	expat-dev
+	findutils
+	flex
+	gettext
+	glslang
+	glslang-dev
+	libtool
+	libxml2-dev
+	llvm$_llvmver-dev
+	meson
+	py3-cparser
+	py3-mako
+	py3-packaging
+	py3-ply
+	py3-yaml
+	python3
+	rust
+	rust-bindgen
+	spirv-llvm-translator-dev
+	spirv-tools-dev
+	wayland-dev
+	wayland-protocols
+	zlib-dev
+	zstd
+	zstd-dev
+	"
+makedepends_host="
+	$depends_dev
+	clang$_llvmver-dev
+	elfutils-dev
+	eudev-dev
+	expat-dev
+	libclc-dev~$_llvmver
+	libdisplay-info-dev
+	libva-dev
+	libx11-dev
+	libxfixes-dev
+	libxml2-dev
+	libxrandr-dev
+	libxxf86vm-dev
+	llvm$_llvmver-dev
+	rust
+	spirv-llvm-translator-dev
+	spirv-tools-dev
+	vulkan-loader-dev
+	wayland-dev
+	wayland-protocols
+	xorgproto
+	zlib-dev
+	zstd-dev
+	"
+makedepends="$makedepends_build $makedepends_host"
+_paste_version="1.0.14"
+_proc_macro2_version="1.0.86"
+_quote_version="1.0.33"
+_syn_version="2.0.68"
+_unicode_ident_version="1.0.12"
+_rustc_hash_version="2.1.1"
+source="https://mesa.freedesktop.org/archive/mesa-${pkgver/_/-}.tar.xz
+	paste-$_paste_version.tar.gz::https://static.crates.io/crates/paste/paste-$_paste_version.crate
+	proc-macro2-$_proc_macro2_version.tar.gz::https://static.crates.io/crates/proc-macro2/proc-macro2-$_proc_macro2_version.crate
+	quote-$_quote_version.tar.gz::https://static.crates.io/crates/quote/quote-$_quote_version.crate
+	syn-$_syn_version.tar.gz::https://static.crates.io/crates/syn/syn-$_syn_version.crate
+	unicode-ident-$_unicode_ident_version.tar.gz::https://static.crates.io/crates/unicode-ident/unicode-ident-$_unicode_ident_version.crate
+	rustc-hash-$_rustc_hash_version.tar.gz::https://static.crates.io/crates/rustc-hash/rustc-hash-$_rustc_hash_version.crate
+	23575.patch
+	riscv64-tls.patch
+	0101-freedreno-a5xx-Use-the-blob-s-RB_CCU_CNTL-values-on-A508.patch
+	0102-freedreno-a5xx-Don-t-2D-copy-between-linear-surfaces-on-A508.patch
+	0103-freedreno-a5xx-Re-emit-fragment-textures-when-the-fragment-program-changes.patch
+	0104-freedreno-a5xx-Use-the-blob-s-RB_CCU_CNTL-values-on-A509-and-A512.patch
+	0105-freedreno-a5xx-Program-the-A508-A509-A512-the-way-Qualcomm-s-driver-does.patch
+	0106-freedreno-a5xx-Read-A8-as-A8-in-SCALE-blits.patch
+	llvm23.patch
+	"
+builddir="$srcdir/mesa-${pkgver/_/-}"
+options="!check pmb:cross-native2" # TODO
+
+_dri_driverdir=/usr/lib/dri
+_gallium_drivers="r300,r600,radeonsi,nouveau,llvmpipe,virgl,zink"
+_vulkan_drivers="amd,swrast"
+_vulkan_layers="device-select,overlay"
+
+# extra gallium per arch
+case "$CARCH" in
+x86*)
+	_gallium_drivers="$_gallium_drivers,svga,i915,iris,crocus"
+	;;
+armhf|armv7)
+	_gallium_drivers="$_gallium_drivers,vc4,v3d,freedreno,lima,panfrost,etnaviv,tegra"
+	_gallium_drivers="${_gallium_drivers//r300,}"
+	;;
+aarch64)
+	_gallium_drivers="$_gallium_drivers,vc4,v3d,freedreno,lima,panfrost,etnaviv,tegra,asahi,svga"
+	_gallium_drivers="${_gallium_drivers//r300,}"
+	;;
+riscv64)
+	_gallium_drivers="${_gallium_drivers//r300,}"
+	;;
+loongarch64)
+	_gallium_drivers="$_gallium_drivers,i915,iris,crocus"
+	_gallium_drivers="${_gallium_drivers//r300,}"
+esac
+
+# extra vulkan per arch
+case "$CARCH" in
+x86*|loongarch64)
+	_vulkan_drivers="$_vulkan_drivers,intel,intel_hasvk,nouveau,virtio"
+	_vulkan_layers="$_vulkan_layers,intel-nullhw"
+	subpackages="
+		$subpackages
+		$pkgname-vulkan-intel:_vulkan
+		$pkgname-vulkan-nouveau:_vulkan
+		$pkgname-vulkan-virtio:_vulkan
+		"
+	;;
+aarch64)
+	_vulkan_drivers="$_vulkan_drivers,asahi,broadcom,freedreno,imagination,intel,nouveau,panfrost,virtio"
+	subpackages="
+		$subpackages
+		$pkgname-vulkan-asahi:_vulkan
+		$pkgname-vulkan-broadcom:_vulkan
+		$pkgname-vulkan-freedreno:_vulkan
+		$pkgname-vulkan-imagination:_vulkan
+		$pkgname-vulkan-intel:_vulkan
+		$pkgname-vulkan-nouveau:_vulkan
+		$pkgname-vulkan-panfrost:_vulkan
+		$pkgname-vulkan-virtio:_vulkan
+		"
+	;;
+esac
+
+_intel_rt=disabled
+case "$CARCH" in
+	x86_64) _intel_rt=enabled ;;
+esac
+
+case "$CARCH" in
+x86)
+	# lto fails on x86 only
+	# mostly:
+	# https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/21371
+	# https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/21180
+	_lto=false
+	;;
+*)
+	# ~5% smaller
+	# disable temporarily until resolved:
+	# https://gitlab.freedesktop.org/mesa/mesa/-/issues/11846
+	_lto=false
+	;;
+esac
+
+case "$CARCH" in
+armv7|aarch64|x86|x86_64|loongarch64)
+	_rusticl=true
+	makedepends="
+		$makedepends
+		clang$_llvmver-dev
+		libclc-dev~$_llvmver
+		rust
+		rust-bindgen
+		spirv-llvm-translator-dev
+		"
+	subpackages="
+		$subpackages
+		$pkgname-rusticl
+		"
+	;;
+armhf)
+	# still requires clc for panfrost (https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/32720)
+	makedepends="
+		$makedepends
+		clang$_llvmver-dev
+		libclc-dev~$_llvmver
+		rust
+		rust-bindgen
+		spirv-llvm-translator-dev
+		"
+	_rusticl=false
+	;;
+*)
+	_rusticl=false
+	;;
+esac
+
+prepare() {
+	default_prepare
+
+	cd subprojects/
+
+	rm -f paste-1-rs.wrap proc-macro2-1-rs.wrap quote-1-rs.wrap syn-2-rs.wrap unicode-ident-1-rs.wrap rustc-hash-2-rs.wrap
+
+	mv "$srcdir/paste-$_paste_version" paste-1-rs
+	mv "$srcdir/proc-macro2-$_proc_macro2_version" proc-macro2-1-rs
+	mv "$srcdir/quote-$_quote_version" quote-1-rs
+	mv "$srcdir/syn-$_syn_version" syn-2-rs
+	mv "$srcdir/unicode-ident-$_unicode_ident_version" unicode-ident-1-rs
+	mv "$srcdir/rustc-hash-$_rustc_hash_version" rustc-hash-2-rs
+
+	cp packagefiles/paste-1-rs/meson.build paste-1-rs/
+	cp packagefiles/proc-macro2-1-rs/meson.build proc-macro2-1-rs/
+	cp packagefiles/quote-1-rs/meson.build quote-1-rs/
+	cp packagefiles/syn-2-rs/meson.build syn-2-rs/
+	cp packagefiles/unicode-ident-1-rs/meson.build unicode-ident-1-rs/
+	cp packagefiles/rustc-hash-2-rs/meson.build rustc-hash-2-rs/
+}
+
+# Cross compiling (pmbootstrap pmb:cross-native2, CHOST != CBUILD):
+# - mesa_clc and vtn_bindgen2 run on the build machine while building, so they
+#   are built natively first and passed in with -Dmesa-clc=system.
+# - rustc gets the target via the cross file, and meson builds everything that
+#   is native: true (proc-macro crates and their syn/quote/proc-macro2
+#   dependencies) with the build machine's rustc.
+# - the aarch64 llvm-config cannot run here, so the native one is used with its
+#   paths pointed into the sysroot.
+_cross_setup() {
+	local native_tools="$srcdir"/native-tools
+	mkdir -p "$native_tools"/bin
+
+	(
+		unset CROSS_COMPILE PKG_CONFIG_PATH PKG_CONFIG_SYSROOT_DIR
+		export CC="${HOSTCC:-gcc}" CXX="${HOSTCXX:-g++}" LD="${HOSTLD:-ld}"
+		export CFLAGS="$HOSTCFLAGS" CXXFLAGS="$HOSTCXXFLAGS"
+		export CPPFLAGS="$HOSTCPPFLAGS" LDFLAGS="$HOSTLDFLAGS"
+		export PATH="$PATH:/usr/lib/llvm$_llvmver/bin"
+		meson setup \
+			--prefix=/usr \
+			--buildtype=plain \
+			--wrap-mode=nodownload \
+			-Dllvm=enabled \
+			-Dshared-llvm=enabled \
+			-Dmesa-clc=enabled \
+			-Dinstall-mesa-clc=true \
+			-Dprecomp-compiler=enabled \
+			-Dinstall-precomp-compiler=true \
+			-Dgallium-drivers=panfrost,asahi \
+			-Dvulkan-drivers=imagination \
+			-Dplatforms= \
+			-Dglx=disabled \
+			-Dgbm=disabled \
+			-Degl=disabled \
+			-Dgles1=disabled \
+			-Dgles2=disabled \
+			-Dopengl=false \
+			-Dgallium-rusticl=false \
+			-Dbuild-tests=false \
+			-Dvalgrind=disabled \
+			-Dlibunwind=disabled \
+			. output-native
+		meson compile -C output-native mesa_clc vtn_bindgen2 \
+			pco_clc asahi_clc panfrost_compile
+	)
+	find output-native -type f \( -name mesa_clc -o -name vtn_bindgen2 \
+		-o -name pco_clc -o -name asahi_clc -o -name panfrost_compile \) \
+		-exec install -Dm755 -t "$native_tools"/bin {} +
+
+	cat > "$native_tools"/llvm-config <<-EOF
+	#!/bin/sh
+	/usr/lib/llvm$_llvmver/bin/llvm-config "\$@" \\
+		| sed -e "s|/usr/lib/llvm$_llvmver|$CBUILDROOT/usr/lib/llvm$_llvmver|g"
+	EOF
+	chmod +x "$native_tools"/llvm-config
+
+	# The native rust package only ships the x86_64 standard library. The
+	# aarch64 one comes from the rust package in the sysroot: merge both into
+	# one rustc sysroot, so it can compile for the target and load the native
+	# proc macros.
+	local triple="${CROSS_COMPILE%-}" rust_sysroot="$srcdir"/rust-sysroot
+	mkdir -p "$rust_sysroot"/lib/rustlib
+	ln -s /usr/lib/rustlib/* "$rust_sysroot"/lib/rustlib/
+	ln -s "$CBUILDROOT"/usr/lib/rustlib/$triple "$rust_sysroot"/lib/rustlib/
+
+	cat > "$native_tools"/rust.cross <<-EOF
+	[binaries]
+	rust = ['rustc', '--target', '$triple', '--sysroot', '$rust_sysroot']
+	llvm-config = '$native_tools/llvm-config'
+	[built-in options]
+	rust_link_args = ['--sysroot=$CBUILDROOT']
+	EOF
+
+	export PATH="$native_tools/bin:$PATH"
+	_meson_cross_args="--cross-file $native_tools/rust.cross"
+	_mesa_clc=system
+	_precomp=system
+}
+
+build() {
+	if [ "$CBUILD" != "$CHOST" ]; then
+		_cross_setup
+	fi
+
+	# use -g1 to generate less debug info:
+	# 485 MiB -> ~80 MiB
+	export CFLAGS="$CFLAGS -O2 -g1"
+	export CXXFLAGS="$CXXFLAGS -O2 -g1"
+	export CPPFLAGS="$CPPFLAGS -O2 -g1"
+
+	case "$CARCH" in
+	armhf|armv7)
+		# gnu2 tlsdesc is broken in binutils, see
+		# https://gitlab.alpinelinux.org/alpine/aports/-/issues/14140
+		# and
+		# https://gitlab.freedesktop.org/mesa/mesa/-/issues/13236
+		export CFLAGS="$CFLAGS -mtls-dialect=gnu"
+		export CXXFLAGS="$CXXFLAGS -mtls-dialect=gnu"
+		;;
+	esac
+
+	PATH="$PATH:/usr/lib/llvm$_llvmver/bin" \
+	abuild-meson \
+		-Db_ndebug=true \
+		-Db_lto=$_lto \
+		-Dallow-kcmp=enabled \
+		-Dexpat=enabled \
+		-Dintel-rt=$_intel_rt \
+		-Dshader-cache=enabled \
+		-Dxlib-lease=enabled \
+		-Dxmlconfig=enabled \
+		-Dzstd=enabled \
+		-Dbackend_max_links=2 \
+		-Dbuild-tests="$(want_check && echo true || echo false)" \
+		-Ddri-drivers-path=$_dri_driverdir \
+		-Dgallium-drivers=$_gallium_drivers \
+		-Dvulkan-drivers=$_vulkan_drivers \
+		-Dvulkan-layers=$_vulkan_layers \
+		-Damdgpu-virtio=true \
+		-Dfreedreno-kmds=msm,virtio \
+		-Dplatforms=x11,wayland \
+		-Dllvm=enabled \
+		-Dshared-llvm=enabled \
+		-Dgbm=enabled \
+		-Dglx=dri \
+		-Dopengl=true \
+		-Dgles1=enabled \
+		-Dgles2=enabled \
+		-Degl=enabled \
+		-Dgallium-extra-hud=true \
+		-Dgallium-rusticl=$_rusticl \
+		${_mesa_clc:+-Dmesa-clc=$_mesa_clc} \
+		${_precomp:+-Dprecomp-compiler=$_precomp} \
+		-Dgallium-rusticl-enable-drivers=auto,freedreno \
+		-Dgallium-va=enabled \
+		-Drust_std=2021 \
+		-Dvideo-codecs=all \
+		$_meson_cross_args \
+		. output
+
+	# Print config
+	meson configure --no-pager output
+
+	meson compile -C output
+}
+
+# Tests workarounds
+case "$CARCH" in
+armhf|armv7|riscv64|loongarch64|ppc64le)
+	# https://gitlab.alpinelinux.org/alpine/aports/-/issues/16525
+	_tests_opts="$_tests_opts --no-suite mesa:llvmpipe"
+	;;
+s390x|ppc64)
+	# https://gitlab.freedesktop.org/mesa/mesa/-/issues/9507
+	# mesa:amd / ac_surface_modifier_test timeouts (CI perf issue I assume)
+	_tests_opts="$_tests_opts --no-suite mesa:gallium --no-suite mesa:llvmpipe --no-suite mesa:amd"
+	;;
+esac
+
+check() {
+	LC_ALL=C.UTF=8 meson test --print-errorlogs $_tests_opts -C output
+}
+
+package() {
+	DESTDIR="$pkgdir" meson install --no-rebuild -C output
+}
+
+egl() {
+	pkgdesc="Mesa libEGL runtime libraries"
+	# gles is not directly needed but GTK+mesa throws errors when egl
+	# is installed without gles
+	# https://gitlab.alpinelinux.org/alpine/aports/-/issues/15510#note_531887
+	depends="mesa=$pkgver-r$pkgrel mesa-gles=$pkgver-r$pkgrel"
+
+	amove usr/lib/libEGL.so*
+}
+
+gl() {
+	pkgdesc="Mesa libGL runtime libraries"
+	depends="mesa=$pkgver-r$pkgrel"
+
+	amove usr/lib/libGL.so*
+}
+
+gles() {
+	pkgdesc="Mesa libGLESv2 runtime libraries"
+	depends="mesa=$pkgver-r$pkgrel"
+
+	amove usr/lib/libGLES*.so*
+}
+
+gbm() {
+	pkgdesc="Mesa gbm library"
+	depends="mesa=$pkgver-r$pkgrel"
+
+	amove usr/lib/libgbm.so.*
+}
+
+rusticl() {
+	pkgdesc="Mesa OpenCL driver"
+	depends="mesa=$pkgver-r$pkgrel clang$_llvmver-headers libclc~$_llvmver"
+
+	amove usr/lib/libRusticlOpenCL.so.*
+	amove etc/OpenCL/vendors/
+}
+
+# Move links referencing the same file to the subpackage.
+# Usage: _mv_links <base directory> <example>
+# where <example> is one of the libraries covered by the megadriver.
+# The example is used to find other links that point to the same file.
+_mv_links() {
+	install -d "$subpkgdir"/$1
+	find -L "$pkgdir"/$1 -samefile "$pkgdir"/$1/$2 -print0 \
+		| xargs -0 -I{} mv {} "$subpkgdir"/$1/
+}
+
+_mv_vulkan() {
+	local i
+	for i in "$@"; do
+		amove usr/lib/libvulkan_$i*.so
+		amove usr/share/vulkan/icd.d/${i}_*.*
+	done
+}
+
+# Mesa uses "megadrivers" where multiple drivers are linked into one shared
+# library. This library is then hard-linked to separate files (one for each driver).
+# Each subpackage contains one megadriver so that all the hard-links are preserved.
+
+_gallium() {
+	pkgdesc="Mesa gallium DRI drivers"
+	depends="mesa=$pkgver-r$pkgrel"
+
+	# libgallium_dri.so
+	_mv_links $_dri_driverdir swrast_dri.so
+}
+
+_va() {
+	local n=${subpkgname##*-va-}
+	pkgdesc="Mesa $n VAAPI drivers"
+	depends="mesa=$pkgver-r$pkgrel libva"
+
+	case $n in
+	gallium)
+		# libgallium_drv_video.so
+		_mv_links /usr/lib/dri radeonsi_drv_video.so ;;
+	esac
+}
+
+_vulkan() {
+	local n=${subpkgname##*-vulkan-}
+	pkgdesc="Mesa Vulkan API driver for $n"
+	depends="mesa=$pkgver-r$pkgrel"
+
+	case $n in
+	ati)
+		_mv_vulkan radeon ;;
+	asahi)
+		_mv_vulkan asahi ;;
+	imagination)
+		_mv_vulkan powervr_mesa ;;
+	intel)
+		_mv_vulkan intel ;;
+	broadcom)
+		_mv_vulkan broadcom ;;
+	freedreno)
+		_mv_vulkan freedreno ;;
+	nouveau)
+		_mv_vulkan nouveau ;;
+	panfrost)
+		_mv_vulkan panfrost ;;
+	swrast)
+		_mv_vulkan lvp ;;
+	virtio)
+		_mv_vulkan virtio ;;
+	esac
+}
+
+_vulkan_layers() {
+	pkgdesc="collection of vulkan layers from mesa"
+	depends="python3"
+
+	# Remove this after the release of the next stable (3.14)
+	# it originally was claed layer as it only packaged the
+	# overlay one but now it also packages device-select and
+	# intel-nullhw (on x86*)
+	provides="$pkgname-vulkan-layer=$pkgver-r$pkgrel"
+	replaces="$pkgname-vulkan-layer=$pkgver-r$pkgrel"
+
+	amove usr/share/vulkan/explicit_layer.d
+	amove usr/share/vulkan/implicit_layer.d
+	amove usr/lib/libVkLayer_*.so
+	amove usr/bin/mesa-overlay-control.py
+}
+
+sha512sums="
+08c7d7ea426ddfb0f7bc51b06e18c363a4d31cf1a8b203828bb455eda0189e41d2215eb9f627585ed11e0d0f231a6a8c9f0c7176238760cd76b62e20c35ccd6a  mesa-26.2.5.tar.xz
+3a793f0e5e773a7f7defc798a4c17ae9a40d715144632ea6cb0a8c785e14c4212046491df016bb9838281f8eaf327a79f01c1e2ac5f26785c028bc880faff9ee  paste-1.0.14.tar.gz
+1cdb7e22a35ae231d880c9420784c9acf97bda2db258b3d34aae5061dc1858449defe19a49e12c6a4173906aa72a4115059ac2db0fc760205fd2ab8b5b414434  proc-macro2-1.0.86.tar.gz
+c1e76c3c017e8554eebe309f8167fd56fce931981c06798aa85a0cc6d64a9cba6ab103f5a1324e69c6f9ca5dc47a8e31ff2e847850542748697afcd265b5939c  quote-1.0.33.tar.gz
+7b781f8ea2b0d01c06f47d165da99cd96e3b44a33de1d77c78a2cb37ebe3f8304f426ba3d0d1cf766241dcc0537908774504df7d455d63bf89ec22ac0499d372  syn-2.0.68.tar.gz
+bc1824e1e4452a40732fc69874d7e1a66f7803717a314790dcf48867eba34bc9441331ef031e386912e52c385645c25b6ed39d4f149973b5b97371b1b96b1920  unicode-ident-1.0.12.tar.gz
+87097d98d47f327d000041ab13acddc366f1500d9c3e5c82169c3358112c7a7c03701c9b3c2c81d9f9da65b7ebac1c479b179dfaf7c059cd0b929b4673e51084  rustc-hash-2.1.1.tar.gz
+91bdda3a4b5906963c8c0053ebb924b952dac3d50e66afee87a7abebf82141426b34dce7e1947fe18c54dedd33537792ec13a94504ff7ad890243507d57fdc88  23575.patch
+ce1887fb7d425b94c375a0547bee40c308809c01f5ce1bcddabcc69a7fcb445efb9d5f5c7bac49b2778ab40687c7bce204d278b0bf028d124c75e59083107fba  riscv64-tls.patch
+5c44cea397592b3107df134d3aff9e05948503ac0bfbe6174ef12ec028453046fc0984cff7445d175aaf78ddf11fb5168fc2ad92374dc597046b2c55ffe43c4b  0101-freedreno-a5xx-Use-the-blob-s-RB_CCU_CNTL-values-on-A508.patch
+3e13ea5f0c3c66b104067604012f760054daf5cc49d9215b6aa7df7f3e7d667f925e3495a96dc023be102cf0cd205a3755d1de5f668900822d431a31776c9c4c  0102-freedreno-a5xx-Don-t-2D-copy-between-linear-surfaces-on-A508.patch
+37a8df63777c857c8d2d8f887dec9e9db92ec776fbb4166ef2ae0a8ca31f8e6fdcc9bc90a57f03372ea456164d770839bdf11dade6192fdc0bfaaee7e2db102b  0103-freedreno-a5xx-Re-emit-fragment-textures-when-the-fragment-program-changes.patch
+737ab3b7e2b85435e5efef853f12dfcb5fe0ae06c07869d8c3e3401b276f18f02709f92e4e34c9110f9ee564b156c32e7b1b6c9428c769ff4273495e9631a955  0104-freedreno-a5xx-Use-the-blob-s-RB_CCU_CNTL-values-on-A509-and-A512.patch
+afb36ca4c1ef72493327860ac5f0ff1382ca8e12a3f88d34950371d495084db04d86073a22c4be801413d6c6326ec6c4c8ffd21b41ae5dd9a7d1a0d93b29c051  0105-freedreno-a5xx-Program-the-A508-A509-A512-the-way-Qualcomm-s-driver-does.patch
+e5f6e1d1d885c7dcc58bde457e66c130cd1730a6023729e32a0ff58f7d0597f272eb64af3a7369f18cfc87ac75490dad04b72724ef78982f015232e7655da1e6  0106-freedreno-a5xx-Read-A8-as-A8-in-SCALE-blits.patch
+0ca39282aa42d0b10a5d88a49cc91aea94caa6a9785e7bf75071d101c09ec5debd63a4478053657e163c94007d765d1f05c98a12fe16ad044c3fc10ef1fc27e9  llvm23.patch
+"

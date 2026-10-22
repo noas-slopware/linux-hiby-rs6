@@ -1,0 +1,7 @@
+# HiBy RS6: no SEE sensor hub. iio-sensor-proxy (80-) and postmarketos-base-ui (90-) tag every
+# fastrpc-adsp device with the SEE "ssc-*" sensor types (SDM845 and newer), but SDM660's ADSP
+# runs the older SMGR: its accelerometer is the qcom_smgr IIO device instead. Probing SEE here
+# made iio-sensor-proxy crash in libssc and take the IIO accelerometer down with it.
+ACTION=="remove", GOTO="hiby_rs6_no_ssc_end"
+SUBSYSTEM=="misc", KERNEL=="fastrpc-adsp*", ENV{IIO_SENSOR_PROXY_TYPE}="", ENV{SYSTEMD_WANTS}=""
+LABEL="hiby_rs6_no_ssc_end"

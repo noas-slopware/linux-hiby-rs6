@@ -1,0 +1,52 @@
+From 636e96537e6ecabbe021913796341532bc862982 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 18:25:00 +0900
+Subject: [PATCH 18/94] cpuidle: psci: report probe deferral through
+ dev_err_probe()
+
+Waiting for a parent power domain (on SDM660 the MPM, which provides the
+system-level domain) makes psci_pd_init() return -EPROBE_DEFER, and the
+idle driver then defers too. Both were logged at error level, which on a
+quiet boot is enough for fbcon to take over the console. Use
+dev_err_probe(), which logs deferral at debug level and records the
+reason in devices_deferred.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ drivers/cpuidle/cpuidle-psci-domain.c | 4 ++--
+ drivers/cpuidle/cpuidle-psci.c        | 6 ++----
+ 2 files changed, 4 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/cpuidle/cpuidle-psci-domain.c b/drivers/cpuidle/cpuidle-psci-domain.c
+index b9e4ad7d4..caa83c5ec 100644
+--- a/drivers/cpuidle/cpuidle-psci-domain.c
++++ b/drivers/cpuidle/cpuidle-psci-domain.c
+@@ -173,8 +173,8 @@ static int psci_cpuidle_domain_probe(struct platform_device *pdev)
+ 	dt_idle_pd_remove_topology(np);
+ 	psci_pd_remove();
+ exit:
+-	pr_err("failed to create CPU PM domains ret=%d\n", ret);
+-	return ret;
++	/* -EPROBE_DEFER (e.g. a parent domain not probed yet) is not an error */
++	return dev_err_probe(&pdev->dev, ret, "failed to create CPU PM domains\n");
+ }
+ 
+ static struct platform_driver psci_cpuidle_domain_driver = {
+diff --git a/drivers/cpuidle/cpuidle-psci.c b/drivers/cpuidle/cpuidle-psci.c
+index b250d0dde..962765b29 100644
+--- a/drivers/cpuidle/cpuidle-psci.c
++++ b/drivers/cpuidle/cpuidle-psci.c
+@@ -404,10 +404,8 @@ static int psci_idle_init_cpu(struct device *dev, int cpu)
+ 	 * Initialize PSCI idle states.
+ 	 */
+ 	ret = psci_cpu_init_idle(dev, drv, cpu, ret);
+-	if (ret) {
+-		pr_err("CPU %d failed to PSCI idle\n", cpu);
+-		return ret;
+-	}
++	if (ret)
++		return dev_err_probe(dev, ret, "CPU %d failed to PSCI idle\n", cpu);
+ 
+ 	ret = cpuidle_register(drv, NULL);
+ 	if (ret)

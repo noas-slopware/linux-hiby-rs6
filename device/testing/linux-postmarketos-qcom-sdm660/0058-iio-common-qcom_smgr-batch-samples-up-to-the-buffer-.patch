@@ -1,0 +1,203 @@
+From eb7f94ee4c0eb5fe373fa0455be8196e9b7faf61 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 12:23:32 +0900
+Subject: [PATCH 58/94] iio: common: qcom_smgr: batch samples up to the buffer
+ watermark
+
+Every report carried one sample, so a reader was woken once per sample.
+Read the number of samples SMGR can buffer for a sensor from the
+single-sensor-info response (TLV 0x10, which the stock HAL passes to
+setMaxBufferedSamples()), take the IIO buffer watermark through
+hwfifo_set_watermark and bundle up to that many samples per report, at
+most what SMGR buffers and a report carries. A sensor SMGR does not
+buffer for still gets one sample per report, as with the stock HAL.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ drivers/iio/common/qcom_smgr/qcom_smgr.c    | 57 ++++++++++++++++++---
+ drivers/iio/common/qcom_smgr/qmi/sns_smgr.c |  7 +--
+ drivers/iio/common/qcom_smgr/qmi/sns_smgr.h |  5 +-
+ include/linux/iio/common/qcom_smgr.h        |  5 ++
+ 4 files changed, 62 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/iio/common/qcom_smgr/qcom_smgr.c b/drivers/iio/common/qcom_smgr/qcom_smgr.c
+index 8f3c65d0d..0f7f601b0 100644
+--- a/drivers/iio/common/qcom_smgr/qcom_smgr.c
++++ b/drivers/iio/common/qcom_smgr/qcom_smgr.c
+@@ -25,6 +25,7 @@
+ #include "qmi/sns_smgr.h"
+ 
+ #define SMGR_TICKS_PER_SECOND		32768
++/* Report rates are in Q16 Hz */
+ #define SMGR_REPORT_RATE_HZ		(SMGR_TICKS_PER_SECOND * 2)
+ #define SMGR_VALUE_DIV			65536
+ 
+@@ -234,6 +235,10 @@ static int qcom_smgr_request_single_sensor_info(struct qcom_smgr *smgr,
+ 
+ 		sensor->data_types[i].max_sample_rate =
+ 			resp.data_types[i].max_sample_rate_hz;
++
++		if (i < resp.max_buffered_len)
++			sensor->data_types[i].max_buffered_samples =
++				resp.max_buffered[i];
+ 	}
+ 
+ 	return 0;
+@@ -266,6 +271,22 @@ static u16 qcom_smgr_default_sample_rate(const struct qcom_smgr_data_type_item *
+ 	return min_t(u16, SMGR_DEFAULT_SAMPLE_RATE_HZ, dt->max_sample_rate);
+ }
+ 
++/*
++ * Number of samples per report: the IIO buffer watermark, as far as SMGR can
++ * buffer samples for this sensor and a report can carry them. Without SMGR
++ * buffering every sample is sent on its own, which is also what the stock
++ * sensors HAL does for such sensors.
++ */
++static unsigned int qcom_smgr_samples_per_report(const struct qcom_smgr_sensor *sensor)
++{
++	unsigned int n = sensor->watermark;
++
++	n = min(n, sensor->data_types[0].max_buffered_samples);
++	n = min(n, SNS_SMGR_BUFFERING_REPORT_MAX_SAMPLES);
++
++	return max(n, 1U);
++}
++
+ /*
+  * Turn the AckNak of a buffering response into an error code. ACK_MODIFIED
+  * means SMGR substituted a parameter and runs the report anyway; the stock
+@@ -361,12 +382,14 @@ static int qcom_smgr_send_buffering(struct qcom_smgr *smgr,
+ 		 * A report cannot have 0 samples, therefore report rate cannot
+ 		 * be higher than sample rate.
+ 		 *
+-		 * Use the rate in sampling_frequency (by default the highest
+-		 * native rate SMGR allows) and set the report rate such that
+-		 * every report contains only 1 sample. This gives us the lowest
+-		 * latency.
++		 * Use the rate in sampling_frequency and bundle as many samples
++		 * per report as the IIO buffer watermark asks for, so a reader
++		 * is woken once per watermark and not once per sample. Round
++		 * the report rate up so that no report holds more samples than
++		 * that.
+ 		 */
+-		req.report_rate = sample_rate * SMGR_REPORT_RATE_HZ;
++		req.report_rate = DIV_ROUND_UP((u32)sample_rate * SMGR_REPORT_RATE_HZ,
++					       qcom_smgr_samples_per_report(sensor));
+ 
+ 		req.item_len = 1;
+ 		req.items[0].sensor_id = sensor->id;
+@@ -719,6 +742,23 @@ static int qcom_smgr_iio_write_raw(struct iio_dev *iio_dev,
+ 	return -EINVAL;
+ }
+ 
++/*
++ * The IIO core sets the watermark before postenable, and the watermark
++ * cannot change while the buffer is enabled.
++ */
++static int qcom_smgr_iio_hwfifo_set_watermark(struct iio_dev *iio_dev,
++					      unsigned int val)
++{
++	struct qcom_smgr *smgr = qcom_smgr_from_iio(iio_dev);
++	struct qcom_smgr_iio_priv *priv = iio_priv(iio_dev);
++
++	guard(mutex)(&smgr->lock);
++
++	priv->sensor->watermark = val;
++
++	return 0;
++}
++
+ static int qcom_smgr_iio_read_avail(struct iio_dev *iio_dev,
+ 				    struct iio_chan_spec const *chan,
+ 				    const int **vals, int *type, int *length,
+@@ -748,6 +788,7 @@ const struct iio_info qcom_smgr_iio_info = {
+ 	.read_raw = qcom_smgr_iio_read_raw,
+ 	.write_raw = qcom_smgr_iio_write_raw,
+ 	.read_avail = qcom_smgr_iio_read_avail,
++	.hwfifo_set_watermark = qcom_smgr_iio_hwfifo_set_watermark,
+ };
+ EXPORT_SYMBOL_GPL(qcom_smgr_iio_info);
+ 
+@@ -915,10 +956,12 @@ static int qcom_smgr_probe(struct qrtr_device *qdev)
+ 			smgr->sensors[i].data_types[j].cur_sample_rate =
+ 				qcom_smgr_default_sample_rate(&smgr->sensors[i].data_types[j]);
+ 
+-			dev_info(smgr->dev, "0x%02x,%d: %s %s\n",
++			dev_info(smgr->dev, "0x%02x,%d: %s %s, %u buffered samples, %u Hz default\n",
+ 				smgr->sensors[i].id, j,
+ 				smgr->sensors[i].data_types[j].vendor,
+-				smgr->sensors[i].data_types[j].name);
++				smgr->sensors[i].data_types[j].name,
++				smgr->sensors[i].data_types[j].max_buffered_samples,
++				smgr->sensors[i].data_types[j].cur_sample_rate);
+ 		}
+ 
+ 		qcom_smgr_register_sensor(smgr, &smgr->sensors[i]);
+diff --git a/drivers/iio/common/qcom_smgr/qmi/sns_smgr.c b/drivers/iio/common/qcom_smgr/qmi/sns_smgr.c
+index b9c07ce92..0c0f52887 100644
+--- a/drivers/iio/common/qcom_smgr/qmi/sns_smgr.c
++++ b/drivers/iio/common/qcom_smgr/qmi/sns_smgr.c
+@@ -270,11 +270,12 @@ const struct qmi_elem_info sns_smgr_single_sensor_info_resp_ei[] = {
+ 		.data_type = QMI_DATA_LEN,
+ 		.elem_len = 1,
+ 		.elem_size = sizeof_field(
+-			struct sns_smgr_single_sensor_info_resp, data1_len),
++			struct sns_smgr_single_sensor_info_resp,
++			max_buffered_len),
+ 		.array_type = NO_ARRAY,
+ 		.tlv_type = 0x10,
+ 		.offset = offsetof(struct sns_smgr_single_sensor_info_resp,
+-				   data1_len),
++				   max_buffered_len),
+ 	},
+ 	{
+ 		.data_type = QMI_UNSIGNED_4_BYTE,
+@@ -283,7 +284,7 @@ const struct qmi_elem_info sns_smgr_single_sensor_info_resp_ei[] = {
+ 		.array_type = VAR_LEN_ARRAY,
+ 		.tlv_type = 0x10,
+ 		.offset = offsetof(struct sns_smgr_single_sensor_info_resp,
+-				   data1),
++				   max_buffered),
+ 	},
+ 	{
+ 		.data_type = QMI_UNSIGNED_4_BYTE,
+diff --git a/drivers/iio/common/qcom_smgr/qmi/sns_smgr.h b/drivers/iio/common/qcom_smgr/qmi/sns_smgr.h
+index 7f7c6c53e..226d054ac 100644
+--- a/drivers/iio/common/qcom_smgr/qmi/sns_smgr.h
++++ b/drivers/iio/common/qcom_smgr/qmi/sns_smgr.h
+@@ -116,8 +116,9 @@ struct sns_smgr_single_sensor_info_resp {
+ 	u16 result;
+ 	u8 data_type_len;
+ 	struct sns_smgr_single_sensor_info_data_type data_types[SNS_SMGR_DATA_TYPE_COUNT];
+-	u8 data1_len;
+-	u32 data1[SNS_SMGR_DATA_TYPE_COUNT];
++	/* Samples SMGR can buffer for batching, per data type (0: none) */
++	u8 max_buffered_len;
++	u32 max_buffered[SNS_SMGR_DATA_TYPE_COUNT];
+ 	u32 data2;
+ 	u8 data3_len;
+ 	u64 data3[SNS_SMGR_DATA_TYPE_COUNT];
+diff --git a/include/linux/iio/common/qcom_smgr.h b/include/linux/iio/common/qcom_smgr.h
+index 93388858a..b95b7e682 100644
+--- a/include/linux/iio/common/qcom_smgr.h
++++ b/include/linux/iio/common/qcom_smgr.h
+@@ -37,6 +37,9 @@ struct qcom_smgr_data_type_item {
+ 
+ 	u16 max_sample_rate;
+ 	u16 cur_sample_rate;
++
++	/* Samples SMGR can hold back to batch them into one report */
++	u32 max_buffered_samples;
+ };
+ 
+ struct qcom_smgr_sensor {
+@@ -52,6 +55,8 @@ struct qcom_smgr_sensor {
+ 
+ 	struct iio_dev *iio_dev;
+ 
++	/* IIO buffer watermark, in samples */
++	unsigned int watermark;
+ 	/* The IIO buffer is enabled (the SMGR report may be paused for suspend) */
+ 	bool streaming;
+ };

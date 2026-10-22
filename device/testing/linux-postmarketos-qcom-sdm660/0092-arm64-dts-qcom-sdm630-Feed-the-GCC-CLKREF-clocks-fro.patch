@@ -1,0 +1,38 @@
+From f878bf620d265d9b62af9fcf084922dfd4885719 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 17:48:57 +0900
+Subject: [PATCH 92/94] arm64: dts: qcom: sdm630: Feed the GCC CLKREF clocks
+ from LN_BB_CLK1
+
+Wire the CXO2 input of the GCC to the RPM's LN_BB_CLK1 buffer, so the
+USB2/USB3/UFS CLKREF clocks vote for the buffer that drives them.
+
+Use the active-only clock, as downstream does (every PHY there takes
+ln_bb_clk1_ao as its "ref_clk_src"; the stock RS6 kernel does not even
+register the sleep-set ln_bb_clk1). That way a PHY that stays powered
+does not keep the buffer, and with it the XO, voted on in the RPM sleep
+set.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ arch/arm64/boot/dts/qcom/sdm630.dtsi | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sdm630.dtsi b/arch/arm64/boot/dts/qcom/sdm630.dtsi
+index 49c5c475c..f2ae7986a 100644
+--- a/arch/arm64/boot/dts/qcom/sdm630.dtsi
++++ b/arch/arm64/boot/dts/qcom/sdm630.dtsi
+@@ -609,9 +609,10 @@ gcc: clock-controller@100000 {
+ 			#power-domain-cells = <1>;
+ 			reg = <0x00100000 0x94000>;
+ 
+-			clock-names = "xo", "sleep_clk";
++			clock-names = "xo", "sleep_clk", "cxo2";
+ 			clocks = <&xo_board>,
+-					<&sleep_clk>;
++				 <&sleep_clk>,
++				 <&rpmcc RPM_SMD_LN_BB_A_CLK>;
+ 		};
+ 
+ 		rpm_msg_ram: sram@778000 {

@@ -1,0 +1,39 @@
+# 0001 (HiBy RS6): extra extlinux entries from extlinux.d survive every run.
+maintainer="Clayton Craft <clayton@craftyguy.net>"
+pkgname=boot-deploy
+pkgver=0.25.0
+pkgrel=1
+pkgdesc="tool for finalizing and deploying boot related files"
+url="https://gitlab.postmarketos.org/postmarketOS/boot-deploy"
+arch="noarch"
+license="GPL-2.0-or-later"
+source="
+	https://gitlab.postmarketos.org/postmarketOS/boot-deploy/-/archive/$pkgver/boot-deploy-$pkgver.tar.gz
+
+	os-customization
+	0001-extlinux-add-the-entries-from-extlinux.d.patch
+	"
+depends="generate-kernel-cmdline"
+# needed for /usr/lib/os-release
+checkdepends="postmarketos-release"
+
+check() {
+	./test_boot_deploy_functions.sh
+}
+
+package() {
+	install -Dm755 boot-deploy "$pkgdir"/usr/bin/boot-deploy
+	install -Dm755 boot-deploy-functions.sh \
+		"$pkgdir"/usr/share/boot-deploy/boot-deploy-functions.sh
+	install -Dm644 "$srcdir"/os-customization \
+		"$pkgdir"/usr/share/boot-deploy/os-customization
+
+	touch boot-deploy-trigger
+	install -Dm644 boot-deploy-trigger \
+		"$pkgdir"/usr/share/mkinitfs-triggers/boot-deploy
+}
+sha512sums="
+a1fa5bb4380cbdf593db78353a533a3b8115d382a0f3ad9ee212b03fba13ea7276fcd026b266ac3194fe578f7338f65a5759fe257c008e0fe8b7bef031004e0b  boot-deploy-0.25.0.tar.gz
+a243975b9850d9933e0f917f7eb38fc4a76ea658c3dcc56f035f60ee6c62d6740c1107143b8210bdc0231d4c9b6b2003e458120985604eb09649322d359ae89f  os-customization
+535b8c355a777acab9d53a60a2ca0cfa5acbfcf2c3858793cfdecfadf489190966e3a2854feba96a99521c9a75bae4c962f901dcb7c5b8512d0d8f28d4168701  0001-extlinux-add-the-entries-from-extlinux.d.patch
+"

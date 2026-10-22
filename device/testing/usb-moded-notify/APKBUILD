@@ -1,0 +1,34 @@
+# Forked from Alpine aports community/usb-moded-notify (0.4.2-r1) for the HiBy RS6:
+# keep running and retry (backoff, or as soon as a server takes the name) when
+# the notification server is missing or not answering, instead of exiting on
+# the GError and being crash-looped by systemd's Restart=on-failure every ~26 s.
+# pkgrel is above Alpine's so this build wins.
+# Contributor: Clayton Craft <clayton@craftyguy.net>
+maintainer="Noa Himesaka <himesaka@noa.codes>"
+pkgname=usb-moded-notify
+pkgver=0.4.2
+pkgrel=2
+pkgdesc="Simple daemon for handling usb-moded dialog events with notifications"
+url="https://gitlab.postmarketos.org/postmarketOS/usb-moded-notify"
+arch="noarch"
+license="GPL-3.0-or-later"
+depends="
+	py3-dbus
+	py3-gobject3
+	python3
+	"
+makedepends="just"
+subpackages="$pkgname-openrc $pkgname-systemd"
+source="https://gitlab.postmarketos.org/postmarketOS/usb-moded-notify/-/archive/$pkgver/usb-moded-notify-$pkgver.tar.gz
+	0001-Retry-instead-of-crashing-when-the-notification-server-fails.patch
+	"
+options="!check" # no tests
+
+package() {
+	PREFIX=/usr DESTDIR="$pkgdir" just install
+}
+
+sha512sums="
+9cdfc9ad9fd6db82d332ec7fd0e626e1b7810e8828e941cc0e8f05344e697d6f7b294f9a2f9dd1af55810a1c37508d6db4be160f58f91cef01952ed3b08b670c  usb-moded-notify-0.4.2.tar.gz
+d4c863c34b27cc810638093815a52dfcba77a030ff65389675dbd836f073d6071fb0307d166a3cf4dca936364b2c4c3163248e4e2d6ebfb740ea01d797577246  0001-Retry-instead-of-crashing-when-the-notification-server-fails.patch
+"

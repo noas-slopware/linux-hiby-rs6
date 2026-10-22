@@ -1,0 +1,915 @@
+From e50b6125048a1e63530f24954636547d80c7c281 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 20:17:21 +0900
+Subject: [PATCH] freedreno/a5xx: Program the A508/A509/A512 the way Qualcomm's
+ driver does
+
+The a5xx code writes the register values captured from the A530 on every
+A5xx. Qualcomm's driver for the HiBy RS6's A512 (libGLESv2_adreno.so,
+read with Ghidra) and the kernel differ from them in four places, and
+the RS6 shows two of them as bugs: tiled corruption on the lock screen
+when blits take the 3D path (FD_MESA_DEBUG=noblit), and UI elements
+that vanish for a frame when they take the 2D engine.
+
+Highest bank bit. Tiled addresses are swizzled by the highest DDR bank
+bit, which the RB, TPL1 and UCHE each carry in a mode register as
+(bit - 13). The kernel programs all three at boot from the SoC's memory
+configuration: 15 on msm8996, where the A530 values came from, 14 on
+SDM660. fd5_emit_restore writes RB_MODE_CNTL 0x44 and TPL1_MODE_CNTL
+0x544, and the blitter setup 0x4 and 0x344, all encoding bit 15, while
+the UCHE keeps the kernel's 14 (UCHE_DBG_ECO_CNTL_2 on A509/A512/A540),
+so the units disagree about where a tile lives. Qualcomm's driver
+computes both registers from the bank bit it gets from kgsl
+(A5xContext::InitStaticState: 0x40 | ((hbb+3)&3) << 1 and
+0x444 | ((hbb+3)&3) << 7, so 0x42 and 0x4c4 on the RS6). Ask the kernel
+for MSM_PARAM_HIGHEST_BANK_BIT, fall back to the GPU table's value, and
+derive the two registers from it.
+
+ECO bits. Qualcomm's driver (A5xWorkarounds, errata 97) and the kernel
+(ADRENO_QUIRK_DISABLE_RB_DP2CLOCKGATING) both set RB_DBG_ECO_CNTL bit 9
+on the A505/A506/A508/A509/A512, which the restore sequence then
+cleared with the A530's 0x00100000. SP_DBG_ECO_CNTL bit 30 (errata 54)
+is applied to the A510 and A530 only; every other A5xx, the A540 that
+this code already special-cased included, gets 0x800.
+
+2D copies. A5xBltDevice::A5xSelectA2DCopyMode returns the SCALE mode
+for the A508, A509 and A512 unconditionally: Qualcomm's driver never
+issues a plain BLIT_OP_COPY in render mode BLIT2D on them, which is the
+operation freedreno used for every 2D blit, and what wrote nothing on
+A508 between linear surfaces. A SCALE blit (render mode BLIT2DSCALE,
+CP_BLIT op 3) reads its source through the TP, from a texture
+descriptor at 0x2000 that is the ancestor of a6xx's SP_PS_2D_SRC, and
+converts through an intermediate format named in the BLIT_CNTLs and
+SP_2D_DST_FORMAT (0x2040). Emit copies in that form on these three
+GPUs, for same-format blits of texture formats (Qualcomm's driver
+refuses format conversions on them too) and for buffers, and leave the
+rest to u_blitter. The A508 linear-to-linear check this replaces is no
+longer reached.
+
+Post-blit sync. After every 2D-engine blit Qualcomm's driver issues
+PC_CCU_FLUSH_COLOR_TS twice, PC_CCU_INVALIDATE_COLOR,
+PC_CCU_INVALIDATE_DEPTH and a wait for idle
+(A5xBltDevice::HwExecPostBltSync); do the same.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ src/freedreno/drm/freedreno_drmif.h           |   1 +
+ src/freedreno/drm/msm/msm_pipe.c              |   2 +
+ src/freedreno/drm/virtio/virtio_pipe.c        |   3 +
+ src/freedreno/registers/adreno/a5xx.xml       |  38 ++
+ .../drivers/freedreno/a5xx/fd5_blitter.c      | 470 ++++++++++++------
+ src/gallium/drivers/freedreno/a5xx/fd5_emit.c |  15 +-
+ src/gallium/drivers/freedreno/a5xx/fd5_emit.h |  78 +++
+ .../drivers/freedreno/freedreno_screen.c      |   8 +
+ .../drivers/freedreno/freedreno_screen.h      |   1 +
+ 9 files changed, 448 insertions(+), 168 deletions(-)
+
+diff --git a/src/freedreno/drm/freedreno_drmif.h b/src/freedreno/drm/freedreno_drmif.h
+index ecb84aa..03fb7f7 100644
+--- a/src/freedreno/drm/freedreno_drmif.h
++++ b/src/freedreno/drm/freedreno_drmif.h
+@@ -48,6 +48,7 @@ enum fd_param_id {
+    FD_SYSPROF,       /* Settable (for CAP_SYS_ADMIN) param for system profiling */
+    FD_VA_SIZE,       /* GPU virtual address size */
+    FD_UCHE_TRAP_BASE,
++   FD_HIGHEST_BANK_BIT, /* highest DDR bank bit, for tiled address swizzling */
+ };
+ 
+ /**
+diff --git a/src/freedreno/drm/msm/msm_pipe.c b/src/freedreno/drm/msm/msm_pipe.c
+index c80f1b3..d81944e 100644
+--- a/src/freedreno/drm/msm/msm_pipe.c
++++ b/src/freedreno/drm/msm/msm_pipe.c
+@@ -86,6 +86,8 @@ msm_pipe_get_param(struct fd_pipe *pipe, enum fd_param_id param,
+       return query_param(pipe, MSM_PARAM_VA_SIZE, value);
+    case FD_UCHE_TRAP_BASE:
+       return query_param(pipe, MSM_PARAM_UCHE_TRAP_BASE, value);
++   case FD_HIGHEST_BANK_BIT:
++      return query_param(pipe, MSM_PARAM_HIGHEST_BANK_BIT, value);
+    default:
+       ERROR_MSG("invalid param id: %d", param);
+       return -1;
+diff --git a/src/freedreno/drm/virtio/virtio_pipe.c b/src/freedreno/drm/virtio/virtio_pipe.c
+index d76b1ad..2f50cb1 100644
+--- a/src/freedreno/drm/virtio/virtio_pipe.c
++++ b/src/freedreno/drm/virtio/virtio_pipe.c
+@@ -90,6 +90,9 @@ virtio_pipe_get_param(struct fd_pipe *pipe, enum fd_param_id param,
+       return 0;
+    case FD_UCHE_TRAP_BASE:
+       return query_param(pipe, MSM_PARAM_UCHE_TRAP_BASE, value);
++   case FD_HIGHEST_BANK_BIT:
++      *value = virtio_dev->vdrm->caps.u.msm.highest_bank_bit;
++      return 0;
+    default:
+       ERROR_MSG("invalid param id: %d", param);
+       return -1;
+diff --git a/src/freedreno/registers/adreno/a5xx.xml b/src/freedreno/registers/adreno/a5xx.xml
+index 4af76b3..57249ed 100644
+--- a/src/freedreno/registers/adreno/a5xx.xml
++++ b/src/freedreno/registers/adreno/a5xx.xml
+@@ -2752,6 +2752,42 @@ bit 7 for RECTLIST (clear) when z32s8 (used for clear of depth32?  not set
+ 		src via sampler, to enable scaling??)  0x2040 also used in this
+ 		case.
+ 	 -->
++	<!-- Source of a BLIT_OP_SCALE blit (render mode BLIT2DSCALE): the 2D
++	     engine reads it through the TP, so this is a texture descriptor, the
++	     ancestor of a6xx's SP_PS_2D_SRC.  Layout read from Qualcomm's A5xx
++	     driver (A5xBltDevice::SetA2dSrcTexture). -->
++	<bitset name="a5xx_2d_src_surf_info" inline="yes">
++		<bitfield name="COLOR_FORMAT" low="0" high="7" type="a5xx_tex_fmt"/>
++		<bitfield name="TILE_MODE" low="8" high="9" type="a5xx_tile_mode"/>
++		<bitfield name="COLOR_SWAP" low="10" high="11" type="a3xx_color_swap"/>
++		<bitfield name="FLAGS" pos="12" type="boolean"/>
++		<bitfield name="SRGB" pos="13" type="boolean"/>
++		<bitfield name="SAMPLES" low="14" high="15" type="a3xx_msaa_samples"/>
++		<bitfield name="FILTER" pos="16" type="boolean"/>
++		<bitfield name="SAMPLES_AVERAGE" pos="18" type="boolean"/>
++		<bitfield name="UNK20" pos="20" type="boolean"/>
++		<bitfield name="UNK22" pos="22" type="boolean"/>
++	</bitset>
++	<reg32 offset="0x2000" name="SP_PS_2D_SRC_INFO" type="a5xx_2d_src_surf_info"/>
++	<reg32 offset="0x2001" name="SP_PS_2D_SRC_SIZE">
++		<bitfield name="WIDTH" low="0" high="14" type="uint"/>
++		<bitfield name="HEIGHT" low="15" high="29" type="uint"/>
++	</reg32>
++	<reg64 offset="0x2002" name="SP_PS_2D_SRC" type="address"/>
++	<reg32 offset="0x2004" name="SP_PS_2D_SRC_PITCH">
++		<bitfield name="PITCH" low="3" high="23" type="uint"/>
++	</reg32>
++	<reg64 offset="0x2005" name="SP_PS_2D_SRC_PLANE1" type="address"/>
++	<reg32 offset="0x2007" name="SP_PS_2D_SRC_PLANE_PITCH" shr="4" type="uint"/>
++	<reg64 offset="0x2008" name="SP_PS_2D_SRC_PLANE2" type="address"/>
++	<!-- How the SCALE blit writes its result (A5xBltDevice::SetA2dSpOutputInfo):
++	     the format it converts to, RGBA8 for an unconverted copy. -->
++	<reg32 offset="0x2040" name="SP_2D_DST_FORMAT">
++		<bitfield name="NORM8" pos="0" type="boolean"/>
++		<bitfield name="SINT" pos="1" type="boolean"/>
++		<bitfield name="UINT" pos="2" type="boolean"/>
++		<bitfield name="COLOR_FORMAT" low="3" high="10" type="a5xx_color_fmt"/>
++	</reg32>
+ 	<reg32 offset="0x2100" name="RB_2D_BLIT_CNTL"/>  <!-- same as 0x2180 -->
+ 	<reg32 offset="0x2101" name="RB_2D_SRC_SOLID_DW0"/>
+ 	<reg32 offset="0x2102" name="RB_2D_SRC_SOLID_DW1"/>
+@@ -2795,6 +2831,8 @@ bit 7 for RECTLIST (clear) when z32s8 (used for clear of depth32?  not set
+ 
+ 0x2184 0x9 for copy, 0x1 for blit (maybe bitmask of enabled src/dst???)
+  -->
++	<!-- per-rect flags of a SCALE blit (edge clamp per side), zero for a copy -->
++	<reg32 offset="0x2183" name="UNKNOWN_2183"/>
+ 	<reg32 offset="0x2184" name="UNKNOWN_2184"/>
+ </domain>
+ 
+diff --git a/src/gallium/drivers/freedreno/a5xx/fd5_blitter.c b/src/gallium/drivers/freedreno/a5xx/fd5_blitter.c
+index ce40f58..40e13c5 100644
+--- a/src/gallium/drivers/freedreno/a5xx/fd5_blitter.c
++++ b/src/gallium/drivers/freedreno/a5xx/fd5_blitter.c
+@@ -183,7 +183,7 @@ can_do_blit(const struct pipe_blit_info *info)
+ }
+ 
+ static void
+-emit_setup(struct fd_ringbuffer *ring)
++emit_setup(struct fd_context *ctx, struct fd_ringbuffer *ring)
+ {
+    OUT_PKT4(ring, REG_A5XX_RB_RENDER_CNTL, 1);
+    OUT_RING(ring, 0x00000008);
+@@ -200,14 +200,16 @@ emit_setup(struct fd_ringbuffer *ring)
+    OUT_PKT4(ring, REG_A5XX_RB_CNTL, 1);
+    OUT_RING(ring, A5XX_RB_CNTL_BYPASS);
+ 
++   /* Only the bank bit; the A530 traces had bit 15 (0x4): */
+    OUT_PKT4(ring, REG_A5XX_RB_MODE_CNTL, 1);
+-   OUT_RING(ring, 0x00000004); /* RB_MODE_CNTL */
++   OUT_RING(ring, fd5_hbb_bits(ctx->screen) << 1); /* RB_MODE_CNTL */
+ 
+    OUT_PKT4(ring, REG_A5XX_SP_MODE_CNTL, 1);
+    OUT_RING(ring, 0x0000000c); /* SP_MODE_CNTL */
+ 
++   /* 0x244 plus the bank bit, 0x344 in the A530 traces: */
+    OUT_PKT4(ring, REG_A5XX_TPL1_MODE_CNTL, 1);
+-   OUT_RING(ring, 0x00000344); /* TPL1_MODE_CNTL */
++   OUT_RING(ring, 0x244 | (fd5_hbb_bits(ctx->screen) << 7)); /* TPL1_MODE_CNTL */
+ 
+    OUT_PKT4(ring, REG_A5XX_HLSQ_MODE_CNTL, 1);
+    OUT_RING(ring, 0x00000002); /* HLSQ_MODE_CNTL */
+@@ -216,11 +218,188 @@ emit_setup(struct fd_ringbuffer *ring)
+    OUT_RING(ring, 0x00000181); /* GRAS_CL_CNTL */
+ }
+ 
++/* One side of a 2D-engine blit: what RB_2D_SRC/DST_INFO describe, plus the
++ * texture view of it that a SCALE blit's source needs.
++ */
++struct blit_surf {
++   struct fd_bo *bo;
++   uint32_t offset;
++   enum a5xx_color_fmt cfmt;
++   enum a5xx_tex_fmt tfmt;
++   enum a5xx_tile_mode tile;
++   enum a3xx_color_swap swap;
++   uint32_t pitch;       /* bytes */
++   uint32_t array_pitch; /* bytes */
++   uint32_t width, height;
++};
++
++static uint32_t
++surf_info(const struct blit_surf *s)
++{
++   return A5XX_RB_2D_SRC_INFO_COLOR_FORMAT(s->cfmt) |
++          A5XX_RB_2D_SRC_INFO_TILE_MODE(s->tile) |
++          A5XX_RB_2D_SRC_INFO_COLOR_SWAP(s->swap);
++}
++
++/* RB_2D_SRC_SIZE/DST_SIZE: the pitch, and in the upper half what the A530
++ * traces showed as a layer pitch.  Qualcomm's driver writes the surface's
++ * height there (A5xBltDevice::SetA2dSrcBuffer), which the traces could not
++ * tell apart: a layer pitch of height rows of 128 bytes encodes the same.
++ * A SCALE blit gets the height, as the TP reads the source as a texture.
++ */
++static uint32_t
++surf_size(const struct blit_surf *s, bool scale)
++{
++   if (scale)
++      return A5XX_RB_2D_SRC_SIZE_PITCH(s->pitch) | (s->height << 17);
++   return A5XX_RB_2D_SRC_SIZE_PITCH(s->pitch) |
++          A5XX_RB_2D_SRC_SIZE_ARRAY_PITCH(s->array_pitch);
++}
++
++static void
++emit_src(struct fd_ringbuffer *ring, const struct blit_surf *s, bool scale)
++{
++   OUT_PKT4(ring, REG_A5XX_RB_2D_SRC_INFO, 9);
++   OUT_RING(ring, surf_info(s));
++   OUT_RELOC(ring, s->bo, s->offset, 0, 0); /* RB_2D_SRC_LO/HI */
++   OUT_RING(ring, surf_size(s, scale));
++   OUT_RING(ring, 0x00000000);
++   OUT_RING(ring, 0x00000000);
++   OUT_RING(ring, 0x00000000);
++   OUT_RING(ring, 0x00000000);
++   OUT_RING(ring, 0x00000000);
++
++   OUT_PKT4(ring, REG_A5XX_GRAS_2D_SRC_INFO, 1);
++   OUT_RING(ring, surf_info(s));
++
++   if (!scale)
++      return;
++
++   /* The TP's view of the source, read with the pixel-exact sampling of a
++    * nearest, unscaled SCALE blit.  The two UNK bits are always set.
++    */
++   OUT_PKT4(ring, REG_A5XX_SP_PS_2D_SRC_INFO, 10);
++   OUT_RING(ring, A5XX_SP_PS_2D_SRC_INFO_COLOR_FORMAT(s->tfmt) |
++                     A5XX_SP_PS_2D_SRC_INFO_TILE_MODE(s->tile) |
++                     A5XX_SP_PS_2D_SRC_INFO_COLOR_SWAP(s->swap) |
++                     A5XX_SP_PS_2D_SRC_INFO_UNK20 |
++                     A5XX_SP_PS_2D_SRC_INFO_UNK22);
++   OUT_RING(ring, A5XX_SP_PS_2D_SRC_SIZE_WIDTH(s->width) |
++                     A5XX_SP_PS_2D_SRC_SIZE_HEIGHT(s->height));
++   OUT_RELOC(ring, s->bo, s->offset, 0, 0); /* SP_PS_2D_SRC_LO/HI */
++   OUT_RING(ring, A5XX_SP_PS_2D_SRC_PITCH_PITCH(s->pitch));
++   OUT_RING(ring, 0x00000000); /* SP_PS_2D_SRC_PLANE1_LO */
++   OUT_RING(ring, 0x00000000); /* SP_PS_2D_SRC_PLANE1_HI */
++   OUT_RING(ring, 0x00000000); /* SP_PS_2D_SRC_PLANE_PITCH */
++   OUT_RING(ring, 0x00000000); /* SP_PS_2D_SRC_PLANE2_LO */
++   OUT_RING(ring, 0x00000000); /* SP_PS_2D_SRC_PLANE2_HI */
++}
++
++static void
++emit_dst(struct fd_ringbuffer *ring, const struct blit_surf *s, bool scale)
++{
++   OUT_PKT4(ring, REG_A5XX_RB_2D_DST_INFO, 9);
++   OUT_RING(ring, surf_info(s));
++   OUT_RELOC(ring, s->bo, s->offset, 0, 0); /* RB_2D_DST_LO/HI */
++   OUT_RING(ring, surf_size(s, scale));
++   OUT_RING(ring, 0x00000000);
++   OUT_RING(ring, 0x00000000);
++   OUT_RING(ring, 0x00000000);
++   OUT_RING(ring, 0x00000000);
++   OUT_RING(ring, 0x00000000);
++
++   OUT_PKT4(ring, REG_A5XX_GRAS_2D_DST_INFO, 1);
++   OUT_RING(ring, surf_info(s));
++}
++
++/* A SCALE blit converts through one of five intermediate formats, chosen by
++ * the source and destination formats (A5xBltDevice::A5xA2dGetIMF): RGBA8 for
++ * 8-bit unorm colour, RGBA16F for 16-bit float and RGBA32F for everything
++ * else, each of which carries the formats we send through it exactly.  (The
++ * other two are sRGB and snorm: we copy sRGB surfaces as their linear format
++ * instead, and leave snorm to the 3D path, as Qualcomm's driver copies those
++ * as sint.  Integer formats take yet another route, their own format with
++ * the SINT/UINT bits, which also stays with the 3D path.)  Its index goes
++ * into the BLIT_CNTLs, with bit 31 set only for RGBA8, and the format into
++ * SP_2D_DST_FORMAT.
++ */
++static uint32_t
++blit_dst_format(enum pipe_format fmt, uint32_t *imf)
++{
++   const struct util_format_description *desc = util_format_description(fmt);
++   enum a5xx_color_fmt out;
++   unsigned bits = 0;
++   uint32_t v = 0;
++
++   for (unsigned i = 0; i < desc->nr_channels; i++)
++      bits = MAX2(bits, desc->channel[i].size);
++
++   if (util_format_is_float16(fmt) || fmt == PIPE_FORMAT_R11G11B10_FLOAT) {
++      *imf = 3;
++      out = RB5_R16G16B16A16_FLOAT;
++   } else if (util_format_is_unorm(fmt) && bits <= 8) {
++      *imf = 0;
++      out = RB5_R8G8B8A8_UNORM;
++   } else {
++      *imf = 4;
++      out = RB5_R32G32B32A32_FLOAT;
++   }
++
++   v = A5XX_SP_2D_DST_FORMAT_COLOR_FORMAT(out);
++   if (bits <= 9)
++      v |= A5XX_SP_2D_DST_FORMAT_NORM8;
++
++   return v;
++}
++
++static void
++emit_blit_cmd(struct fd_ringbuffer *ring, bool scale, enum pipe_format fmt,
++              unsigned sx1, unsigned sy1, unsigned sx2, unsigned sy2,
++              unsigned dx1, unsigned dy1, unsigned dx2, unsigned dy2)
++{
++   if (scale) {
++      uint32_t imf;
++      uint32_t dst_format = blit_dst_format(fmt, &imf);
++      uint32_t blit_cntl = 0x06000000 | (imf << 28) | COND(imf == 0, 0x80000000);
++
++      OUT_PKT4(ring, REG_A5XX_RB_2D_BLIT_CNTL, 1);
++      OUT_RING(ring, blit_cntl);
++
++      OUT_PKT4(ring, REG_A5XX_GRAS_2D_BLIT_CNTL, 1);
++      OUT_RING(ring, blit_cntl);
++
++      OUT_PKT4(ring, REG_A5XX_SP_2D_DST_FORMAT, 1);
++      OUT_RING(ring, dst_format);
++
++      /* 9 for a COPY, 1 for a SCALE (A5xWriteGrasA2dPartitionCntl0): */
++      OUT_PKT4(ring, REG_A5XX_UNKNOWN_2184, 1);
++      OUT_RING(ring, 0x00000001);
++
++      OUT_PKT4(ring, REG_A5XX_UNKNOWN_2183, 1);
++      OUT_RING(ring, 0x00000000);
++   }
++
++   OUT_PKT7(ring, CP_BLIT, 5);
++   OUT_RING(ring, CP_BLIT_0_OP(scale ? BLIT_OP_SCALE : BLIT_OP_COPY));
++   OUT_RING(ring, CP_BLIT_1_SRC_X1(sx1) | CP_BLIT_1_SRC_Y1(sy1));
++   OUT_RING(ring, CP_BLIT_2_SRC_X2(sx2) | CP_BLIT_2_SRC_Y2(sy2));
++   OUT_RING(ring, CP_BLIT_3_DST_X1(dx1) | CP_BLIT_3_DST_Y1(dy1));
++   OUT_RING(ring, CP_BLIT_4_DST_X2(dx2) | CP_BLIT_4_DST_Y2(dy2));
++}
++
++static void
++emit_render_mode(struct fd_ringbuffer *ring, enum render_mode_cmd mode)
++{
++   OUT_PKT7(ring, CP_SET_RENDER_MODE, 1);
++   OUT_RING(ring, CP_SET_RENDER_MODE_0_MODE(mode));
++}
++
+ /* buffers need to be handled specially since x/width can exceed the bounds
+  * supported by hw.. if necessary decompose into (potentially) two 2D blits
+  */
+ static void
+-emit_blit_buffer(struct fd_ringbuffer *ring, const struct pipe_blit_info *info)
++emit_blit_buffer(struct fd_ringbuffer *ring, const struct pipe_blit_info *info,
++                 bool scale)
+ {
+    const struct pipe_box *sbox = &info->src.box;
+    const struct pipe_box *dbox = &info->dst.box;
+@@ -269,108 +448,94 @@ emit_blit_buffer(struct fd_ringbuffer *ring, const struct pipe_blit_info *info)
+       doff = (dbox->x + off) & ~0x3f;
+ 
+       w = MIN2(sbox->width - off, (0x4000 - 0x40));
+-      p = align(w, 64);
++      /* The TP of a SCALE blit reads a texture, so its row must hold the
++       * shifted pixels too:
++       */
++      p = align(scale ? MAX2(sshift, dshift) + w : w, 64);
+ 
+       assert((soff + w) <= fd_bo_size(src->bo));
+       assert((doff + w) <= fd_bo_size(dst->bo));
+ 
+-      OUT_PKT7(ring, CP_SET_RENDER_MODE, 1);
+-      OUT_RING(ring, CP_SET_RENDER_MODE_0_MODE(BLIT2D));
+-
+-      /*
+-       * Emit source:
+-       */
+-      OUT_PKT4(ring, REG_A5XX_RB_2D_SRC_INFO, 9);
+-      OUT_RING(ring, A5XX_RB_2D_SRC_INFO_COLOR_FORMAT(RB5_R8_UNORM) |
+-                        A5XX_RB_2D_SRC_INFO_TILE_MODE(TILE5_LINEAR) |
+-                        A5XX_RB_2D_SRC_INFO_COLOR_SWAP(WZYX));
+-      OUT_RELOC(ring, src->bo, soff, 0, 0); /* RB_2D_SRC_LO/HI */
+-      OUT_RING(ring, A5XX_RB_2D_SRC_SIZE_PITCH(p) |
+-                        A5XX_RB_2D_SRC_SIZE_ARRAY_PITCH(128));
+-      OUT_RING(ring, 0x00000000);
+-      OUT_RING(ring, 0x00000000);
+-      OUT_RING(ring, 0x00000000);
+-      OUT_RING(ring, 0x00000000);
+-      OUT_RING(ring, 0x00000000);
+-
+-      OUT_PKT4(ring, REG_A5XX_GRAS_2D_SRC_INFO, 1);
+-      OUT_RING(ring, A5XX_GRAS_2D_SRC_INFO_COLOR_FORMAT(RB5_R8_UNORM) |
+-                        A5XX_GRAS_2D_SRC_INFO_COLOR_SWAP(WZYX));
+-
+-      /*
+-       * Emit destination:
+-       */
+-      OUT_PKT4(ring, REG_A5XX_RB_2D_DST_INFO, 9);
+-      OUT_RING(ring, A5XX_RB_2D_DST_INFO_COLOR_FORMAT(RB5_R8_UNORM) |
+-                        A5XX_RB_2D_DST_INFO_TILE_MODE(TILE5_LINEAR) |
+-                        A5XX_RB_2D_DST_INFO_COLOR_SWAP(WZYX));
+-      OUT_RELOC(ring, dst->bo, doff, 0, 0); /* RB_2D_DST_LO/HI */
+-      OUT_RING(ring, A5XX_RB_2D_DST_SIZE_PITCH(p) |
+-                        A5XX_RB_2D_DST_SIZE_ARRAY_PITCH(128));
+-      OUT_RING(ring, 0x00000000);
+-      OUT_RING(ring, 0x00000000);
+-      OUT_RING(ring, 0x00000000);
+-      OUT_RING(ring, 0x00000000);
+-      OUT_RING(ring, 0x00000000);
+-
+-      OUT_PKT4(ring, REG_A5XX_GRAS_2D_DST_INFO, 1);
+-      OUT_RING(ring, A5XX_GRAS_2D_DST_INFO_COLOR_FORMAT(RB5_R8_UNORM) |
+-                        A5XX_GRAS_2D_DST_INFO_COLOR_SWAP(WZYX));
+-
+-      /*
+-       * Blit command:
+-       */
+-      OUT_PKT7(ring, CP_BLIT, 5);
+-      OUT_RING(ring, CP_BLIT_0_OP(BLIT_OP_COPY));
+-      OUT_RING(ring, CP_BLIT_1_SRC_X1(sshift) | CP_BLIT_1_SRC_Y1(0));
+-      OUT_RING(ring, CP_BLIT_2_SRC_X2(sshift + w - 1) | CP_BLIT_2_SRC_Y2(0));
+-      OUT_RING(ring, CP_BLIT_3_DST_X1(dshift) | CP_BLIT_3_DST_Y1(0));
+-      OUT_RING(ring, CP_BLIT_4_DST_X2(dshift + w - 1) | CP_BLIT_4_DST_Y2(0));
+-
+-      OUT_PKT7(ring, CP_SET_RENDER_MODE, 1);
+-      OUT_RING(ring, CP_SET_RENDER_MODE_0_MODE(END2D));
++      struct blit_surf s = {
++         .bo = src->bo,
++         .offset = soff,
++         .cfmt = RB5_R8_UNORM,
++         .tfmt = TFMT5_8_UNORM,
++         .tile = TILE5_LINEAR,
++         .swap = WZYX,
++         .pitch = p,
++         .array_pitch = 128,
++         .width = p,
++         .height = 1,
++      };
++      struct blit_surf d = s;
++      d.bo = dst->bo;
++      d.offset = doff;
++
++      emit_render_mode(ring, scale ? BLIT2DSCALE : BLIT2D);
++      emit_src(ring, &s, scale);
++      emit_dst(ring, &d, scale);
++      emit_blit_cmd(ring, scale, PIPE_FORMAT_R8_UNORM,
++                    sshift, 0, sshift + w - 1, 0,
++                    dshift, 0, dshift + w - 1, 0);
++      emit_render_mode(ring, END2D);
+ 
+       OUT_WFI5(ring);
+    }
+ }
+ 
+ static void
+-emit_blit(struct fd_ringbuffer *ring, const struct pipe_blit_info *info)
++emit_blit(struct fd_ringbuffer *ring, const struct pipe_blit_info *info,
++          bool scale)
+ {
+    const struct pipe_box *sbox = &info->src.box;
+    const struct pipe_box *dbox = &info->dst.box;
+    struct fd_resource *src, *dst;
+-   enum a5xx_color_fmt sfmt, dfmt;
+-   enum a5xx_tile_mode stile, dtile;
+-   enum a3xx_color_swap sswap, dswap;
+-   unsigned spitch, dpitch;
++   enum pipe_format sformat, dformat;
++   struct blit_surf s, d;
+    unsigned sx1, sy1, sx2, sy2;
+    unsigned dx1, dy1, dx2, dy2;
+ 
+    src = fd_resource(info->src.resource);
+    dst = fd_resource(info->dst.resource);
+ 
+-   sfmt = fd5_pipe2color(info->src.format);
+-   dfmt = fd5_pipe2color(info->dst.format);
+-
+-   stile = fd_resource_tile_mode(info->src.resource, info->src.level);
+-   dtile = fd_resource_tile_mode(info->dst.resource, info->dst.level);
+-
+-   sswap = fd5_pipe2swap(info->src.format);
+-   dswap = fd5_pipe2swap(info->dst.format);
+-
+-   spitch = fd_resource_pitch(src, info->src.level);
+-   dpitch = fd_resource_pitch(dst, info->dst.level);
+-
+-   /* if dtile, then dswap ignored by hw, and likewise if stile then sswap
+-    * ignored by hw.. but in this case we have already rejected the blit
+-    * if src and dst formats differ, so juse use WZYX for both src and
+-    * dst swap mode (so we don't change component order)
++   /* A SCALE blit copies the same format as its linear equivalent, so that
++    * nothing is decoded or encoded on the way:
+     */
+-   if (stile || dtile) {
+-      assert(ok_format_pair(info->src.format, info->dst.format));
+-      sswap = dswap = WZYX;
+-   }
++   sformat = scale ? util_format_linear(info->src.format) : info->src.format;
++   dformat = scale ? util_format_linear(info->dst.format) : info->dst.format;
++
++   s = (struct blit_surf) {
++      .bo = src->bo,
++      .cfmt = fd5_pipe2color(sformat),
++      .tfmt = fd5_pipe2tex(sformat),
++      .tile = fd_resource_tile_mode(info->src.resource, info->src.level),
++      .swap = fd5_pipe2swap(sformat),
++      .pitch = fd_resource_pitch(src, info->src.level),
++      .array_pitch = fd_resource_layer_stride(src, info->src.level),
++      .width = u_minify(info->src.resource->width0, info->src.level),
++      .height = u_minify(info->src.resource->height0, info->src.level),
++   };
++   d = (struct blit_surf) {
++      .bo = dst->bo,
++      .cfmt = fd5_pipe2color(dformat),
++      .tfmt = fd5_pipe2tex(dformat),
++      .tile = fd_resource_tile_mode(info->dst.resource, info->dst.level),
++      .swap = fd5_pipe2swap(dformat),
++      .pitch = fd_resource_pitch(dst, info->dst.level),
++      .array_pitch = fd_resource_layer_stride(dst, info->dst.level),
++      .width = u_minify(info->dst.resource->width0, info->dst.level),
++      .height = u_minify(info->dst.resource->height0, info->dst.level),
++   };
++
++   /* A COPY blit ignores the swap of a tiled surface, and we have already
++    * rejected a format change between tiled and linear surfaces, so use
++    * WZYX for both sides and keep the component order.  A SCALE blit
++    * describes both sides with their format's swap, as Qualcomm's driver
++    * does, tiled or not.
++    */
++   if (!scale && (s.tile || d.tile))
++      s.swap = d.swap = WZYX;
+ 
+    sx1 = sbox->x;
+    sy1 = sbox->y;
+@@ -382,74 +547,58 @@ emit_blit(struct fd_ringbuffer *ring, const struct pipe_blit_info *info)
+    dx2 = dbox->x + dbox->width - 1;
+    dy2 = dbox->y + dbox->height - 1;
+ 
+-   uint32_t sarray_pitch = fd_resource_layer_stride(src, info->src.level);
+-   uint32_t darray_pitch = fd_resource_layer_stride(dst, info->dst.level);
+-
+    for (unsigned i = 0; i < info->dst.box.depth; i++) {
+-      unsigned soff = fd_resource_offset(src, info->src.level, sbox->z + i);
+-      unsigned doff = fd_resource_offset(dst, info->dst.level, dbox->z + i);
++      s.offset = fd_resource_offset(src, info->src.level, sbox->z + i);
++      d.offset = fd_resource_offset(dst, info->dst.level, dbox->z + i);
+ 
+-      assert((soff + (sbox->height * spitch)) <= fd_bo_size(src->bo));
+-      assert((doff + (dbox->height * dpitch)) <= fd_bo_size(dst->bo));
++      assert((s.offset + (sbox->height * s.pitch)) <= fd_bo_size(src->bo));
++      assert((d.offset + (dbox->height * d.pitch)) <= fd_bo_size(dst->bo));
+ 
+-      OUT_PKT7(ring, CP_SET_RENDER_MODE, 1);
+-      OUT_RING(ring, CP_SET_RENDER_MODE_0_MODE(BLIT2D));
++      emit_render_mode(ring, scale ? BLIT2DSCALE : BLIT2D);
++      emit_src(ring, &s, scale);
++      emit_dst(ring, &d, scale);
++      emit_blit_cmd(ring, scale, dformat, sx1, sy1, sx2, sy2, dx1, dy1, dx2, dy2);
++      emit_render_mode(ring, END2D);
++   }
++}
+ 
+-      /*
+-       * Emit source:
+-       */
+-      OUT_PKT4(ring, REG_A5XX_RB_2D_SRC_INFO, 9);
+-      OUT_RING(ring, A5XX_RB_2D_SRC_INFO_COLOR_FORMAT(sfmt) |
+-                        A5XX_RB_2D_SRC_INFO_TILE_MODE(stile) |
+-                        A5XX_RB_2D_SRC_INFO_COLOR_SWAP(sswap));
+-      OUT_RELOC(ring, src->bo, soff, 0, 0); /* RB_2D_SRC_LO/HI */
+-      OUT_RING(ring, A5XX_RB_2D_SRC_SIZE_PITCH(spitch) |
+-                        A5XX_RB_2D_SRC_SIZE_ARRAY_PITCH(sarray_pitch));
+-      OUT_RING(ring, 0x00000000);
+-      OUT_RING(ring, 0x00000000);
+-      OUT_RING(ring, 0x00000000);
+-      OUT_RING(ring, 0x00000000);
+-      OUT_RING(ring, 0x00000000);
++/* Can the SCALE form of the 2D blit, the only one Qualcomm's driver issues
++ * on these GPUs, do this?  Its source is read through the TP, so the format
++ * must be a texture format, and it is used only to move bits, never to
++ * convert them.
++ */
++static bool
++can_do_scale(const struct pipe_blit_info *info)
++{
++   enum pipe_format fmt = util_format_linear(info->src.format);
++   const struct util_format_description *desc = util_format_description(fmt);
+ 
+-      OUT_PKT4(ring, REG_A5XX_GRAS_2D_SRC_INFO, 1);
+-      OUT_RING(ring, A5XX_GRAS_2D_SRC_INFO_COLOR_FORMAT(sfmt) |
+-                        A5XX_GRAS_2D_SRC_INFO_TILE_MODE(stile) |
+-                        A5XX_GRAS_2D_SRC_INFO_COLOR_SWAP(sswap));
++   if (fmt != util_format_linear(info->dst.format))
++      return false;
+ 
+-      /*
+-       * Emit destination:
+-       */
+-      OUT_PKT4(ring, REG_A5XX_RB_2D_DST_INFO, 9);
+-      OUT_RING(ring, A5XX_RB_2D_DST_INFO_COLOR_FORMAT(dfmt) |
+-                        A5XX_RB_2D_DST_INFO_TILE_MODE(dtile) |
+-                        A5XX_RB_2D_DST_INFO_COLOR_SWAP(dswap));
+-      OUT_RELOC(ring, dst->bo, doff, 0, 0); /* RB_2D_DST_LO/HI */
+-      OUT_RING(ring, A5XX_RB_2D_DST_SIZE_PITCH(dpitch) |
+-                        A5XX_RB_2D_DST_SIZE_ARRAY_PITCH(darray_pitch));
+-      OUT_RING(ring, 0x00000000);
+-      OUT_RING(ring, 0x00000000);
+-      OUT_RING(ring, 0x00000000);
+-      OUT_RING(ring, 0x00000000);
+-      OUT_RING(ring, 0x00000000);
++   if (util_format_is_depth_or_stencil(fmt) || util_format_is_snorm(fmt) ||
++       util_format_is_pure_integer(fmt))
++      return false;
+ 
+-      OUT_PKT4(ring, REG_A5XX_GRAS_2D_DST_INFO, 1);
+-      OUT_RING(ring, A5XX_GRAS_2D_DST_INFO_COLOR_FORMAT(dfmt) |
+-                        A5XX_GRAS_2D_DST_INFO_TILE_MODE(dtile) |
+-                        A5XX_GRAS_2D_DST_INFO_COLOR_SWAP(dswap));
++   if (fd5_pipe2tex(fmt) == TFMT5_NONE)
++      return false;
+ 
+-      /*
+-       * Blit command:
+-       */
+-      OUT_PKT7(ring, CP_BLIT, 5);
+-      OUT_RING(ring, CP_BLIT_0_OP(BLIT_OP_COPY));
+-      OUT_RING(ring, CP_BLIT_1_SRC_X1(sx1) | CP_BLIT_1_SRC_Y1(sy1));
+-      OUT_RING(ring, CP_BLIT_2_SRC_X2(sx2) | CP_BLIT_2_SRC_Y2(sy2));
+-      OUT_RING(ring, CP_BLIT_3_DST_X1(dx1) | CP_BLIT_3_DST_Y1(dy1));
+-      OUT_RING(ring, CP_BLIT_4_DST_X2(dx2) | CP_BLIT_4_DST_Y2(dy2));
+-
+-      OUT_PKT7(ring, CP_SET_RENDER_MODE, 1);
+-      OUT_RING(ring, CP_SET_RENDER_MODE_0_MODE(END2D));
+-   }
++   /* Packed 16-bit colour (565, 5551, 4444): Qualcomm's driver pairs other
++    * texture formats and swaps with them than it uses for the RB, so leave
++    * them to the 3D path rather than guess.
++    */
++   if (util_format_get_blocksize(fmt) == 2 && desc->nr_channels > 1)
++      return false;
++
++   if (info->src.resource->target == PIPE_BUFFER)
++      return fmt == PIPE_FORMAT_R8_UNORM;
++
++   /* The texture descriptor's size fields: */
++   if (u_minify(info->src.resource->width0, info->src.level) > 0x7fff ||
++       u_minify(info->src.resource->height0, info->src.level) > 0x7fff)
++      return false;
++
++   return true;
+ }
+ 
+ bool
+@@ -457,21 +606,14 @@ fd5_blitter_blit(struct fd_context *ctx,
+                  const struct pipe_blit_info *info) assert_dt
+ {
+    struct fd_batch *batch;
++   bool scale = fd5_blit_scale_only(ctx->screen);
+ 
+    if (!can_do_blit(info)) {
+       return false;
+    }
+ 
+-   /* A508's 2D engine writes nothing on a linear-to-linear copy. */
+-   if (ctx->screen->gpu_id == 508) {
+-      enum a5xx_tile_mode stile =
+-         fd_resource_tile_mode(info->src.resource, info->src.level);
+-      enum a5xx_tile_mode dtile =
+-         fd_resource_tile_mode(info->dst.resource, info->dst.level);
+-
+-      if (stile == TILE5_LINEAR && dtile == TILE5_LINEAR)
+-         return false;
+-   }
++   if (scale && !can_do_scale(info))
++      return false;
+ 
+    struct fd_resource *src = fd_resource(info->src.resource);
+    struct fd_resource *dst = fd_resource(info->dst.resource);
+@@ -489,18 +631,18 @@ fd5_blitter_blit(struct fd_context *ctx,
+ 
+    fd_batch_update_queries(batch);
+ 
+-   emit_setup(batch->draw);
++   emit_setup(ctx, batch->draw);
+ 
+    if ((info->src.resource->target == PIPE_BUFFER) &&
+        (info->dst.resource->target == PIPE_BUFFER)) {
+       assert(fd_resource(info->src.resource)->layout.tile_mode == TILE5_LINEAR);
+       assert(fd_resource(info->dst.resource)->layout.tile_mode == TILE5_LINEAR);
+-      emit_blit_buffer(batch->draw, info);
++      emit_blit_buffer(batch->draw, info, scale);
+    } else {
+       /* I don't *think* we need to handle blits between buffer <-> !buffer */
+       assert(info->src.resource->target != PIPE_BUFFER);
+       assert(info->dst.resource->target != PIPE_BUFFER);
+-      emit_blit(batch->draw, info);
++      emit_blit(batch->draw, info, scale);
+ 
+       /* a separate stencil is a resource of its own, so it needs its own blit */
+       if ((info->mask & PIPE_MASK_S) && src->stencil && dst->stencil) {
+@@ -517,10 +659,20 @@ fd5_blitter_blit(struct fd_context *ctx,
+          fd_batch_resource_write(batch, dst->stencil);
+          fd_screen_unlock(ctx->screen);
+ 
+-         emit_blit(batch->draw, &sinfo);
++         emit_blit(batch->draw, &sinfo, scale);
+       }
+    }
+ 
++   /* What Qualcomm's driver issues after every 2D-engine blit
++    * (A5xBltDevice::HwExecPostBltSync): the destination leaves the CCU before
++    * anything reads it, and the CCU drops whatever it holds of it.
++    */
++   fd5_event_write(batch, batch->draw, PC_CCU_FLUSH_COLOR_TS, true);
++   fd5_event_write(batch, batch->draw, PC_CCU_FLUSH_COLOR_TS, true);
++   fd5_event_write(batch, batch->draw, PC_CCU_INVALIDATE_COLOR, false);
++   fd5_event_write(batch, batch->draw, PC_CCU_INVALIDATE_DEPTH, false);
++   OUT_WFI5(batch->draw);
++
+    fd_batch_needs_flush(batch);
+ 
+    fd_batch_flush(batch);
+diff --git a/src/gallium/drivers/freedreno/a5xx/fd5_emit.c b/src/gallium/drivers/freedreno/a5xx/fd5_emit.c
+index 403a10d..5c518cc 100644
+--- a/src/gallium/drivers/freedreno/a5xx/fd5_emit.c
++++ b/src/gallium/drivers/freedreno/a5xx/fd5_emit.c
+@@ -952,10 +952,10 @@ fd5_emit_restore(struct fd_batch *batch, struct fd_ringbuffer *ring)
+    OUT_RING(ring, 0x00000000); /* UNKNOWN_E293 */
+ 
+    OUT_PKT4(ring, REG_A5XX_RB_MODE_CNTL, 1);
+-   OUT_RING(ring, 0x00000044); /* RB_MODE_CNTL */
++   OUT_RING(ring, fd5_rb_mode_cntl(ctx->screen)); /* RB_MODE_CNTL */
+ 
+    OUT_PKT4(ring, REG_A5XX_RB_DBG_ECO_CNTL, 1);
+-   OUT_RING(ring, 0x00100000); /* RB_DBG_ECO_CNTL */
++   OUT_RING(ring, fd5_rb_dbg_eco_cntl(ctx->screen)); /* RB_DBG_ECO_CNTL */
+ 
+    OUT_PKT4(ring, REG_A5XX_VFD_MODE_CNTL, 1);
+    OUT_RING(ring, 0x00000000); /* VFD_MODE_CNTL */
+@@ -966,22 +966,19 @@ fd5_emit_restore(struct fd_batch *batch, struct fd_ringbuffer *ring)
+    OUT_PKT4(ring, REG_A5XX_SP_MODE_CNTL, 1);
+    OUT_RING(ring, 0x0000001e); /* SP_MODE_CNTL */
+ 
+-   if (ctx->screen->gpu_id == 540) {
+-      OUT_PKT4(ring, REG_A5XX_SP_DBG_ECO_CNTL, 1);
+-      OUT_RING(ring, 0x800); /* SP_DBG_ECO_CNTL */
++   OUT_PKT4(ring, REG_A5XX_SP_DBG_ECO_CNTL, 1);
++   OUT_RING(ring, fd5_sp_dbg_eco_cntl(ctx->screen)); /* SP_DBG_ECO_CNTL */
+ 
++   if (ctx->screen->gpu_id == 540) {
+       OUT_PKT4(ring, REG_A5XX_HLSQ_DBG_ECO_CNTL, 1);
+       OUT_RING(ring, 0x0);
+ 
+       OUT_PKT4(ring, REG_A5XX_VPC_DBG_ECO_CNTL, 1);
+       OUT_RING(ring, 0x800400);
+-   } else {
+-      OUT_PKT4(ring, REG_A5XX_SP_DBG_ECO_CNTL, 1);
+-      OUT_RING(ring, 0x40000800); /* SP_DBG_ECO_CNTL */
+    }
+ 
+    OUT_PKT4(ring, REG_A5XX_TPL1_MODE_CNTL, 1);
+-   OUT_RING(ring, 0x00000544); /* TPL1_MODE_CNTL */
++   OUT_RING(ring, fd5_tpl1_mode_cntl(ctx->screen)); /* TPL1_MODE_CNTL */
+ 
+    OUT_PKT4(ring, REG_A5XX_HLSQ_TIMEOUT_THRESHOLD_0, 2);
+    OUT_RING(ring, 0x00000080); /* HLSQ_TIMEOUT_THRESHOLD_0 */
+diff --git a/src/gallium/drivers/freedreno/a5xx/fd5_emit.h b/src/gallium/drivers/freedreno/a5xx/fd5_emit.h
+index d504a7a..769a6f7 100644
+--- a/src/gallium/drivers/freedreno/a5xx/fd5_emit.h
++++ b/src/gallium/drivers/freedreno/a5xx/fd5_emit.h
+@@ -86,6 +86,84 @@ fd5_ccu_cntl_gmem(const struct fd_screen *screen)
+    }
+ }
+ 
++/* Tiled addresses are swizzled by the highest DDR bank bit (13..16), and the
++ * RB, TPL1 and UCHE each carry it in their mode registers as (bit - 13).  The
++ * kernel programs all three at boot for its SoC; the UCHE keeps that value,
++ * so the two we rewrite in every command stream must encode the same bit.
++ * The A530 traces this code was written from came from msm8996 (bit 15);
++ * SDM660's A512 has bit 14.
++ */
++static inline uint32_t
++fd5_hbb_bits(const struct fd_screen *screen)
++{
++   return (screen->highest_bank_bit - 13) & 3;
++}
++
++static inline uint32_t
++fd5_rb_mode_cntl(const struct fd_screen *screen)
++{
++   return 0x40 | (fd5_hbb_bits(screen) << 1);
++}
++
++static inline uint32_t
++fd5_tpl1_mode_cntl(const struct fd_screen *screen)
++{
++   return 0x444 | (fd5_hbb_bits(screen) << 7);
++}
++
++/* Qualcomm's driver disables the RB sampler datapath's DP2 clock gating
++ * (RB_DBG_ECO_CNTL bit 9) on the one- and two-SP A5xx, as does the kernel at
++ * init (ADRENO_QUIRK_DISABLE_RB_DP2CLOCKGATING); the value captured from the
++ * A530 cleared it again.
++ */
++static inline uint32_t
++fd5_rb_dbg_eco_cntl(const struct fd_screen *screen)
++{
++   switch (screen->gpu_id) {
++   case 505:
++   case 506:
++   case 508:
++   case 509:
++   case 512:
++      return 0x00100200;
++   default:
++      return 0x00100000;
++   }
++}
++
++/* Bit 30 disables the SP's generic slot, a workaround Qualcomm's driver
++ * applies to the A510 and A530 only (its errata 54); the rest, A540
++ * included, get 0x800 (errata 77).
++ */
++static inline uint32_t
++fd5_sp_dbg_eco_cntl(const struct fd_screen *screen)
++{
++   switch (screen->gpu_id) {
++   case 510:
++   case 530:
++      return 0x40000800;
++   default:
++      return 0x00000800;
++   }
++}
++
++/* Qualcomm's driver never copies with the 2D engine's plain COPY operation
++ * on the A508, A509 and A512 (A5xBltDevice::A5xSelectA2DCopyMode): every
++ * copy is a SCALE blit, which reads the source through the TP.
++ */
++static inline bool
++fd5_blit_scale_only(const struct fd_screen *screen)
++{
++   switch (screen->gpu_id) {
++   case 508:
++   case 509:
++   case 512:
++      return true;
++   default:
++      return false;
++   }
++}
++
+ static inline enum a5xx_color_fmt
+ fd5_emit_format(struct pipe_surface *surf)
+ {
+diff --git a/src/gallium/drivers/freedreno/freedreno_screen.c b/src/gallium/drivers/freedreno/freedreno_screen.c
+index e33674e..2c7ee6e 100644
+--- a/src/gallium/drivers/freedreno/freedreno_screen.c
++++ b/src/gallium/drivers/freedreno/freedreno_screen.c
+@@ -1062,6 +1062,14 @@ fd_screen_create(int fd,
+    screen->dev_info = info;
+    screen->info = &screen->dev_info;
+ 
++   /* The highest DDR bank bit swizzles tiled addresses, so the GPU's units
++    * have to be told the one the kernel programmed into the UCHE: it is a
++    * property of the SoC's memory, not of the GPU.
++    */
++   screen->highest_bank_bit = screen->info->highest_bank_bit;
++   if (fd_pipe_get_param(screen->pipe, FD_HIGHEST_BANK_BIT, &val) == 0 && val)
++      screen->highest_bank_bit = val;
++
+    switch (screen->gen) {
+    case 2:
+       fd2_screen_init(pscreen);
+diff --git a/src/gallium/drivers/freedreno/freedreno_screen.h b/src/gallium/drivers/freedreno/freedreno_screen.h
+index f9e239a..a5aa705 100644
+--- a/src/gallium/drivers/freedreno/freedreno_screen.h
++++ b/src/gallium/drivers/freedreno/freedreno_screen.h
+@@ -68,6 +68,7 @@ struct fd_screen {
+    uint8_t gen;      /* GPU (major) generation */
+    uint32_t gpu_id;  /* 220, 305, etc */
+    uint64_t chip_id; /* coreid:8 majorrev:8 minorrev:8 patch:8 */
++   uint32_t highest_bank_bit; /* from the kernel, else the gpu table */
+    uint32_t max_freq;
+    uint32_t max_rts; /* max # of render targets */
+    uint32_t priority_mask;
+-- 
+2.56.0
+

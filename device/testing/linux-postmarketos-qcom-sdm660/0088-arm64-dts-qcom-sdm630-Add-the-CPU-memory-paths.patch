@@ -1,0 +1,102 @@
+From c9ff04c7cfbe0005f5c389d29c77ec67422f9f15 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 15:29:22 +0900
+Subject: [PATCH 88/94] arm64: dts: qcom: sdm630: Add the CPU memory paths
+
+Give every CPU its path from the application processor to DDR, the
+same APSS -> EBI path the CPU BWMON votes on and downstream's
+cpufreq-mapped mincpubw client used (msm_bus ports 1 -> 512).
+qcom-cpufreq-hw then votes the opp-peak-kBps of the OPP a cluster
+switches to, so a board whose CPU OPP tables carry bandwidths gets a
+DDR floor per CPU frequency.
+
+The vote is active-only, as downstream's qcom,active-only: it is
+dropped from the RPM's sleep set and never keeps DDR up while the
+application processor is power collapsed.
+
+The CPU devices set only of_node, so fw_devlink creates no device
+links for them, and the interconnect providers' sync_state does not
+wait on CPUs, which never bind a driver.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ arch/arm64/boot/dts/qcom/sdm630.dtsi | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sdm630.dtsi b/arch/arm64/boot/dts/qcom/sdm630.dtsi
+index d4e9813cd..49c5c475c 100644
+--- a/arch/arm64/boot/dts/qcom/sdm630.dtsi
++++ b/arch/arm64/boot/dts/qcom/sdm630.dtsi
+@@ -70,6 +70,8 @@ &perf_cluster_sleep_0
+ 						&perf_cluster_sleep_1
+ 						&perf_cluster_sleep_2>;
+ 			capacity-dmips-mhz = <1126>;
++			interconnects = <&gnoc MASTER_APSS_PROC RPM_ACTIVE_TAG
++					 &bimc SLAVE_EBI RPM_ACTIVE_TAG>;
+ 			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_1>;
+ 			l2_1: l2-cache {
+@@ -90,6 +92,8 @@ &perf_cluster_sleep_0
+ 						&perf_cluster_sleep_1
+ 						&perf_cluster_sleep_2>;
+ 			capacity-dmips-mhz = <1126>;
++			interconnects = <&gnoc MASTER_APSS_PROC RPM_ACTIVE_TAG
++					 &bimc SLAVE_EBI RPM_ACTIVE_TAG>;
+ 			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_1>;
+ 		};
+@@ -105,6 +109,8 @@ &perf_cluster_sleep_0
+ 						&perf_cluster_sleep_1
+ 						&perf_cluster_sleep_2>;
+ 			capacity-dmips-mhz = <1126>;
++			interconnects = <&gnoc MASTER_APSS_PROC RPM_ACTIVE_TAG
++					 &bimc SLAVE_EBI RPM_ACTIVE_TAG>;
+ 			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_1>;
+ 		};
+@@ -120,6 +126,8 @@ &perf_cluster_sleep_0
+ 						&perf_cluster_sleep_1
+ 						&perf_cluster_sleep_2>;
+ 			capacity-dmips-mhz = <1126>;
++			interconnects = <&gnoc MASTER_APSS_PROC RPM_ACTIVE_TAG
++					 &bimc SLAVE_EBI RPM_ACTIVE_TAG>;
+ 			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_1>;
+ 		};
+@@ -135,6 +143,8 @@ &pwr_cluster_sleep_0
+ 						&pwr_cluster_sleep_1
+ 						&pwr_cluster_sleep_2>;
+ 			capacity-dmips-mhz = <1024>;
++			interconnects = <&gnoc MASTER_APSS_PROC RPM_ACTIVE_TAG
++					 &bimc SLAVE_EBI RPM_ACTIVE_TAG>;
+ 			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_0>;
+ 			l2_0: l2-cache {
+@@ -155,6 +165,8 @@ &pwr_cluster_sleep_0
+ 						&pwr_cluster_sleep_1
+ 						&pwr_cluster_sleep_2>;
+ 			capacity-dmips-mhz = <1024>;
++			interconnects = <&gnoc MASTER_APSS_PROC RPM_ACTIVE_TAG
++					 &bimc SLAVE_EBI RPM_ACTIVE_TAG>;
+ 			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_0>;
+ 		};
+@@ -170,6 +182,8 @@ &pwr_cluster_sleep_0
+ 						&pwr_cluster_sleep_1
+ 						&pwr_cluster_sleep_2>;
+ 			capacity-dmips-mhz = <1024>;
++			interconnects = <&gnoc MASTER_APSS_PROC RPM_ACTIVE_TAG
++					 &bimc SLAVE_EBI RPM_ACTIVE_TAG>;
+ 			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_0>;
+ 		};
+@@ -185,6 +199,8 @@ &pwr_cluster_sleep_0
+ 						&pwr_cluster_sleep_1
+ 						&pwr_cluster_sleep_2>;
+ 			capacity-dmips-mhz = <1024>;
++			interconnects = <&gnoc MASTER_APSS_PROC RPM_ACTIVE_TAG
++					 &bimc SLAVE_EBI RPM_ACTIVE_TAG>;
+ 			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_0>;
+ 		};

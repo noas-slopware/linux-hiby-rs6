@@ -1,0 +1,65 @@
+# Maintainer: Noa Himesaka <himesaka@noa.codes>
+maintainer="Noa Himesaka <himesaka@noa.codes>"
+pkgname=rs6-spdif
+pkgver=1.0
+pkgrel=0
+pkgdesc="HiBy RS6 coaxial S/PDIF output: ALSA IEC 60958 encoder plugin and output jack controls"
+url="https://postmarketos.org"
+arch="aarch64"
+license="MIT"
+makedepends="alsa-lib-dev meson"
+checkdepends="python3"
+source="
+	meson.build
+	meson_options.txt
+	50-rs6-spdif.conf
+	iec958.c
+	iec958.h
+	rs6-target.c
+	rs6-target.h
+	pcm_rs6_spdif.c
+	ctl_rs6_jack.c
+	bmc-decode.h
+	test-encoder.c
+	rs6-spdif-encode.c
+	spdif_ref.py
+	test-ref.py
+	test-plugin.c
+	test-target.c
+	test-alsa.conf.in
+	"
+builddir="$srcdir"
+
+build() {
+	abuild-meson . output
+	meson compile -C output
+}
+
+check() {
+	# encoder vs the docs' vectors, the stock HAL transliteration and a spec encoder, and
+	# the plugin end to end through alsa-lib; test-target needs a sound card and skips here
+	meson test -C output --print-errorlogs
+}
+
+package() {
+	DESTDIR="$pkgdir" meson install --no-rebuild -C output
+}
+sha512sums="
+f346bb29a0073c09e7f5994be4a2e92dfb6f5aff2c5e6be1b745642bcf4f362c1ab03c00ecc75919cbcc4f3f343bfcf18e17b6cabf3c927143a0cf615dc5443c  meson.build
+7c0b5be90cd59e4b98a1d2c3c40d4f15dff06925f5d0580201b7d2db6d7c3e1ec80b85a074e53ee20adbf368b29d840c72666699799736e9f678142e32df8bfe  meson_options.txt
+ab0d3993dacbdff6e2a88660f718e23f865ff88876ed24436766b5d6dc1b51c293bc8933e4fe7c90b62314e7c6c15d379b1f576c65a0a2abd084ecc3122ebc59  50-rs6-spdif.conf
+9084070fcb516faa0d5e4f4e7efe5269f55003b58713f5690b5021f220d641a8d805cae0243686c55f7b91ba3b223374dcc70b61812eb2e35f58cd45b25136da  iec958.c
+1cd0aad371bb5459955669411569fa5c6599abeafb627d05a96b49138ba5ff5b66346b636f158ae8122932521c5e8600b75491f4aca186d8026badeb6c087f4f  iec958.h
+2cb2aa705dde2142be2a130309b67047409f2ee0ddcf0bce0d37f6cf3485bc0302ed6a36cbedb27f9158e7dbefcf3f016f0e3582d68a1b2dc4548a8c6cabedb9  rs6-target.c
+122070d06c70783557c397d77f1bbd7730002caf7dac1534702a8a39a8787b9b65e462fe7c1e91c0cdab9a0661345b9d51d5b4c939eafc216cfa4d5c06ab4bea  rs6-target.h
+88bff7a9111d71d3ec30ffe7d167b1c187eeb66c9e9552187f9f4f31f8b24b1d3bc3b2ec578848a07033480d30fe5ac34bd4eaf38aef2d368ef997af800130d5  pcm_rs6_spdif.c
+4fe14376c03e68709a102e55c0a3bf1b1f1741043a3d4fa0cffdb4bfb778b1de9ebab0e35d4258d16a613a469d306e7f04bf26f2647a2bff7bb5acd40b5fbfc8  ctl_rs6_jack.c
+7c59bfca49fda83a11b8c66fa0a0eee535f0a23390e6ba320e0d585d2384cef4812c7056c4fac5abfcfab8f63b9235f315880549cc39684792c45408babd8915  bmc-decode.h
+cd674695142c14f73ae03e5611d3971c92fc9db1564a13436cbd96af6409a73cd7615dfaffe3d667e8b98e5618ce70e495e203aad57a68780dcbf8f9d23b67eb  test-encoder.c
+32c5eb0218db85543023d4efb8b8fbadd183f959d57f1cf1f88bb1ddc1c60b8a02ad08513c61b5708ed8d97fb41144e3553a8f6854ee2b1933d50adc05246e7e  rs6-spdif-encode.c
+7db480260337aad05ef545719cf0efc3bc54a7151fce9ecf1e7bcfdb3c656ae4ef192aaf6dac54a4a9a4a9e2149039b8bd1ee048e62c2f6fe749b9aa89a0a444  spdif_ref.py
+89f5eb396a44e5c7cf88c990e55fffc7ea2100d771254c5094b0d28394d05d56e5650cbf69bd02dd0ef162d14171b869c17bc6f623f73832bafcc68f57757247  test-ref.py
+87dd8c498049926d6b9c253016968098e0eeab8b1f52dfd2c62d63436c70aa8f270ffd8466e84331fd79d388c1e81f8c3816a5ea37b450136bdcd9cd4f31e33e  test-plugin.c
+b6eb8601562a5cd3efd09bcee14f90e6c1c4e65b6676c912c9be1eed37c42e8ded4d167ec7cb6bb5a2910d8bacbae57ab2b3c8d94efd3a3be2cd2fc58a2ff0e6  test-target.c
+b7694e01d2e6e207cf244b26ce414b013b1b5289ba58eeb7fcf55167928ef64a6a0e5729bc5301119b134ed9cf14a6d887e1fb0311ea4b07e8b0a08adf8fa8d4  test-alsa.conf.in
+"

@@ -1,0 +1,70 @@
+# Alpine community/kiconthemes 6.31.0-r0 + 0001 (KQuickIconProvider scaled icons by the device
+# pixel ratio twice: multi-GB pixmaps at scale 3, Elisa OOM). pkgrel above Alpine so this wins.
+# The group tag is just to easily find this APKBUILD by some scripts for automation
+# group=kde-frameworks
+maintainer="Noa Himesaka <himesaka@noa.codes>"
+pkgname=kiconthemes
+pkgver=6.31.0
+pkgrel=1
+pkgdesc="Support for icon themes"
+# armhf blocked by qt6-qtdeclarative
+arch="all !armhf"
+url="https://community.kde.org/Frameworks"
+license="LGPL-2.1-only"
+depends_dev="
+	breeze-icons-dev
+	karchive-dev
+	kconfigwidgets-dev
+	kcoreaddons-dev
+	ki18n-dev
+	kitemviews-dev
+	kwidgetsaddons-dev
+	qt6-qtdeclarative-dev
+	qt6-qtsvg-dev
+	"
+makedepends="$depends_dev
+	doxygen
+	extra-cmake-modules
+	kde-qdoc-common
+	qt6-qtdeclarative-private-dev
+	qt6-qttools-dev
+	samurai
+	"
+checkdepends="xwayland-run"
+subpackages="$pkgname-dev $pkgname-doc $pkgname-lang"
+_repo_url="https://invent.kde.org/frameworks/kiconthemes.git"
+source="https://download.kde.org/stable/frameworks/${pkgver%.*}/kiconthemes-$pkgver.tar.xz
+	0001-KQuickIconProvider-requestedSize-is-in-device-pixels.patch
+	"
+
+build() {
+	export KDE_DOCS=/usr/share/kde/documentation
+	cmake -B build -G Ninja \
+		-DCMAKE_BUILD_TYPE=RelWithDebInfo \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib
+	cmake --build build
+
+	cmake --build build --target prepare_docs
+	cmake --build build --target generate_docs
+	cmake --build build --target generate_qch
+}
+
+check() {
+	case "$CARCH" in
+		s390x) wlheadless-run -- ctest --test-dir build -E "kicon(engine|loader)_unittest" ;;
+		*) wlheadless-run -- ctest --test-dir build -E "kiconengine_unittest" ;;
+	esac
+}
+
+package() {
+	DESTDIR="$pkgdir" cmake --install build
+
+	DESTDIR="$pkgdir" cmake --build build --target install_html_docs
+	DESTDIR="$pkgdir" cmake --build build --target install_qch_docs
+}
+
+sha512sums="
+0860f978beab0b354c7131123bcd240af57890b4de4546094b648f3906eef74f20d7ef606fbbdd5852bae924047609de8ad85cb1c241b534b93d2a1d7e6be411  kiconthemes-6.31.0.tar.xz
+5e24f19ea2478f13559c9f66cfd50c5c2ce447db3e0c90cefe9181e312556e95cabcc544b8d9c248bfa92a46c2d0c4e2ff6a6e361da8b0b756acf82601b78117  0001-KQuickIconProvider-requestedSize-is-in-device-pixels.patch
+"

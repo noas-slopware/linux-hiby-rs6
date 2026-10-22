@@ -1,0 +1,13 @@
+[Unit]
+Description=Keep the console on the graphical session (no VT switching)
+# once the boot splash is gone and the session's VT (tty1) is in front
+After=plymouth-quit-wait.service systemd-user-sessions.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/rs6-vt-lock
+ExecStop=/usr/libexec/rs6-vt-lock unlock
+
+[Install]
+WantedBy=graphical.target

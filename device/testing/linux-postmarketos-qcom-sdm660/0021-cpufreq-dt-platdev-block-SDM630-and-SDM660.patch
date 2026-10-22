@@ -1,0 +1,28 @@
+From 25b78eccdbabc81c42c5f19c186d84a87882054d Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 18:25:00 +0900
+Subject: [PATCH 21/94] cpufreq: dt-platdev: block SDM630 and SDM660
+
+Their CPU frequencies are set by the OSM through qcom-cpufreq-hw, not by
+cpufreq-dt. Same as AngeloGioacchino Del Regno's "cpufreq: blacklist
+SDM630/636/660 in cpufreq-dt-platdev" from the 2021 OSM series.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ drivers/cpufreq/cpufreq-dt-platdev.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/cpufreq/cpufreq-dt-platdev.c b/drivers/cpufreq/cpufreq-dt-platdev.c
+index ff1204c66..b81038351 100644
+--- a/drivers/cpufreq/cpufreq-dt-platdev.c
++++ b/drivers/cpufreq/cpufreq-dt-platdev.c
+@@ -168,6 +168,8 @@ static const struct of_device_id blocklist[] __initconst = {
+ 	{ .compatible = "qcom,sc7280", },
+ 	{ .compatible = "qcom,sc8180x", },
+ 	{ .compatible = "qcom,sc8280xp", },
++	{ .compatible = "qcom,sdm630", },
++	{ .compatible = "qcom,sdm660", },
+ 	{ .compatible = "qcom,sdm670", },
+ 	{ .compatible = "qcom,sdm845", },
+ 	{ .compatible = "qcom,sdx75", },

@@ -1,0 +1,63 @@
+# rs6-spdif plugin test: the card PCM is a file on null, no Output Target checks
+pcm_type.rs6_spdif {
+	lib "@PCM_LIB@"
+}
+pcm.rs6test_null {
+	type null
+}
+pcm.rs6test_capture {
+	type file
+	slave.pcm "rs6test_null"
+	# a descriptor the test opened with O_APPEND: the plugin closes and reopens its card PCM
+	# (after a stop, a target change), and every segment lands in one file in order
+	file {
+		@func igetenv
+		vars [ RS6_TEST_CAPTURE_FD ]
+		default -1
+	}
+	format "raw"
+}
+pcm.rs6test {
+	type rs6_spdif
+	slave "rs6test_capture"
+	ctl ""
+}
+pcm.rs6test_stock {
+	type rs6_spdif
+	slave "rs6test_capture"
+	ctl ""
+	channel_status "stock"
+}
+pcm.rs6dead {
+	type rs6_spdif
+	slave "hw:CARD=rs6NoSuchCard,DEV=0"
+	ctl ""
+}
+
+# test-target: Output Target is a stand-in user control on card CARD
+ctl_type.rs6_jack {
+	lib "@CTL_LIB@"
+}
+pcm.rs6tgt {
+	@args [ CARD ]
+	@args.CARD {
+		type string
+	}
+	type rs6_spdif
+	slave "rs6test_capture"
+	ctl {
+		@func concat
+		strings [ "hw:" $CARD ]
+	}
+}
+ctl.rs6tgtjack {
+	@args [ CARD ]
+	@args.CARD {
+		type string
+	}
+	type rs6_jack
+	ctl {
+		@func concat
+		strings [ "hw:" $CARD ]
+	}
+}

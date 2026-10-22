@@ -1,0 +1,17 @@
+# HiBy RS6 (Plasma Mobile): desktop-only KWin effects off. They add nothing to the phone UI
+# (no overview / window view / tile editor / zoom / colour picker / shake cursor / output
+# locator / minimize-maximize-aperture animations / taskbar highlight / system bell).
+# Plasma Mobile's own effects (task switcher, sliding/fading popups, rotation, ...) stay.
+[Plugins]
+shakecursorEnabled=false
+outputlocatorEnabled=false
+colorpickerEnabled=false
+zoomEnabled=false
+windowapertureEnabled=false
+squashEnabled=false
+maximizeEnabled=false
+windowviewEnabled=false
+tileseditorEnabled=false
+overviewEnabled=false
+highlightwindowEnabled=false
+systembellEnabled=false

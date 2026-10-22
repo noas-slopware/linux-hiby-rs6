@@ -1,0 +1,270 @@
+From 1490f9e428fcf5133e311382ebf37d0853629638 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 14:56:57 +0900
+Subject: [PATCH 81/94] arm64: dts: qcom: sdm630: Switch the NoCs to two
+ interconnect cells
+
+The SMD RPM interconnect providers take a second cell carrying the
+RPM context tag (RPM_ACTIVE_TAG / RPM_SLEEP_TAG / RPM_ALWAYS_TAG),
+and the one-cell form is deprecated in qcom,rpm-common.yaml. Without
+the tag cell there is no way for a consumer to ask for an active-only
+vote, which the CPU bandwidth monitor needs: its vote must go away
+while the application processor is in power collapse, or it holds
+DDR up in the RPM sleep set.
+
+Move all six SDM630/SDM660 NoCs to #interconnect-cells = <2> and give
+every existing path RPM_ALWAYS_TAG. icc-rpm already treats a zero tag
+as RPM_ALWAYS_TAG, so these paths vote exactly as before. The
+sdm660-hiby-rs6 board path to the hm100 SPI controller is converted
+in the same commit, since a one-cell specifier no longer parses.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ arch/arm64/boot/dts/qcom/sdm630.dtsi         | 73 +++++++++++++-------
+ arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts |  3 +-
+ 2 files changed, 49 insertions(+), 27 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sdm630.dtsi b/arch/arm64/boot/dts/qcom/sdm630.dtsi
+index e97158cfd..936d70115 100644
+--- a/arch/arm64/boot/dts/qcom/sdm630.dtsi
++++ b/arch/arm64/boot/dts/qcom/sdm630.dtsi
+@@ -10,6 +10,7 @@
+ #include <dt-bindings/clock/qcom,mmcc-sdm660.h>
+ #include <dt-bindings/clock/qcom,rpmcc.h>
+ #include <dt-bindings/firmware/qcom,scm.h>
++#include <dt-bindings/interconnect/qcom,rpm-icc.h>
+ #include <dt-bindings/interconnect/qcom,sdm660.h>
+ #include <dt-bindings/power/qcom-rpmpd.h>
+ #include <dt-bindings/gpio/gpio.h>
+@@ -629,7 +630,7 @@ rng: rng@793000 {
+ 		bimc: interconnect@1008000 {
+ 			compatible = "qcom,sdm660-bimc";
+ 			reg = <0x01008000 0x78000>;
+-			#interconnect-cells = <1>;
++			#interconnect-cells = <2>;
+ 		};
+ 
+ 		restart@10ac000 {
+@@ -640,13 +641,13 @@ restart@10ac000 {
+ 		cnoc: interconnect@1500000 {
+ 			compatible = "qcom,sdm660-cnoc";
+ 			reg = <0x01500000 0x10000>;
+-			#interconnect-cells = <1>;
++			#interconnect-cells = <2>;
+ 		};
+ 
+ 		snoc: interconnect@1626000 {
+ 			compatible = "qcom,sdm660-snoc";
+ 			reg = <0x01626000 0x7090>;
+-			#interconnect-cells = <1>;
++			#interconnect-cells = <2>;
+ 		};
+ 
+ 		anoc2_smmu: iommu@16c0000 {
+@@ -693,7 +694,7 @@ anoc2_smmu: iommu@16c0000 {
+ 		a2noc: interconnect@1704000 {
+ 			compatible = "qcom,sdm660-a2noc";
+ 			reg = <0x01704000 0xc100>;
+-			#interconnect-cells = <1>;
++			#interconnect-cells = <2>;
+ 			clock-names = "ipa",
+ 				      "ufs_axi",
+ 				      "aggre2_ufs_axi",
+@@ -709,7 +710,7 @@ a2noc: interconnect@1704000 {
+ 		mnoc: interconnect@1745000 {
+ 			compatible = "qcom,sdm660-mnoc";
+ 			reg = <0x01745000 0xa010>;
+-			#interconnect-cells = <1>;
++			#interconnect-cells = <2>;
+ 			clock-names = "iface";
+ 			clocks = <&mmcc AHB_CLK_SRC>;
+ 		};
+@@ -1132,7 +1133,8 @@ adreno_gpu: gpu@5000000 {
+ 			nvmem-cells = <&gpu_speed_bin>;
+ 			nvmem-cell-names = "speed_bin";
+ 
+-			interconnects = <&bimc MASTER_OXILI &bimc SLAVE_EBI>;
++			interconnects = <&bimc MASTER_OXILI RPM_ALWAYS_TAG
++					 &bimc SLAVE_EBI RPM_ALWAYS_TAG>;
+ 			interconnect-names = "gfx-mem";
+ 
+ 			operating-points-v2 = <&gpu_sdm630_opp_table>;
+@@ -1454,8 +1456,10 @@ sdhc_2: mmc@c084000 {
+ 
+ 			resets = <&gcc GCC_SDCC2_BCR>;
+ 
+-			interconnects = <&a2noc 3 &a2noc 10>,
+-					<&gnoc 0 &cnoc 28>;
++			interconnects = <&a2noc 3 RPM_ALWAYS_TAG
++					 &a2noc 10 RPM_ALWAYS_TAG>,
++					<&gnoc 0 RPM_ALWAYS_TAG
++					 &cnoc 28 RPM_ALWAYS_TAG>;
+ 			interconnect-names = "sdhc-ddr","cpu-sdhc";
+ 			operating-points-v2 = <&sdhc2_opp_table>;
+ 
+@@ -1509,8 +1513,10 @@ sdhc_1: mmc@c0c4000 {
+ 
+ 			resets = <&gcc GCC_SDCC1_BCR>;
+ 
+-			interconnects = <&a2noc 2 &a2noc 10>,
+-					<&gnoc 0 &cnoc 27>;
++			interconnects = <&a2noc 2 RPM_ALWAYS_TAG
++					 &a2noc 10 RPM_ALWAYS_TAG>,
++					<&gnoc 0 RPM_ALWAYS_TAG
++					 &cnoc 27 RPM_ALWAYS_TAG>;
+ 			interconnect-names = "sdhc-ddr", "cpu-sdhc";
+ 			operating-points-v2 = <&sdhc1_opp_table>;
+ 			pinctrl-names = "default", "sleep";
+@@ -1674,9 +1680,12 @@ mdp: display-controller@c901000 {
+ 					      "core",
+ 					      "vsync";
+ 
+-				interconnects = <&mnoc 2 &bimc 5>,
+-						<&mnoc 3 &bimc 5>,
+-						<&gnoc 0 &mnoc 17>;
++				interconnects = <&mnoc 2 RPM_ALWAYS_TAG
++						 &bimc 5 RPM_ALWAYS_TAG>,
++						<&mnoc 3 RPM_ALWAYS_TAG
++						 &bimc 5 RPM_ALWAYS_TAG>,
++						<&gnoc 0 RPM_ALWAYS_TAG
++						 &mnoc 17 RPM_ALWAYS_TAG>;
+ 				interconnect-names = "mdp0-mem",
+ 						     "mdp1-mem",
+ 						     "rotator-mem";
+@@ -1858,7 +1867,8 @@ blsp_i2c1: i2c@c175000 {
+ 			dmas = <&blsp1_dma 4>, <&blsp1_dma 5>;
+ 			dma-names = "tx", "rx";
+ 
+-			interconnects = <&a2noc MASTER_BLSP_1 &bimc SLAVE_EBI>;
++			interconnects = <&a2noc MASTER_BLSP_1 RPM_ALWAYS_TAG
++					 &bimc SLAVE_EBI RPM_ALWAYS_TAG>;
+ 
+ 			pinctrl-names = "default", "sleep";
+ 			pinctrl-0 = <&i2c1_default>;
+@@ -1880,7 +1890,8 @@ blsp_i2c2: i2c@c176000 {
+ 			dmas = <&blsp1_dma 6>, <&blsp1_dma 7>;
+ 			dma-names = "tx", "rx";
+ 
+-			interconnects = <&a2noc MASTER_BLSP_1 &bimc SLAVE_EBI>;
++			interconnects = <&a2noc MASTER_BLSP_1 RPM_ALWAYS_TAG
++					 &bimc SLAVE_EBI RPM_ALWAYS_TAG>;
+ 
+ 			pinctrl-names = "default", "sleep";
+ 			pinctrl-0 = <&i2c2_default>;
+@@ -1902,7 +1913,8 @@ blsp_i2c3: i2c@c177000 {
+ 			dmas = <&blsp1_dma 8>, <&blsp1_dma 9>;
+ 			dma-names = "tx", "rx";
+ 
+-			interconnects = <&a2noc MASTER_BLSP_1 &bimc SLAVE_EBI>;
++			interconnects = <&a2noc MASTER_BLSP_1 RPM_ALWAYS_TAG
++					 &bimc SLAVE_EBI RPM_ALWAYS_TAG>;
+ 
+ 			pinctrl-names = "default", "sleep";
+ 			pinctrl-0 = <&i2c3_default>;
+@@ -1924,7 +1936,8 @@ blsp_i2c4: i2c@c178000 {
+ 			dmas = <&blsp1_dma 10>, <&blsp1_dma 11>;
+ 			dma-names = "tx", "rx";
+ 
+-			interconnects = <&a2noc MASTER_BLSP_1 &bimc SLAVE_EBI>;
++			interconnects = <&a2noc MASTER_BLSP_1 RPM_ALWAYS_TAG
++					 &bimc SLAVE_EBI RPM_ALWAYS_TAG>;
+ 
+ 			pinctrl-names = "default", "sleep";
+ 			pinctrl-0 = <&i2c4_default>;
+@@ -1974,7 +1987,8 @@ blsp_i2c5: i2c@c1b5000 {
+ 			dmas = <&blsp2_dma 4>, <&blsp2_dma 5>;
+ 			dma-names = "tx", "rx";
+ 
+-			interconnects = <&a2noc MASTER_BLSP_2 &bimc SLAVE_EBI>;
++			interconnects = <&a2noc MASTER_BLSP_2 RPM_ALWAYS_TAG
++					 &bimc SLAVE_EBI RPM_ALWAYS_TAG>;
+ 
+ 			pinctrl-names = "default", "sleep";
+ 			pinctrl-0 = <&i2c5_default>;
+@@ -1996,7 +2010,8 @@ blsp_i2c6: i2c@c1b6000 {
+ 			dmas = <&blsp2_dma 6>, <&blsp2_dma 7>;
+ 			dma-names = "tx", "rx";
+ 
+-			interconnects = <&a2noc MASTER_BLSP_2 &bimc SLAVE_EBI>;
++			interconnects = <&a2noc MASTER_BLSP_2 RPM_ALWAYS_TAG
++					 &bimc SLAVE_EBI RPM_ALWAYS_TAG>;
+ 
+ 			pinctrl-names = "default", "sleep";
+ 			pinctrl-0 = <&i2c6_default>;
+@@ -2018,7 +2033,8 @@ blsp_i2c7: i2c@c1b7000 {
+ 			dmas = <&blsp2_dma 8>, <&blsp2_dma 9>;
+ 			dma-names = "tx", "rx";
+ 
+-			interconnects = <&a2noc MASTER_BLSP_2 &bimc SLAVE_EBI>;
++			interconnects = <&a2noc MASTER_BLSP_2 RPM_ALWAYS_TAG
++					 &bimc SLAVE_EBI RPM_ALWAYS_TAG>;
+ 
+ 			pinctrl-names = "default", "sleep";
+ 			pinctrl-0 = <&i2c7_default>;
+@@ -2040,7 +2056,8 @@ blsp_spi7: spi@c1b7000 {
+ 			dmas = <&blsp2_dma 8>, <&blsp2_dma 9>;
+ 			dma-names = "tx", "rx";
+ 
+-			interconnects = <&a2noc MASTER_BLSP_2 &bimc SLAVE_EBI>;
++			interconnects = <&a2noc MASTER_BLSP_2 RPM_ALWAYS_TAG
++					 &bimc SLAVE_EBI RPM_ALWAYS_TAG>;
+ 
+ 			pinctrl-names = "default", "sleep";
+ 			pinctrl-0 = <&spi7_default>;
+@@ -2062,7 +2079,8 @@ blsp_i2c8: i2c@c1b8000 {
+ 			dmas = <&blsp2_dma 10>, <&blsp2_dma 11>;
+ 			dma-names = "tx", "rx";
+ 
+-			interconnects = <&a2noc MASTER_BLSP_2 &bimc SLAVE_EBI>;
++			interconnects = <&a2noc MASTER_BLSP_2 RPM_ALWAYS_TAG
++					 &bimc SLAVE_EBI RPM_ALWAYS_TAG>;
+ 
+ 			pinctrl-names = "default", "sleep";
+ 			pinctrl-0 = <&i2c8_default>;
+@@ -2221,7 +2239,8 @@ camss: camss@ca00020 {
+ 				      "vfe1_stream",
+ 				      "vfe_ahb",
+ 				      "vfe_axi";
+-			interconnects = <&mnoc 5 &bimc 5>;
++			interconnects = <&mnoc 5 RPM_ALWAYS_TAG
++					 &bimc 5 RPM_ALWAYS_TAG>;
+ 			interconnect-names = "vfe-mem";
+ 			iommus = <&mmss_smmu 0xc00>,
+ 				 <&mmss_smmu 0xc01>,
+@@ -2284,8 +2303,10 @@ venus: video-codec@cc00000 {
+ 				 <&mmcc VIDEO_AXI_CLK>,
+ 				 <&mmcc THROTTLE_VIDEO_AXI_CLK>;
+ 			clock-names = "core", "iface", "bus", "bus_throttle";
+-			interconnects = <&gnoc 0 &mnoc 13>,
+-					<&mnoc 4 &bimc 5>;
++			interconnects = <&gnoc 0 RPM_ALWAYS_TAG
++					 &mnoc 13 RPM_ALWAYS_TAG>,
++					<&mnoc 4 RPM_ALWAYS_TAG
++					 &bimc 5 RPM_ALWAYS_TAG>;
+ 			interconnect-names = "cpu-cfg", "video-mem";
+ 			interrupts = <GIC_SPI 287 IRQ_TYPE_LEVEL_HIGH>;
+ 			iommus = <&mmss_smmu 0x400>,
+@@ -2596,7 +2617,7 @@ watchdog@17817000 {
+ 		gnoc: interconnect@17900000 {
+ 			compatible = "qcom,sdm660-gnoc";
+ 			reg = <0x17900000 0xe000>;
+-			#interconnect-cells = <1>;
++			#interconnect-cells = <2>;
+ 		};
+ 
+ 		apcs_glb: mailbox@17911000 {
+diff --git a/arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts b/arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts
+index 30cdf5831..ecea00b10 100644
+--- a/arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts
++++ b/arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts
+@@ -1332,7 +1332,8 @@ blsp_spi3: spi@c177000 {
+ 		dma-names = "tx", "rx";
+ 
+ 		/* stock votes qcom,master-id = <86> (BLSP_1) to DDR, like the sdm630.dtsi QUPs */
+-		interconnects = <&a2noc MASTER_BLSP_1 &bimc SLAVE_EBI>;
++		interconnects = <&a2noc MASTER_BLSP_1 RPM_ALWAYS_TAG
++				 &bimc SLAVE_EBI RPM_ALWAYS_TAG>;
+ 
+ 		#address-cells = <1>;
+ 		#size-cells = <0>;

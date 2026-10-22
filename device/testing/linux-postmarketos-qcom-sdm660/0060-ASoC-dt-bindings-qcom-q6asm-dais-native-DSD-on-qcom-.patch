@@ -1,0 +1,31 @@
+From 22c0f718c65de8f722b449108169ce0eb9d37bc8 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 12:24:04 +0900
+Subject: [PATCH 60/94] ASoC: dt-bindings: qcom,q6asm-dais: native DSD on
+ qcom,s32-as-s16-pairs
+
+A DAC that takes S32 as 16-bit word pairs (the HiBy RS6's) also takes
+native DSD as 16-bit words with both channels bit-interleaved. Say that
+such a DAI accepts DSD_U32_LE and DSD_U32_BE playback too, converted in
+place, and that this needs qcom,fixed-rate.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ Documentation/devicetree/bindings/sound/qcom,q6asm-dais.yaml | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/sound/qcom,q6asm-dais.yaml b/Documentation/devicetree/bindings/sound/qcom,q6asm-dais.yaml
+index 88e757763..370553177 100644
+--- a/Documentation/devicetree/bindings/sound/qcom,q6asm-dais.yaml
++++ b/Documentation/devicetree/bindings/sound/qcom,q6asm-dais.yaml
+@@ -67,6 +67,9 @@ patternProperties:
+         description:
+           Accept S32_LE playback and send each 32-bit sample as two 16-bit
+           words, high word first, while the stream to the DSP stays S16.
++          Such a DAC also takes native DSD as 16-bit words carrying both
++          channels bit-interleaved, so DSD_U32_LE and DSD_U32_BE playback is
++          accepted too and converted in place. Needs qcom,fixed-rate.
+ 
+     dependencies:
+       is-compress-dai: [ direction ]

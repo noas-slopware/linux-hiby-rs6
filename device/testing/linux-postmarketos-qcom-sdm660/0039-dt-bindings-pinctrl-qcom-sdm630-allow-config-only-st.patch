@@ -1,0 +1,52 @@
+From fedfb19221f51bad20f126e7e4a2f6ab3418b26e Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 18:25:02 +0900
+Subject: [PATCH 39/94] dt-bindings: pinctrl: qcom,sdm630: allow config-only
+ states
+
+Allow states that only set pin configuration and leave the mux to the
+client devices' own states (no function).
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ .../bindings/pinctrl/qcom,sdm630-pinctrl.yaml | 24 +++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/pinctrl/qcom,sdm630-pinctrl.yaml b/Documentation/devicetree/bindings/pinctrl/qcom,sdm630-pinctrl.yaml
+index 80627a1ad..2634128aa 100644
+--- a/Documentation/devicetree/bindings/pinctrl/qcom,sdm630-pinctrl.yaml
++++ b/Documentation/devicetree/bindings/pinctrl/qcom,sdm630-pinctrl.yaml
+@@ -49,8 +49,32 @@ patternProperties:
+           "-pins$":
+             $ref: "#/$defs/qcom-sdm630-tlmm-state"
+         additionalProperties: false
++      - $ref: "#/$defs/qcom-sdm630-tlmm-config-state"
+ 
+ $defs:
++  qcom-sdm630-tlmm-config-state:
++    type: object
++    description:
++      Pin configuration only. The mux is left to the states of the client
++      devices, so no function is given.
++    $ref: pincfg-node.yaml#
++    unevaluatedProperties: false
++
++    properties:
++      pins:
++        description:
++          List of gpio pins affected by the properties specified in this
++          subnode.
++        items:
++          pattern: "^gpio([0-9]|[1-9][0-9]|10[0-9]|11[0-3])$"
++        minItems: 1
++        maxItems: 36
++
++      function: false
++
++    required:
++      - pins
++
+   qcom-sdm630-tlmm-state:
+     type: object
+     description:

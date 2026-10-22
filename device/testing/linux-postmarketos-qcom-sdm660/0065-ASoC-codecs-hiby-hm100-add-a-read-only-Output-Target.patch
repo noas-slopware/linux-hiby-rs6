@@ -1,0 +1,161 @@
+From cf461019be5ef617695a94d685fb7216f22de415 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 12:28:25 +0900
+Subject: [PATCH 65/94] ASoC: codecs: hiby-hm100: add a read-only Output Target
+ control
+
+The S/PDIF encoder has to know whether a stream it opens now goes to
+Spdif, and to reopen when that changes. Add an "Output Target" control
+(the Output names without Auto) that reads what Auto resolves to, and
+send a value event after every output switch, from a jack change in
+Auto or an Output change.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ sound/soc/codecs/hiby-hm100.c | 68 +++++++++++++++++++++++++++++++++--
+ 1 file changed, 66 insertions(+), 2 deletions(-)
+
+diff --git a/sound/soc/codecs/hiby-hm100.c b/sound/soc/codecs/hiby-hm100.c
+index 060afc01b..761fe32c8 100644
+--- a/sound/soc/codecs/hiby-hm100.c
++++ b/sound/soc/codecs/hiby-hm100.c
+@@ -116,6 +116,8 @@ struct hm100 {
+ 	int output;			/* Output control: 0 = Auto (jacks), else a target */
+ 	int jack_state[J_NUM], jack_last[J_NUM], jack_cnt[J_NUM];
+ 	int jack_target;		/* target the jacks ask for, T_NONE = nothing plugged */
++	struct mutex notify_lock;	/* component below, for the Output Target events */
++	struct snd_soc_component *component;	/* while bound to a card */
+ 	/* stock _left_level/_right_level, _current_*_level, _plat_vol_gain, _plat_pregain, _plat_vol_lrbalance */
+ 	int left, right, cur_left, cur_right;
+ 	int gain, pregain, lrbalance;
+@@ -883,6 +885,21 @@ static void hm100_poweroff_work(struct work_struct *work)
+ 	mutex_unlock(&h->lock);
+ }
+ 
++/* Output Target event for the encoder and UCM; the component is set while on a card */
++static void hm100_notify_target(struct hm100 *h)
++{
++	struct snd_kcontrol *kc;
++
++	mutex_lock(&h->notify_lock);
++	if (h->component) {
++		kc = snd_soc_component_get_kcontrol(h->component, "Output Target");
++		if (kc)
++			snd_ctl_notify(h->component->card->snd_card, SNDRV_CTL_EVENT_MASK_VALUE,
++				       &kc->id);
++	}
++	mutex_unlock(&h->notify_lock);
++}
++
+ /*
+  * sa_switch_work_schedule: poll every 200 ms; a jack changes state after 4 reads in a row that
+  * differ from the last reported state; report_only_one: the first plugged jack in DT order wins.
+@@ -916,8 +933,10 @@ static void hm100_jack_work(struct work_struct *work)
+ 	if (t != h->jack_target) {
+ 		h->jack_target = t;
+ 		dev_info(h->dev, "jacks: target %d\n", t);
+-		if (!h->output)
++		if (!h->output) {
+ 			hm100_output_switch(h, t);
++			hm100_notify_target(h);
++		}
+ 	}
+ 	queue_delayed_work(system_dfl_wq, &h->jack_work, msecs_to_jiffies(200));
+ }
+@@ -1001,6 +1020,7 @@ static void hm100_switch_work(struct work_struct *work)
+ 	struct hm100 *h = container_of(work, struct hm100, switch_work);
+ 
+ 	hm100_output_switch(h, h->output ? h->output : h->jack_target);
++	hm100_notify_target(h);
+ }
+ 
+ /*
+@@ -1303,7 +1323,7 @@ static const char * const gain_texts[] = { "Low", "Middle", "High" };
+ /*
+  * stock output_select names; Auto = follow the jacks (the stock HAL did that from the
+  * switches), Spdif when nothing is plugged. Spdif last, so the older indices keep their
+- * meaning.
++ * meaning. Output Target (read-only) is the same list without Auto: what Auto resolves to.
+  */
+ static const char * const output_texts[] = {
+ 	"Auto", "Lineout", "Headset", "Balance", "BalanceLo", "Spdif",
+@@ -1322,6 +1342,8 @@ static const char * const filter_texts[] = {
+ #define FIR_CUSTOM	(ARRAY_SIZE(filter_texts) - 1)
+ static SOC_ENUM_SINGLE_EXT_DECL(gain_enum, gain_texts);
+ static SOC_ENUM_SINGLE_EXT_DECL(output_enum, output_texts);
++static const struct soc_enum target_enum =
++	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(output_texts) - 1, output_texts + 1);
+ static SOC_ENUM_SINGLE_EXT_DECL(filter_enum, filter_texts);
+ 
+ static int gain_get(struct snd_kcontrol *kc, struct snd_ctl_elem_value *uc)
+@@ -1375,6 +1397,23 @@ static int output_put(struct snd_kcontrol *kc, struct snd_ctl_elem_value *uc)
+ 	return 1;
+ }
+ 
++/*
++ * Not stock: the target a stream opened now runs on (Auto resolved, Spdif with nothing
++ * plugged), for the S/PDIF encoder and UCM. An event follows every switch; it stays Spdif
++ * through an idle power-off, since the next stream powers that.
++ */
++static int target_get(struct snd_kcontrol *kc, struct snd_ctl_elem_value *uc)
++{
++	struct hm100 *h = snd_soc_component_get_drvdata(snd_kcontrol_chip(kc));
++	int t = hm100_resolved(h);
++	unsigned int i;
++
++	for (i = 1; i < ARRAY_SIZE(output_target); i++)
++		if (output_target[i] == t)
++			uc->value.enumerated.item[0] = i - 1;
++	return 0;
++}
++
+ static int filter_get(struct snd_kcontrol *kc, struct snd_ctl_elem_value *uc)
+ {
+ 	struct hm100 *h = snd_soc_component_get_drvdata(snd_kcontrol_chip(kc));
+@@ -1508,13 +1547,37 @@ static const struct snd_kcontrol_new hm100_controls[] = {
+ 	HM100_INT("LR Balance", lrbalance, -254, 254, true),
+ 	SOC_ENUM_EXT("Gain", gain_enum, gain_get, gain_put),
+ 	SOC_ENUM_EXT("Output", output_enum, output_get, output_put),
++	SOC_ENUM_EXT_ACC("Output Target", target_enum, target_get, NULL,
++			 SNDRV_CTL_ELEM_ACCESS_READ | SNDRV_CTL_ELEM_ACCESS_VOLATILE),
+ 	SOC_ENUM_EXT("Digital Filter", filter_enum, filter_get, filter_put),
+ 	SND_SOC_BYTES_TLV("FIR Custom", sizeof(struct snd_ctl_tlv) + 1024, fir_custom_get,
+ 			  fir_custom_put),
+ 	SOC_SINGLE_BOOL_EXT("NOS Switch", 0, nos_get, nos_put),
+ };
+ 
++/* the card is there for hm100_notify_target from probe to remove */
++static int hm100_component_probe(struct snd_soc_component *c)
++{
++	struct hm100 *h = snd_soc_component_get_drvdata(c);
++
++	mutex_lock(&h->notify_lock);
++	h->component = c;
++	mutex_unlock(&h->notify_lock);
++	return 0;
++}
++
++static void hm100_component_remove(struct snd_soc_component *c)
++{
++	struct hm100 *h = snd_soc_component_get_drvdata(c);
++
++	mutex_lock(&h->notify_lock);
++	h->component = NULL;
++	mutex_unlock(&h->notify_lock);
++}
++
+ static const struct snd_soc_component_driver hm100_component = {
++	.probe = hm100_component_probe,
++	.remove = hm100_component_remove,
+ 	.controls = hm100_controls,
+ 	.num_controls = ARRAY_SIZE(hm100_controls),
+ 	.endianness = 1,
+@@ -1543,6 +1606,7 @@ static int hm100_probe(struct spi_device *spi)
+ 	h->spi = spi;
+ 	h->dev = dev;
+ 	mutex_init(&h->lock);
++	mutex_init(&h->notify_lock);
+ 	INIT_DELAYED_WORK(&h->unmute_work, hm100_unmute_work);
+ 	INIT_DELAYED_WORK(&h->mute_work, hm100_mute_work);
+ 	INIT_DELAYED_WORK(&h->volume_work, hm100_volume_work);

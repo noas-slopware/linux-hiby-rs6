@@ -1,0 +1,65 @@
+From 2734c7ff914b86b3af69b0e66d8e5fdb2387fcf6 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 18:25:01 +0900
+Subject: [PATCH 28/94] drm/msm/dsi: vote the MMSS NoC AHB clock on SDM660
+
+The stock kernel holds the MNOC AHB clock around every MDSS AHB access
+(dsi_core_clk_start/stop nest the iface vote inside it). Add it as the
+first DSI bus clock on SDM660 and to the MDSS clocks.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ Documentation/devicetree/bindings/display/msm/qcom,mdss.yaml | 2 ++
+ drivers/gpu/drm/msm/dsi/dsi.h                                | 2 +-
+ drivers/gpu/drm/msm/dsi/dsi_cfg.c                            | 3 ++-
+ 3 files changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/display/msm/qcom,mdss.yaml b/Documentation/devicetree/bindings/display/msm/qcom,mdss.yaml
+index db9c43b20..8884d74b9 100644
+--- a/Documentation/devicetree/bindings/display/msm/qcom,mdss.yaml
++++ b/Documentation/devicetree/bindings/display/msm/qcom,mdss.yaml
+@@ -54,6 +54,7 @@ properties:
+           - description: Display axi clock
+           - description: Display vsync clock
+           - description: Display core clock
++          - description: MMSS NoC AHB clock
+       - minItems: 1
+         items:
+           - description: Display abh clock
+@@ -67,6 +68,7 @@ properties:
+           - const: bus
+           - const: vsync
+           - const: core
++          - const: mnoc
+       - minItems: 1
+         items:
+           - const: iface
+diff --git a/drivers/gpu/drm/msm/dsi/dsi.h b/drivers/gpu/drm/msm/dsi/dsi.h
+index 93c028a12..20ad3fff2 100644
+--- a/drivers/gpu/drm/msm/dsi/dsi.h
++++ b/drivers/gpu/drm/msm/dsi/dsi.h
+@@ -29,7 +29,7 @@ enum msm_dsi_phy_usecase {
+ 	MSM_DSI_PHY_SLAVE,
+ };
+ 
+-#define DSI_BUS_CLK_MAX		4
++#define DSI_BUS_CLK_MAX		5
+ 
+ struct msm_dsi {
+ 	struct drm_device *dev;
+diff --git a/drivers/gpu/drm/msm/dsi/dsi_cfg.c b/drivers/gpu/drm/msm/dsi/dsi_cfg.c
+index da3fe6824..bc77660e4 100644
+--- a/drivers/gpu/drm/msm/dsi/dsi_cfg.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_cfg.c
+@@ -135,8 +135,9 @@ static const struct msm_dsi_config msm8998_dsi_cfg = {
+ 	},
+ };
+ 
++/* mnoc first: dsi_core_clk_start/stop nest the iface vote inside it (RS6 1.80 kernel) */
+ static const char * const dsi_sdm660_bus_clk_names[] = {
+-	"iface", "bus", "core", "core_mmss",
++	"mnoc", "iface", "bus", "core", "core_mmss",
+ };
+ 
+ static const struct regulator_bulk_data sdm660_dsi_regulators[] = {

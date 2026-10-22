@@ -1,0 +1,32 @@
+From ae9c81894a4bba52896ceadbb7450fe131d6b6f4 Mon Sep 17 00:00:00 2001
+From: Fabricio Akio <fabricioakio@gmail.com>
+Date: Thu, 8 Oct 2026 18:49:18 -0300
+Subject: [PATCH 79/94] clk: qcom: mmcc-sdm660: Do not keep the video core
+ clock always on
+
+video_core_clk_src is marked CLK_IS_CRITICAL, so it is kept prepared and
+enabled from boot, and with it its parent XO, which the RPM then can
+never shut down. Nothing records why: the clock only feeds the video
+codec, whose driver enables the core clock it needs, and the same clock
+is not critical on MSM8996 or MSM8998.
+
+Drop the flag.
+
+Fixes: 5db3ae8b33de ("clk: qcom: Add SDM660 Multimedia Clock Controller (MMCC) driver")
+Signed-off-by: Fabricio Akio <fabricioakio@gmail.com>
+---
+ drivers/clk/qcom/mmcc-sdm660.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/drivers/clk/qcom/mmcc-sdm660.c b/drivers/clk/qcom/mmcc-sdm660.c
+index 4a701e37b..90c0ed453 100644
+--- a/drivers/clk/qcom/mmcc-sdm660.c
++++ b/drivers/clk/qcom/mmcc-sdm660.c
+@@ -1088,7 +1088,6 @@ static struct clk_rcg2 video_core_clk_src = {
+ 		.parent_data = mmcc_xo_mmpll0_mmpll8_mmpll3_mmpll6_gpll0_mmpll7,
+ 		.num_parents = ARRAY_SIZE(mmcc_xo_mmpll0_mmpll8_mmpll3_mmpll6_gpll0_mmpll7),
+ 		.ops = &clk_rcg2_ops,
+-		.flags = CLK_IS_CRITICAL,
+ 	},
+ };
+ 

@@ -1,0 +1,618 @@
+From 06f3ede48c7bef6e092fd2f1277a3025667598a7 Mon Sep 17 00:00:00 2001
+From: Giuseppe Maggio <jertlok@proton.me>
+Date: Mon, 10 Aug 2026 11:01:39 +0200
+Subject: [PATCH 09/94] pmdomain: qcom: cpr3: look up the CPRh thread instead
+ of attaching to it
+
+Enabling both the CPRh controller and the OSM on MSM8998 hangs the SoC
+before either driver has touched a register.  Seven flashes of DTB- and
+cmdline-only bisect put the fault inside dev_pm_domain_attach_list(): a
+boot that programs nothing at all comes up, and a boot whose only extra
+work is that attach does not, with no fuse read, no CPR write and no OSM
+write in between.
+
+The attach buys nothing.  CPR-Hardened runs its loop in hardware: there
+is no usable regulator (devm_regulator_get_optional() is deliberately
+allowed to fail), the domain is GENPD_FLAG_ALWAYS_ON and its
+set_performance_state is a stub.  Nothing calls a power_on, a power_off
+or a performance state on it for the whole life of the system.  The
+domain existed only to hand three things across: the CPU device, the
+controller's own operating points, and the APM and MEM-ACC thresholds -
+and none of the three need genpd.  The corner setup already reaches the
+CPU's operating points by walking the device tree by hand, because the
+required-opp linkage does not carry the frequency it needs.
+
+So resolve the controller from the phandle the CPU node already carries
+and call into it directly.  qcom_cpr3_cprh_init() now takes the CPU
+device, finds its thread, installs and voltage-adjusts the operating
+points, programs the corner table and returns the thresholds the caller
+needs for the OSM.  The genpd is still registered, since it is what
+carries the controller's operating points, but on CPR-Hardened it no
+longer offers attach_dev or detach_dev: with no consumer attaching, the
+callback would have dereferenced an acc_desc this SoC does not have.
+
+The corner array allocation moves to a helper, shared with the CPR3 and
+CPR4 attach path that still uses the domain the ordinary way.
+
+While here, stop reporting success from qcom_cpufreq_gen_params() when
+the operating point table came back empty: gpd_opp_cnt of zero fell
+through the "greater than zero" test and was returned as a zero exit,
+leaving the caller to fail later on an uninitialised entry count.
+
+Assisted-by: LLM
+Signed-off-by: Giuseppe Maggio <jertlok@proton.me>
+---
+ drivers/cpufreq/qcom-cpufreq-hw.c |  79 ++-------
+ drivers/pmdomain/qcom/cpr3.c      | 272 +++++++++++++++++-------------
+ include/soc/qcom/cpr.h            |   4 +-
+ 3 files changed, 173 insertions(+), 182 deletions(-)
+
+diff --git a/drivers/cpufreq/qcom-cpufreq-hw.c b/drivers/cpufreq/qcom-cpufreq-hw.c
+index a4408de49..49522d746 100644
+--- a/drivers/cpufreq/qcom-cpufreq-hw.c
++++ b/drivers/cpufreq/qcom-cpufreq-hw.c
+@@ -23,7 +23,6 @@
+ #include <linux/of_address.h>
+ #include <linux/of_platform.h>
+ #include <linux/platform_device.h>
+-#include <linux/pm_domain.h>
+ #include <linux/pm_opp.h>
+ #include <linux/slab.h>
+ #include <linux/spinlock.h>
+@@ -284,7 +283,6 @@ struct qcom_cpufreq_data {
+ 	struct delayed_work throttle_work;
+ 	struct cpufreq_policy *policy;
+ 	struct clk_hw cpu_clk;
+-	struct device *cprh_dev;
+ 
+ 	bool per_core_dcvs;
+ };
+@@ -294,8 +292,6 @@ static struct {
+ 	const struct qcom_cpufreq_soc_data *soc_data;
+ } qcom_cpufreq;
+ 
+-static const char * const cprh_genpd_names[] = { "cprh", NULL };
+-
+ static unsigned long cpu_hw_rate, xo_rate;
+ static bool icc_scaling_enabled;
+ 
+@@ -538,25 +534,6 @@ static int qcom_cpufreq_gen_params(struct device *cpu_dev,
+ 				   int *apm_vc, int *acc_vc, int cpu_count,
+ 				   u8 *num_entries)
+ {
+-	struct dev_pm_domain_list *cpr_pd_list = NULL;
+-	/*
+-	 * No PD_FLAG_REQUIRED_OPP: the genpd core already binds the CPU as the
+-	 * required-opp consumer of this domain while attaching, because the CPU
+-	 * has a single power domain and its operating points name required-opps.
+-	 * Asking for it here only repeats that work on a table the core has
+-	 * already configured.
+-	 *
+-	 * PD_FLAG_NO_DEV_LINK because the consumer here is a CPU device, which
+-	 * never probes and never runtime suspends, so a device link to the
+-	 * domain orders nothing.  The default link would runtime resume a
+-	 * domain that is already always-on, from a device that has no runtime
+-	 * PM of its own.
+-	 */
+-	struct dev_pm_domain_attach_data attach_data = {
+-		.pd_names = cprh_genpd_names,
+-		.num_pd_names = 1,
+-		.pd_flags = PD_FLAG_NO_DEV_LINK,
+-	};
+ 	struct platform_device *pdev = cpufreq_get_driver_data();
+ 	const struct qcom_cpufreq_soc_data *soc_data = qcom_cpufreq.soc_data;
+ 	struct cpr_ext_data *cpr_data;
+@@ -564,48 +541,28 @@ static int qcom_cpufreq_gen_params(struct device *cpu_dev,
+ 	unsigned long rate;
+ 	int apm_uV, acc_uV, i, gpd_opp_cnt, ret = 0;
+ 
+-	ret = devm_pm_domain_attach_list(cpu_dev, &attach_data, &cpr_pd_list);
+-	if (ret < 0) {
+-		dev_err(&pdev->dev, "Could not attach to pm_domain: %d\n", ret);
+-		return ret;
+-	}
+-
+-	if (!cpr_pd_list || cpr_pd_list->num_pds < 1 ||
+-	    IS_ERR_OR_NULL(cpr_pd_list->pd_devs[0]))
+-		return -EINVAL;
+-
+-	data->cprh_dev = cpr_pd_list->pd_devs[0];
+-
+-	/* Installs and voltage-adjusts the CPU OPP table; see cpr3.c */
+-	ret = qcom_cpr3_cprh_init(cpr_pd_list->pd_devs[0]);
+-	if (ret) {
+-		dev_err(&pdev->dev, "CPRh init failed: %d\n", ret);
+-		return ret;
+-	}
+-
+ 	/*
+-	 * In the CPR3 driver we have assigned data to the genpd newly created
+-	 * virtual device: this contains MEMACC and APM thresholds, as passing
+-	 * them through OPPs would be an API abuse.
++	 * Installs and voltage-adjusts the CPU OPP table, and hands back the
++	 * MEM-ACC and APM thresholds, as passing those through OPPs would be
++	 * an API abuse.  See cpr3.c.
+ 	 */
+-	cpr_data = dev_get_drvdata(cpr_pd_list->pd_devs[0]);
+-	if (!cpr_data) {
+-		dev_err(&pdev->dev, "Cannot get CPR data\n");
+-		return -ENODATA;
++	cpr_data = qcom_cpr3_cprh_init(cpu_dev);
++	if (IS_ERR(cpr_data)) {
++		ret = PTR_ERR(cpr_data);
++		dev_err_probe(&pdev->dev, ret, "CPRh init failed\n");
++		return ret;
+ 	}
+ 
+-	/* Get the count of available OPPs coming from the power domain */
++	/* Get the count of available OPPs coming from the CPR controller */
+ 	gpd_opp_cnt = dev_pm_opp_get_opp_count(cpu_dev);
+-	if (gpd_opp_cnt < 2) {
+-		ret = gpd_opp_cnt > 0 ? -EINVAL : gpd_opp_cnt;
+-		goto detach_gpd;
+-	}
++	if (gpd_opp_cnt < 2)
++		return gpd_opp_cnt < 0 ? gpd_opp_cnt : -EINVAL;
+ 
+ 	/* If we get no APM voltage, the system is going to be unstable */
+ 	apm_uV = cpr_data->apm_threshold_uV;
+ 	if (apm_uV <= 0) {
+ 		ret = -EINVAL;
+-		goto detach_gpd;
++		goto out;
+ 	}
+ 
+ 	/*
+@@ -631,7 +588,7 @@ static int qcom_cpufreq_gen_params(struct device *cpu_dev,
+ 				     sizeof(**hw_tbl), GFP_KERNEL);
+ 	if (!hw_tbl) {
+ 		ret = -ENOMEM;
+-		goto detach_gpd;
++		goto out;
+ 	}
+ 
+ 	for (i = 0, rate = 1000; i <= gpd_opp_cnt ; rate++, i++) {
+@@ -654,14 +611,14 @@ static int qcom_cpufreq_gen_params(struct device *cpu_dev,
+ 		np = dev_pm_opp_get_of_node(genpd_opp);
+ 		if (!np) {
+ 			ret = -ENOENT;
+-			goto detach_gpd;
++			goto out;
+ 		}
+ 
+ 		if (of_property_read_u32(np, "qcom,pll-override",
+ 					 &entry->override_val)) {
+ 			ret = -EINVAL;
+ 			of_node_put(np);
+-			goto detach_gpd;
++			goto out;
+ 		}
+ 
+ 		if (of_property_read_u32(np, "qcom,spare-data",
+@@ -743,11 +700,11 @@ static int qcom_cpufreq_gen_params(struct device *cpu_dev,
+ 	if (i < gpd_opp_cnt) {
+ 		dev_err(&pdev->dev, "Got bad OPP table from power domain.\n");
+ 		ret = -EINVAL;
+-		goto detach_gpd;
++		goto out;
+ 	}
+ 	*num_entries = i;
+ 
+-detach_gpd:
++out:
+ 	return ret;
+ }
+ 
+@@ -1669,7 +1626,7 @@ static int qcom_cpufreq_hw_osm_setup(struct device *cpu_dev,
+ 	 * The OSM is now driving a corner request, so the CPRh controller
+ 	 * finally has something to follow: hand the supply over to it.
+ 	 */
+-	ret = qcom_cpr3_cprh_enable(drv_data->cprh_dev);
++	ret = qcom_cpr3_cprh_enable(cpu_dev);
+ 	if (ret) {
+ 		dev_err(cpu_dev, "Cannot arm the CPRh loop: %d\n", ret);
+ 		return ret;
+diff --git a/drivers/pmdomain/qcom/cpr3.c b/drivers/pmdomain/qcom/cpr3.c
+index 78d18456c..ddab66901 100644
+--- a/drivers/pmdomain/qcom/cpr3.c
++++ b/drivers/pmdomain/qcom/cpr3.c
+@@ -17,6 +17,7 @@
+ #include <linux/slab.h>
+ #include <linux/of.h>
+ #include <linux/of_device.h>
++#include <linux/of_platform.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_domain.h>
+ #include <linux/pm_opp.h>
+@@ -2383,13 +2384,43 @@ static void cpr_pd_detach_dev(struct generic_pm_domain *domain,
+ 	mutex_unlock(&drv->lock);
+ }
+ 
++/*
++ * cpr_thread_alloc_corners() - Size and allocate a thread's corner array
++ * @thread: CPR thread
++ *
++ * The corner count comes from the controller's own operating points, and
++ * the extra corners are the APM and MEM-ACC crossovers, which are not
++ * DCVS set-points but still occupy corner table rows.
++ *
++ * Returns: Zero for success, otherwise negative value on errors.
++ */
++static int cpr_thread_alloc_corners(struct cpr_thread *thread)
++{
++	struct cpr_drv *drv = thread->drv;
++	int ret;
++
++	ret = dev_pm_opp_get_opp_count(&thread->pd.dev);
++	if (ret < 0) {
++		dev_err(drv->dev, "could not get OPP count\n");
++		return ret;
++	}
++	thread->num_corners = ret;
++
++	thread->corners = devm_kcalloc(drv->dev,
++				       thread->num_corners + drv->extra_corners,
++				       sizeof(*thread->corners), GFP_KERNEL);
++	if (!thread->corners)
++		return -ENOMEM;
++
++	return 0;
++}
++
+ static int cpr_pd_attach_dev(struct generic_pm_domain *domain,
+ 			     struct device *dev)
+ {
+ 	struct cpr_thread *thread = container_of(domain, struct cpr_thread, pd);
+ 	struct cpr_drv *drv = thread->drv;
+ 	const struct acc_desc *acc_desc = drv->acc_desc;
+-	bool cprh_opp_remove_table = false;
+ 	int ret = 0;
+ 
+ 	mutex_lock(&drv->lock);
+@@ -2425,92 +2456,35 @@ static int cpr_pd_attach_dev(struct generic_pm_domain *domain,
+ 	}
+ 	thread->attached_cpu_dev = dev;
+ 
+-	/*
+-	 * We are exporting the APM and MEM-ACC thresholds to the caller;
+-	 * while APM is necessary in the CPU CPR case, MEM-ACC may not be,
+-	 * depending on the SoC and on fuses.
+-	 * Initialize both to an invalid value, so that the caller can check
+-	 * if they got calculated or read from fuses in this driver.
+-	 */
+-	thread->ext_data.apm_threshold_uV = -1;
+-	thread->ext_data.mem_acc_threshold_uV = -1;
+-	dev_set_drvdata(thread->attached_cpu_dev, &thread->ext_data);
+-
+ 	dev_dbg(drv->dev, "using cpu clk from: %s\n",
+ 		dev_name(thread->attached_cpu_dev));
+ 
+-	/*
+-	 * Everything related to (virtual) corners has to be initialized
+-	 * here, when attaching to the power domain, since we need to know
+-	 * the maximum frequency for each fuse corner, and this is only
+-	 * available after the cpufreq driver has attached to us.
+-	 * The reason for this is that we need to know the highest
+-	 * frequency associated with each fuse corner.
+-	 */
+-	ret = dev_pm_opp_get_opp_count(&thread->pd.dev);
+-	if (ret < 0) {
+-		dev_err(drv->dev, "could not get OPP count\n");
++	ret = cpr_thread_alloc_corners(thread);
++	if (ret) {
+ 		thread->attached_cpu_dev = NULL;
+ 		goto unlock;
+ 	}
+-	thread->num_corners = ret;
+-
+-	thread->corners = devm_kcalloc(drv->dev,
+-				       thread->num_corners +
+-				       drv->extra_corners,
+-				       sizeof(*thread->corners),
+-				       GFP_KERNEL);
+-	if (!thread->corners) {
+-		ret = -ENOMEM;
+-		goto unlock;
+-	}
+ 
+-	/*
+-	 * If we are on CPR-Hardened we have to make sure that the attached
+-	 * device has a OPP table installed, as we're going to modify it here
+-	 * with our calculations based on qfprom values.
+-	 */
+-	/*
+-	 * CPR-Hardened: do NOT install the attached CPU's OPP table here.
+-	 * This callback runs from genpd_add_device(), and the genpd core
+-	 * follows it with dev_pm_opp_set_config() (required-opp dev), which
+-	 * must run before the table has any OPPs -- populating it here fails
+-	 * the whole attach with -EBUSY. The cpufreq driver calls
+-	 * qcom_cpr3_cprh_init() right after attaching, which is where the
+-	 * table gets added and the corners initialized.
+-	 */
+-	if (drv->desc->cpr_type == CTRL_TYPE_CPRH)
++	ret = cpr3_corner_init(thread);
++	if (ret)
+ 		goto unlock;
+ 
+-	ret = cpr3_corner_init(thread);
++	ret = cpr3_find_initial_corner(thread);
+ 	if (ret)
+-		goto exit;
++		goto unlock;
+ 
+-	if (drv->desc->cpr_type < CTRL_TYPE_CPRH) {
+-		ret = cpr3_find_initial_corner(thread);
+-		if (ret)
+-			goto exit;
++	if (acc_desc->config)
++		regmap_multi_reg_write(drv->tcsr, acc_desc->config,
++				       acc_desc->num_regs_per_fuse);
+ 
+-		if (acc_desc->config)
+-			regmap_multi_reg_write(drv->tcsr, acc_desc->config,
+-					       acc_desc->num_regs_per_fuse);
++	/* Enable ACC if required */
++	if (acc_desc->enable_mask)
++		regmap_update_bits(drv->tcsr, acc_desc->enable_reg,
++				   acc_desc->enable_mask,
++				   acc_desc->enable_mask);
+ 
+-		/* Enable ACC if required */
+-		if (acc_desc->enable_mask)
+-			regmap_update_bits(drv->tcsr, acc_desc->enable_reg,
+-					   acc_desc->enable_mask,
+-					   acc_desc->enable_mask);
+-	}
+ 	dev_info(drv->dev, "thread %d initialized with %u OPPs\n",
+ 		 thread->id, thread->num_corners);
+-exit:
+-	/*
+-	 * If we are on CPRh and we reached an error condition, we installed
+-	 * the OPP table but we haven't done any setup on it, nor we ever will.
+-	 * In order to leave a clean state, remove the table.
+-	 */
+-	if (ret && cprh_opp_remove_table)
+-		dev_pm_opp_of_remove_table(thread->attached_cpu_dev);
+ unlock:
+ 	mutex_unlock(&drv->lock);
+ 
+@@ -2518,59 +2492,113 @@ static int cpr_pd_attach_dev(struct generic_pm_domain *domain,
+ }
+ 
+ /**
+- * qcom_cpr3_cprh_init() - install and adjust the attached CPU's OPP table
+- * @virt_dev: the genpd virtual device handed out by the "cprh" attach
++ * cprh_thread_from_cpu() - Find the CPRh thread that supplies a CPU
++ * @cpu_dev: CPU device, whose node names the controller and the thread
++ *           in its "power-domains" property
+  *
+- * On CPR-Hardened this work cannot run from the genpd attach_dev callback:
+- * the genpd core configures the required-opp device right after attach, and
+- * that config must precede any OPP in the table. The cpufreq driver calls
+- * this once, immediately after attaching, before reading the ext_data
+- * thresholds or the adjusted OPP voltages.
++ * CPR-Hardened runs its loop in hardware: the domain has no usable
++ * regulator and its performance states are a no-op, so a consumer gains
++ * nothing from attaching to it and everything this driver needs from the
++ * CPU is reachable from the phandle alone.
++ *
++ * Returns: The thread, or an ERR_PTR() when the controller has not probed
++ *          yet or the phandle does not name a CPR-Hardened thread.
+  */
+-int qcom_cpr3_cprh_init(struct device *virt_dev)
++static struct cpr_thread *cprh_thread_from_cpu(struct device *cpu_dev)
+ {
+-	struct cpr_ext_data *data;
+-	struct cpr_thread *thread;
++	struct of_phandle_args args;
++	struct platform_device *pdev;
+ 	struct cpr_drv *drv;
+ 	int ret;
+ 
+-	if (!virt_dev)
+-		return -ENODEV;
++	ret = of_parse_phandle_with_args(cpu_dev->of_node, "power-domains",
++					 "#power-domain-cells", 0, &args);
++	if (ret)
++		return ERR_PTR(ret);
++
++	pdev = of_find_device_by_node(args.np);
++	of_node_put(args.np);
++	if (!pdev)
++		return ERR_PTR(-EPROBE_DEFER);
++
++	drv = platform_get_drvdata(pdev);
++	put_device(&pdev->dev);
++	if (!drv)
++		return ERR_PTR(-EPROBE_DEFER);
++
++	if (drv->desc->cpr_type != CTRL_TYPE_CPRH)
++		return ERR_PTR(-ENODEV);
++
++	if (args.args_count != 1 || args.args[0] >= drv->desc->num_threads)
++		return ERR_PTR(-EINVAL);
++
++	return &drv->threads[args.args[0]];
++}
++
++/**
++ * qcom_cpr3_cprh_init() - install and adjust a CPU's OPP table
++ * @cpu_dev: first CPU of the cluster this CPRh thread supplies
++ *
++ * Computes every corner from the fuses, stamps the resulting voltages into
++ * the CPU's operating points and programs the controller's corner table.
++ * The controller is left inert; qcom_cpr3_cprh_enable() arms it.
++ *
++ * Returns: The APM and MEM-ACC thresholds the caller needs to program the
++ *          OSM, or an ERR_PTR() on failure.
++ */
++struct cpr_ext_data *qcom_cpr3_cprh_init(struct device *cpu_dev)
++{
++	struct cpr_thread *thread;
++	struct cpr_drv *drv;
++	int ret;
+ 
+-	data = dev_get_drvdata(virt_dev);
+-	if (!data)
+-		return -ENODEV;
++	thread = cprh_thread_from_cpu(cpu_dev);
++	if (IS_ERR(thread))
++		return ERR_CAST(thread);
+ 
+-	thread = container_of(data, struct cpr_thread, ext_data);
+ 	drv = thread->drv;
+ 
+ 	mutex_lock(&drv->lock);
+ 
+-	if (thread->cprh_inited) {
+-		mutex_unlock(&drv->lock);
+-		return 0;
+-	}
++	if (thread->cprh_inited)
++		goto unlock;
++
++	thread->attached_cpu_dev = cpu_dev;
+ 
+-	if (cprh_stop_after(drv->dev, thread->id, 0, "attach")) {
+-		ret = 0;
++	/*
++	 * We are exporting the APM and MEM-ACC thresholds to the caller;
++	 * while APM is necessary in the CPU CPR case, MEM-ACC may not be,
++	 * depending on the SoC and on fuses.
++	 * Initialize both to an invalid value, so that the caller can check
++	 * if they got calculated or read from fuses in this driver.
++	 */
++	thread->ext_data.apm_threshold_uV = -1;
++	thread->ext_data.mem_acc_threshold_uV = -1;
++
++	/*
++	 * Everything related to (virtual) corners needs the maximum
++	 * frequency of each fuse corner, which is only known once the CPU
++	 * that this thread supplies is known.
++	 */
++	ret = cpr_thread_alloc_corners(thread);
++	if (ret)
++		goto err;
++
++	if (cprh_stop_after(drv->dev, thread->id, 0, "attach"))
+ 		goto unlock;
+-	}
+ 
+-	ret = dev_pm_opp_of_add_table(thread->attached_cpu_dev);
++	ret = dev_pm_opp_of_add_table(cpu_dev);
+ 	if (ret && ret != -EEXIST) {
+ 		dev_err(drv->dev, "Cannot add table: %d\n", ret);
+-		goto unlock;
++		goto err;
+ 	}
+ 
+-	if (cprh_stop_after(drv->dev, thread->id, 1, "opp-table")) {
+-		ret = 0;
++	if (cprh_stop_after(drv->dev, thread->id, 1, "opp-table"))
+ 		goto unlock;
+-	}
+ 
+ 	ret = cpr3_corner_init(thread);
+ 	if (ret == -ECANCELED) {
+ 		/* Stopped on purpose partway: leave the table, arm nothing */
+-		ret = 0;
+ 		goto unlock;
+ 	}
+ 	if (ret) {
+@@ -2578,8 +2606,8 @@ int qcom_cpr3_cprh_init(struct device *virt_dev)
+ 		 * The table was installed but never set up and never will
+ 		 * be: remove it to leave a clean state.
+ 		 */
+-		dev_pm_opp_of_remove_table(thread->attached_cpu_dev);
+-		goto unlock;
++		dev_pm_opp_of_remove_table(cpu_dev);
++		goto err;
+ 	}
+ 
+ 	thread->cprh_inited = true;
+@@ -2588,13 +2616,18 @@ int qcom_cpr3_cprh_init(struct device *virt_dev)
+ unlock:
+ 	mutex_unlock(&drv->lock);
+ 
+-	return ret;
++	return &thread->ext_data;
++err:
++	thread->attached_cpu_dev = NULL;
++	mutex_unlock(&drv->lock);
++
++	return ERR_PTR(ret);
+ }
+ EXPORT_SYMBOL_GPL(qcom_cpr3_cprh_init);
+ 
+ /**
+  * qcom_cpr3_cprh_enable() - Let the CPRh controller follow the OSM
+- * @virt_dev: the genpd virtual device handed out by the "cprh" attach
++ * @cpu_dev: first CPU of the cluster this CPRh thread supplies
+  *
+  * Arming the closed loop makes the controller drive the supply from the
+  * corner the OSM asks for, so it can only be done once that OSM is enabled.
+@@ -2604,20 +2637,15 @@ EXPORT_SYMBOL_GPL(qcom_cpr3_cprh_init);
+  *
+  * Returns: Zero for success, otherwise negative number on errors.
+  */
+-int qcom_cpr3_cprh_enable(struct device *virt_dev)
++int qcom_cpr3_cprh_enable(struct device *cpu_dev)
+ {
+-	struct cpr_ext_data *data;
+ 	struct cpr_thread *thread;
+ 	struct cpr_drv *drv;
+ 
+-	if (!virt_dev)
+-		return -ENODEV;
+-
+-	data = dev_get_drvdata(virt_dev);
+-	if (!data)
+-		return -ENODEV;
++	thread = cprh_thread_from_cpu(cpu_dev);
++	if (IS_ERR(thread))
++		return PTR_ERR(thread);
+ 
+-	thread = container_of(data, struct cpr_thread, ext_data);
+ 	drv = thread->drv;
+ 
+ 	mutex_lock(&drv->lock);
+@@ -2808,14 +2836,20 @@ static int cpr_thread_init(struct cpr_drv *drv, int tid)
+ 
+ 	thread->pd.power_off = cpr_power_off;
+ 	thread->pd.power_on = cpr_power_on;
+-	thread->pd.attach_dev = cpr_pd_attach_dev;
+-	thread->pd.detach_dev = cpr_pd_detach_dev;
+ 
+-	/* CPR-Hardened performance states are managed in firmware */
+-	if (desc->cpr_type == CTRL_TYPE_CPRH)
++	/*
++	 * CPR-Hardened performance states are managed in firmware, and its
++	 * consumers go through qcom_cpr3_cprh_init() rather than attaching,
++	 * so the domain is only here to carry the controller's own operating
++	 * points.
++	 */
++	if (desc->cpr_type == CTRL_TYPE_CPRH) {
+ 		thread->pd.set_performance_state = cprh_dummy_set_performance_state;
+-	else
++	} else {
+ 		thread->pd.set_performance_state = cpr_set_performance_state;
++		thread->pd.attach_dev = cpr_pd_attach_dev;
++		thread->pd.detach_dev = cpr_pd_detach_dev;
++	}
+ 
+ 	/* Anything later than CPR1 must be always-on for now */
+ 	thread->pd.flags = GENPD_FLAG_ALWAYS_ON;
+diff --git a/include/soc/qcom/cpr.h b/include/soc/qcom/cpr.h
+index 702788ec1..ac13f5929 100644
+--- a/include/soc/qcom/cpr.h
++++ b/include/soc/qcom/cpr.h
+@@ -16,7 +16,7 @@ struct cpr_ext_data {
+ 
+ struct device;
+ 
+-int qcom_cpr3_cprh_init(struct device *genpd_virt_dev);
+-int qcom_cpr3_cprh_enable(struct device *genpd_virt_dev);
++struct cpr_ext_data *qcom_cpr3_cprh_init(struct device *cpu_dev);
++int qcom_cpr3_cprh_enable(struct device *cpu_dev);
+ 
+ #endif /* __CPR_H__ */

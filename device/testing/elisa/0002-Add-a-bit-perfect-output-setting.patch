@@ -1,0 +1,413 @@
+From c61974f55f7cbce686500b274f5689993268a54f Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 00:33:38 +0900
+Subject: [PATCH 2/2] Add a bit-perfect output setting
+
+When enabled, Elisa's volume is locked at 100%: with VLC's PulseAudio
+output (pipewire-pulse) this keeps the stream volume at unity, and it
+is restored if something else changes it. VLC is started with replay
+gain off, unity gain and no time stretching (its defaults, made
+explicit), so no software volume or normalization touches the samples.
+The volume slider is disabled while the setting is on.
+---
+ src/audiowrapper.h                            | 16 +++++
+ src/audiowrapper_libvlc.cpp                   | 60 ++++++++++++++++++-
+ src/audiowrapper_qtmultimedia.cpp             | 27 +++++++++
+ src/elisa_core.kcfg                           |  6 ++
+ src/elisaapplication.cpp                      |  4 ++
+ .../elisaconfigurationdialog.cpp              | 15 +++++
+ .../elisaconfigurationdialog.h                | 16 +++++
+ src/qml/SettingsForm.qml                      | 21 +++++++
+ src/qml/VolumeSlider.qml                      |  3 +-
+ 9 files changed, 165 insertions(+), 3 deletions(-)
+
+diff --git a/src/audiowrapper.h b/src/audiowrapper.h
+index b061b24..742b416 100644
+--- a/src/audiowrapper.h
++++ b/src/audiowrapper.h
+@@ -65,6 +65,16 @@ class ELISALIB_EXPORT AudioWrapper : public QObject
+                READ seekable
+                NOTIFY seekableChanged)
+ 
++    /**
++     * When true, the audio reaches the sound server unmodified: the application
++     * volume is pinned to 100%, no software gain or replay gain is applied and
++     * the stream is opened at the sample rate of the track.
++     */
++    Q_PROPERTY(bool bitPerfect
++               READ bitPerfect
++               WRITE setBitPerfect
++               NOTIFY bitPerfectChanged)
++
+ public:
+ 
+     explicit AudioWrapper(QObject *parent = nullptr);
+@@ -89,6 +99,8 @@ public:
+ 
+     [[nodiscard]] bool seekable() const;
+ 
++    [[nodiscard]] bool bitPerfect() const;
++
+ Q_SIGNALS:
+ 
+     void mutedChanged(bool muted);
+@@ -111,6 +123,8 @@ Q_SIGNALS:
+ 
+     void seekableChanged(bool seekable);
+ 
++    void bitPerfectChanged(bool bitPerfect);
++
+     void playing();
+ 
+     void paused();
+@@ -139,6 +153,8 @@ public Q_SLOTS:
+ 
+     void seek(qint64 position);
+ 
++    void setBitPerfect(bool bitPerfect);
++
+ private Q_SLOTS:
+ 
+     void mediaStatusChanged();
+diff --git a/src/audiowrapper_libvlc.cpp b/src/audiowrapper_libvlc.cpp
+index c29561b..125b168 100644
+--- a/src/audiowrapper_libvlc.cpp
++++ b/src/audiowrapper_libvlc.cpp
+@@ -24,6 +24,7 @@ typedef SSIZE_T ssize_t;
+ #endif
+ 
+ #include <cmath>
++#include <iterator>
+ 
+ #include <vlc/vlc.h>
+ #include <vlc/libvlc_version.h>
+@@ -69,6 +70,10 @@ public:
+ 
+     bool mHasSavedPosition = false;
+ 
++    bool mBitPerfect = false;
++
++    qreal mRequestedVolume = 100.0;
++
+     QUrl mSource;
+ 
+     void vlcEventCallback(const struct libvlc_event_t *p_event);
+@@ -101,7 +106,15 @@ static void vlc_callback(const struct libvlc_event_t *p_event, void *p_data)
+ AudioWrapper::AudioWrapper(QObject *parent) : QObject(parent), d(std::make_unique<AudioWrapperPrivate>())
+ {
+     d->mParent = this;
+-    d->mInstance = libvlc_new(0, nullptr);
++
++    // Never alter the samples: these are VLC's defaults, but make them explicit
++    // since bit-perfect output relies on them (volume.c/float.c skip a gain of 1).
++    const char *const vlcArguments[] = {
++        "--audio-replay-gain-mode=none",
++        "--gain=1",
++        "--no-audio-time-stretch",
++    };
++    d->mInstance = libvlc_new(std::size(vlcArguments), vlcArguments);
+     libvlc_set_user_agent(d->mInstance, QGuiApplication::applicationDisplayName().toUtf8().constData(), "Elisa Music Player");
+     libvlc_set_app_id(d->mInstance, "org.kde.elisa", ELISA_VERSION_STRING, "elisa");
+ 
+@@ -158,7 +171,7 @@ bool AudioWrapper::muted() const
+ 
+ qreal AudioWrapper::volume() const
+ {
+-    if (!d->mPlayer) {
++    if (!d->mPlayer || d->mBitPerfect) {
+         return 100.0;
+     }
+ 
+@@ -230,10 +243,43 @@ void AudioWrapper::setVolume(qreal volume)
+         return;
+     }
+ 
++    d->mRequestedVolume = volume;
++
++    if (d->mBitPerfect) {
++        libvlc_audio_set_volume(d->mPlayer, 100);
++        if (qRound(volume) != 100) {
++            // let the UI snap back to 100%
++            playerVolumeSignalChanges();
++        }
++        return;
++    }
++
+     const int intVolume = std::clamp(qRound(volume), 0, 100);
+     libvlc_audio_set_volume(d->mPlayer, intVolume);
+ }
+ 
++bool AudioWrapper::bitPerfect() const
++{
++    return d->mBitPerfect;
++}
++
++void AudioWrapper::setBitPerfect(bool bitPerfect)
++{
++    if (d->mBitPerfect == bitPerfect) {
++        return;
++    }
++
++    d->mBitPerfect = bitPerfect;
++
++    // With the PulseAudio output (pipewire-pulse) the volume is the stream
++    // volume of the sound server: 100% is unity gain there, and VLC applies
++    // no software gain of its own.
++    setVolume(d->mRequestedVolume);
++
++    Q_EMIT bitPerfectChanged(bitPerfect);
++    playerVolumeSignalChanges();
++}
++
+ void AudioWrapper::setSource(const QUrl &source)
+ {
+     d->mSource = source;
+@@ -565,6 +611,16 @@ void AudioWrapperPrivate::signalVolumeChange(int newVolume)
+         return;
+     }
+ 
++    if (mBitPerfect && newVolume != 100) {
++        // someone else (e.g. the system mixer) changed our stream volume: restore unity gain.
++        // Not from inside the VLC event callback, libvlc must not be called from there.
++        QMetaObject::invokeMethod(mParent, [this]() {
++            if (mBitPerfect && mPlayer) {
++                libvlc_audio_set_volume(mPlayer, 100);
++            }
++        }, Qt::QueuedConnection);
++    }
++
+     if (abs(int(mPreviousVolume - newVolume)) >= 1) {
+         mPreviousVolume = newVolume;
+ 
+diff --git a/src/audiowrapper_qtmultimedia.cpp b/src/audiowrapper_qtmultimedia.cpp
+index 9ecac38..ea037a5 100644
+--- a/src/audiowrapper_qtmultimedia.cpp
++++ b/src/audiowrapper_qtmultimedia.cpp
+@@ -44,6 +44,10 @@ public:
+     QMediaDevices mMediaDevices;
+ 
+     QUrl mSource;
++
++    qreal mRequestedVolume = 100.0;
++
++    bool mBitPerfect = false;
+ };
+ 
+ AudioWrapper::AudioWrapper(QObject *parent) : QObject(parent), d(std::make_unique<AudioWrapperPrivate>())
+@@ -132,6 +136,13 @@ void AudioWrapper::setVolume(qreal volume)
+ {
+     qCDebug(orgKdeElisaPlayerQtMultimedia) << "AudioWrapper::setVolume" << volume;
+ 
++    d->mRequestedVolume = volume;
++    if (d->mBitPerfect) {
++        // Qt Multimedia may still convert the format, only the volume is pinned here
++        d->mOutput.setVolume(1.0);
++        return;
++    }
++
+     auto realVolume = static_cast<qreal>(QAudio::convertVolume(volume / 100.0, QAudio::LogarithmicVolumeScale, QAudio::LinearVolumeScale));
+     d->mOutput.setVolume(realVolume);
+ }
+@@ -150,6 +161,22 @@ void AudioWrapper::setSource(const QUrl &source)
+     }
+ }
+ 
++bool AudioWrapper::bitPerfect() const
++{
++    return d->mBitPerfect;
++}
++
++void AudioWrapper::setBitPerfect(bool bitPerfect)
++{
++    if (d->mBitPerfect == bitPerfect) {
++        return;
++    }
++
++    d->mBitPerfect = bitPerfect;
++    setVolume(d->mRequestedVolume);
++    Q_EMIT bitPerfectChanged(bitPerfect);
++}
++
+ void AudioWrapper::setPosition(qint64 position)
+ {
+     qCDebug(orgKdeElisaPlayerQtMultimedia) << "AudioWrapper::setPosition" << position;
+diff --git a/src/elisa_core.kcfg b/src/elisa_core.kcfg
+index b9f1597..7267cfb 100644
+--- a/src/elisa_core.kcfg
++++ b/src/elisa_core.kcfg
+@@ -43,6 +43,12 @@
+       false
+     </default>
+   </entry>
++  <entry key="BitPerfectOutput" type="Bool" >
++    <label>Send audio to the sound server unmodified: application/stream volume locked at 100%, no software gain or replay gain</label>
++    <default>
++      false
++    </default>
++  </entry>
+   </group>
+   <group name="Subsonic">
+    <entry key="SubsonicEnabled" type="Bool" >
+diff --git a/src/elisaapplication.cpp b/src/elisaapplication.cpp
+index f5f5b50..0e114f9 100644
+--- a/src/elisaapplication.cpp
++++ b/src/elisaapplication.cpp
+@@ -328,6 +328,9 @@ void ElisaApplication::configChanged()
+     currentConfiguration->read();
+ 
+     SubsonicApi::setSettings(SubsonicApi::settingsFromConfiguration());
++    if (d->mAudioWrapper) {
++        d->mAudioWrapper->setBitPerfect(currentConfiguration->bitPerfectOutput());
++    }
+ 
+     Q_EMIT showNowPlayingBackgroundChanged();
+     Q_EMIT showProgressOnTaskBarChanged();
+@@ -404,6 +407,7 @@ void ElisaApplication::initializeModels()
+ void ElisaApplication::initializePlayer()
+ {
+     d->mAudioWrapper = std::make_unique<AudioWrapper>();
++    d->mAudioWrapper->setBitPerfect(Elisa::ElisaConfiguration::bitPerfectOutput());
+     Q_EMIT audioPlayerChanged();
+     d->mAudioControl = std::make_unique<ManageAudioPlayer>();
+     Q_EMIT audioControlChanged();
+diff --git a/src/localFileConfiguration/elisaconfigurationdialog.cpp b/src/localFileConfiguration/elisaconfigurationdialog.cpp
+index fbaa69c..eb4fab1 100644
+--- a/src/localFileConfiguration/elisaconfigurationdialog.cpp
++++ b/src/localFileConfiguration/elisaconfigurationdialog.cpp
+@@ -79,6 +79,7 @@ void ElisaConfigurationDialog::save()
+     Elisa::ElisaConfiguration::setPlayAtStartup(mPlayAtStartup);
+     Elisa::ElisaConfiguration::setScanAtStartup(mScanAtStartup);
+     Elisa::ElisaConfiguration::setUseFavoriteStyleRatings(mUseFavoriteStyleRatings);
++    Elisa::ElisaConfiguration::setBitPerfectOutput(mBitPerfectOutput);
+     Elisa::ElisaConfiguration::setSubsonicEnabled(mSubsonicEnabled);
+     Elisa::ElisaConfiguration::setSubsonicServerUrl(mSubsonicServerUrl.trimmed());
+     Elisa::ElisaConfiguration::setSubsonicUserName(mSubsonicUserName.trimmed());
+@@ -245,6 +246,17 @@ void ElisaConfigurationDialog::setUseFavoriteStyleRatings(bool useFavoriteStyleR
+     setDirty();
+ }
+ 
++void ElisaConfigurationDialog::setBitPerfectOutput(bool bitPerfectOutput)
++{
++    if (mBitPerfectOutput == bitPerfectOutput) {
++        return;
++    }
++    mBitPerfectOutput = bitPerfectOutput;
++    Q_EMIT bitPerfectOutputChanged();
++
++    setDirty();
++}
++
+ void ElisaConfigurationDialog::setSubsonicEnabled(bool subsonicEnabled)
+ {
+     if (mSubsonicEnabled == subsonicEnabled) {
+@@ -318,6 +330,9 @@ void ElisaConfigurationDialog::configChanged()
+     mUseFavoriteStyleRatings = Elisa::ElisaConfiguration::useFavoriteStyleRatings();
+     Q_EMIT useFavoriteStyleRatingsChanged();
+ 
++    mBitPerfectOutput = Elisa::ElisaConfiguration::bitPerfectOutput();
++    Q_EMIT bitPerfectOutputChanged();
++
+     mSubsonicEnabled = Elisa::ElisaConfiguration::subsonicEnabled();
+     Q_EMIT subsonicEnabledChanged();
+ 
+diff --git a/src/localFileConfiguration/elisaconfigurationdialog.h b/src/localFileConfiguration/elisaconfigurationdialog.h
+index 6f147c5..cff3d3f 100644
+--- a/src/localFileConfiguration/elisaconfigurationdialog.h
++++ b/src/localFileConfiguration/elisaconfigurationdialog.h
+@@ -83,6 +83,11 @@ class ELISALIB_EXPORT ElisaConfigurationDialog : public QObject
+                WRITE setUseFavoriteStyleRatings
+                NOTIFY useFavoriteStyleRatingsChanged)
+ 
++    Q_PROPERTY(bool bitPerfectOutput
++               READ bitPerfectOutput
++               WRITE setBitPerfectOutput
++               NOTIFY bitPerfectOutputChanged)
++
+     Q_PROPERTY(bool subsonicEnabled
+                READ subsonicEnabled
+                WRITE setSubsonicEnabled
+@@ -174,6 +179,11 @@ public:
+         return mUseFavoriteStyleRatings;
+     }
+ 
++    [[nodiscard]] bool bitPerfectOutput() const
++    {
++        return mBitPerfectOutput;
++    }
++
+     [[nodiscard]] bool subsonicEnabled() const
+     {
+         return mSubsonicEnabled;
+@@ -223,6 +233,8 @@ Q_SIGNALS:
+ 
+     void useFavoriteStyleRatingsChanged();
+ 
++    void bitPerfectOutputChanged();
++
+     void subsonicEnabledChanged();
+ 
+     void subsonicServerUrlChanged();
+@@ -259,6 +271,8 @@ public Q_SLOTS:
+ 
+     void setUseFavoriteStyleRatings(bool useFavoriteStyleRatings);
+ 
++    void setBitPerfectOutput(bool bitPerfectOutput);
++
+     void setSubsonicEnabled(bool subsonicEnabled);
+ 
+     void setSubsonicServerUrl(const QString &subsonicServerUrl);
+@@ -295,6 +309,8 @@ private:
+ 
+     bool mUseFavoriteStyleRatings = false;
+ 
++    bool mBitPerfectOutput = false;
++
+     bool mSubsonicEnabled = false;
+ 
+     QString mSubsonicServerUrl;
+diff --git a/src/qml/SettingsForm.qml b/src/qml/SettingsForm.qml
+index 4357dfd..66758b4 100644
+--- a/src/qml/SettingsForm.qml
++++ b/src/qml/SettingsForm.qml
+@@ -139,6 +139,27 @@ ColumnLayout {
+             text: KI18n.xi18nc("@info", "When using this setting, you will need to manually refresh the music collection whenever new files are added to configured music folders. You can do this with the <interface>Scan for new music</interface> item in Elisa's hamburger menu.")
+         }
+ 
++        QQC2.CheckBox {
++            id: bitPerfectCheckBox
++
++            Layout.fillWidth: true
++
++            text: KI18n.i18nc("@option:check", "Bit-perfect output")
++
++            checked: ElisaConfigurationDialog.bitPerfectOutput
++            onToggled: ElisaConfigurationDialog.bitPerfectOutput = checked
++            Accessible.onToggleAction: onToggled
++            Accessible.onPressAction: onToggled
++        }
++
++        QQC2.Label {
++            Layout.fillWidth: true
++            Layout.maximumWidth: Kirigami.Units.gridUnit * 16
++            text: KI18n.i18nc("@info:tooltip", "Sends tracks to the sound server unmodified, at their own sample rate. Elisa's volume is locked at 100% (no software volume or replay gain); use the system volume instead.")
++            wrapMode: Text.Wrap
++            font: Kirigami.Theme.smallFont
++        }
++
+ 
+         Item {
+             Kirigami.FormData.isSection: true
+diff --git a/src/qml/VolumeSlider.qml b/src/qml/VolumeSlider.qml
+index f5bb089..7921ef6 100644
+--- a/src/qml/VolumeSlider.qml
++++ b/src/qml/VolumeSlider.qml
+@@ -27,7 +27,8 @@ AccessibleSlider {
+     keyStepSize: 1
+     wheelStepSize: 5
+ 
+-    enabled: !muted
++    // the volume is pinned to 100% in bit-perfect mode
++    enabled: !muted && !(ElisaApplication.audioPlayer && ElisaApplication.audioPlayer.bitPerfect)
+ 
+     Accessible.name: KI18n.i18nc("@label", "Volume")
+ 

@@ -1,0 +1,87 @@
+# Maintainer: Noa Himesaka <himesaka@noa.codes>
+maintainer="Noa Himesaka <himesaka@noa.codes>"
+pkgname=rs6-dac-plasma
+pkgver=1.0
+pkgrel=4
+pkgdesc="HiBy RS6 DAC controls for Plasma Mobile: System Settings page and quick setting"
+url="https://postmarketos.org"
+arch="aarch64"
+license="MIT"
+depends="
+	device-hiby-rs6>=1-r11
+	kcmutils
+	kde-cli-tools
+	kirigami
+	kirigami-addons
+	libkscreen
+	plasma-mobile
+	qt6-qtdeclarative
+	"
+makedepends="
+	alsa-lib-dev
+	cmake
+	extra-cmake-modules
+	kcmutils-dev
+	kcoreaddons-dev
+	qt6-qtbase-dev
+	qt6-qtdeclarative-dev
+	samurai
+	"
+install_if="device-hiby-rs6 plasma-mobile"
+options="!check" # no test suite; checked on the device
+source="
+	CMakeLists.txt
+	dac-control.h
+	dac-control.cpp
+	kcm.cpp
+	kcm_rs6dac.json
+	kcm-main.qml
+	quicksetting-metadata.json
+	quicksetting-main.qml
+	display-rotation.h
+	display-rotation.cpp
+	rotate-metadata.json
+	rotate-main.qml
+	"
+builddir="$srcdir/$pkgname-$pkgver"
+
+prepare() {
+	# abuild sources are flat; lay out the tree CMake and kcmutils_add_qml_kcm (ui/) expect
+	mkdir -p "$builddir"/ui "$builddir"/quicksetting/contents/ui
+	default_prepare
+	cp "$srcdir"/CMakeLists.txt "$srcdir"/dac-control.h "$srcdir"/dac-control.cpp \
+		"$srcdir"/kcm.cpp "$srcdir"/kcm_rs6dac.json \
+		"$srcdir"/display-rotation.h "$srcdir"/display-rotation.cpp "$builddir"/
+	cp "$srcdir"/kcm-main.qml "$builddir"/ui/main.qml
+	cp "$srcdir"/quicksetting-metadata.json "$builddir"/quicksetting/metadata.json
+	cp "$srcdir"/quicksetting-main.qml "$builddir"/quicksetting/contents/ui/main.qml
+	mkdir -p "$builddir"/rotate/contents/ui
+	cp "$srcdir"/rotate-metadata.json "$builddir"/rotate/metadata.json
+	cp "$srcdir"/rotate-main.qml "$builddir"/rotate/contents/ui/main.qml
+}
+
+build() {
+	cmake -B build -G Ninja \
+		-DCMAKE_BUILD_TYPE=None \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib
+	cmake --build build
+}
+
+package() {
+	DESTDIR="$pkgdir" cmake --install build
+}
+sha512sums="
+dd312a7d2612949e3785e0ad749d11eec97b8d463202713186881efeec2856cab3cf578024c05681cab16173cc27a78a11a31a311c6d875e7247e31da6702516  CMakeLists.txt
+c0b9dead031b31f230d2966022c4fa256b32d454e54a615639e40d59148334d6e01d007613a6a2ada120a463a4bf68a4dfe5a080ffff8e56d2cbbafe0aec54b1  dac-control.h
+3d5a64f4a652b985f78bf0f0c9618383a9a9d811fae5dd3b31022755b72c47d768fede906a68f198bcdd870e26597f3668579d536646a06bbc84a258b51ec878  dac-control.cpp
+75ce45efd19747faaca196bf0f9a1e5ef208ef477c5ecf1bb7ea51f22ef0d385ae5f61b2842d2dfacb95d3272f00e7db747f232c80cd733bb7aff7d55c2524c8  kcm.cpp
+3e109e7b355aea3d47db11771de33c25c92b735a58cd0fc201f565f768832479777d88228fe1b33d6c45291c9bccc299bba7f45f5bc2acb79cb02fe1c3fd80c9  kcm_rs6dac.json
+1346ca7972dfb9ad42ff0c7857470ed63450cab53ceee724756225c8c761ead18d15636fd4a19000574b4a058cd217b8a7f3cbbeafbc1a732d907e35a85d431a  kcm-main.qml
+d8afbe175e5a23b70c819cf94ca72387e934b4a2f57efab3f58a8b22bed4bffb6c200e97c06c223dde0baabb8ac9d67f5f6e65d3a0a87a38749bb2bb3fbbb521  quicksetting-metadata.json
+fcf42730075610100f6aed84d35b41a97a91b86087e86f43a8f6e3514d21e2b816ccca3e6d39e26e433320120d29dfa8819aa5732a9d632b5c8a03f61ea6c118  quicksetting-main.qml
+6463783dda2c8271dd51817d3317ad92fd7c0576e47c13b8be4413ca1deb1e10de33edebad4dc7a4610e9bf629d05a8ce65c3fadb6111ece3fa272046fc298e2  display-rotation.h
+ec2e3bdda5689c71dfe6159965886f6428d2492468a1e34f40044a536363c01b1390ba77521372e131103b3a9d04f2356c147199c84649264269c2e8537efdca  display-rotation.cpp
+5d3f26371f8472ce642ab82430248418ef6765c7aa71c70897203aa7d1c358347caf8a557139e84c5dcc803625fb0770dc959c507860f3346e119d0fdb9b594d  rotate-metadata.json
+f392b3ab4a10e4faee6cb08b7ef9514bb6ea9087c24ce85cba67be4d32edba6e5a69425b849954f212fedfe88c0a8378dd89ad5bf3b9d59f3fba0caeb059443b  rotate-main.qml
+"

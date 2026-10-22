@@ -1,0 +1,48 @@
+From 198eb480926dfee1093bb228b12df202289cb225 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 15:26:21 +0900
+Subject: [PATCH 86/94] dt-bindings: opp: qcom-osm: Allow a peak bandwidth per
+ OPP
+
+The CPU OPPs of an OS-programmed OSM can carry the DDR bandwidth the
+CPUs need at that frequency, the mainline form of the downstream
+cpufreq-to-bandwidth map: qcom-cpufreq-hw already votes an OPP's
+opp-peak-kBps on the CPU's interconnect paths when it switches to it.
+Accept the property in the OPP nodes.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ Documentation/devicetree/bindings/opp/opp-v2-qcom-osm.yaml | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/opp/opp-v2-qcom-osm.yaml b/Documentation/devicetree/bindings/opp/opp-v2-qcom-osm.yaml
+index 3da8cf616..e499b71c0 100644
+--- a/Documentation/devicetree/bindings/opp/opp-v2-qcom-osm.yaml
++++ b/Documentation/devicetree/bindings/opp/opp-v2-qcom-osm.yaml
+@@ -17,7 +17,8 @@ description:
+   table is programmed by the OS, as on SDM630/SDM636/SDM660 where the
+   boot firmware leaves it empty. Next to the frequency, every OPP carries
+   the raw OSM fields of its look-up table entry, and its CPR corner through
+-  required-opps.
++  required-opps. An OPP may also name the peak bandwidth the CPUs vote on
++  their interconnect paths while they run at that frequency.
+ 
+ properties:
+   compatible:
+@@ -37,6 +38,8 @@ patternProperties:
+ 
+       required-opps: true
+ 
++      opp-peak-kBps: true
++
+       turbo-mode: true
+ 
+       qcom,pll-override:
+@@ -85,5 +88,6 @@ examples:
+             qcom,pll-override = <0x3200020>;
+             qcom,spare-data = <1>;
+             qcom,pll-div = <1>;
++            opp-peak-kBps = <799014>;
+         };
+     };

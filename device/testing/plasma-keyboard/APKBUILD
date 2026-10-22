@@ -1,0 +1,68 @@
+# Forked from Alpine aports community/plasma-keyboard (6.8.1-r0) for the HiBy RS6:
+# Korean is composed in the preedit with libhangul instead of Qt Virtual
+# Keyboard's replace-the-previous-character scheme, which gave doubled input
+# and separated jamo in Firefox. 0002 hands content type changes to Qt Virtual
+# Keyboard right away; they used to reset it mid-syllable on the first key.
+# pkgrel is above Alpine's so this build wins.
+maintainer="Noa Himesaka <himesaka@noa.codes>"
+pkgname=plasma-keyboard
+pkgver=6.8.1
+pkgrel=1
+# armhf blocked by qt6-qtdeclarative
+arch="all !armhf"
+url="https://invent.kde.org/plasma/plasma-keyboard"
+pkgdesc="Virtual keyboard for Qt-based desktops"
+license="(GPL-2.0-only OR GPL-3.0-only) AND (LGPL-2.1-only OR LGPL-3.0-only)"
+makedepends="
+	extra-cmake-modules
+	kcmutils-dev
+	kcoreaddons-dev
+	ki18n-dev
+	libhangul-dev
+	libplasma-dev
+	qt6-qtbase-dev
+	qt6-qtdeclarative-dev
+	qt6-qtdeclarative-private-dev
+	qt6-qtvirtualkeyboard-dev
+	qt6-qtwayland-dev
+	samurai
+	wayland-dev
+	wayland-protocols
+	"
+subpackages="$pkgname-lang"
+
+case "$pkgver" in
+	*.*.9*) _rel=unstable;;
+	*) _rel=stable;;
+esac
+
+# strip fourth version component for source URL
+case "$pkgver" in
+	*.*.*.*) _pkgver="${pkgver%.*}" ;;
+	*) _pkgver="$pkgver" ;;
+esac
+
+_repo_url="https://invent.kde.org/plasma/plasma-keyboard.git"
+source="https://download.kde.org/$_rel/plasma/$_pkgver/plasma-keyboard-$pkgver.tar.xz
+	0001-Compose-Korean-syllables-in-the-preedit.patch
+	0002-Pass-content-type-changes-on-to-Qt-Virtual-Keyboard.patch
+	"
+options="!check" # No tests
+
+build() {
+	cmake -B build -G Ninja \
+		-DCMAKE_BUILD_TYPE=MinSizeRel \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib
+	cmake --build build
+}
+
+package() {
+	DESTDIR="$pkgdir" cmake --install build
+}
+
+sha512sums="
+1bb044beb11f4f917710bada1bf5677b6db8db282ebb713a6798ead7195d00659654200fe42f52a9d7346e814e52f90add3e3a40ca61ead4de3d27c509164cd6  plasma-keyboard-6.8.1.tar.xz
+b4da38df7d5915066979736406592417a3289250d7ed98564f8ae2c2ce6b74936f6c1a6de7f6741d7a0fbf9856f73b6c81c29ca6ffecaeb5a240fa579da1c53f  0001-Compose-Korean-syllables-in-the-preedit.patch
+74cf823ef6eb4dcf106d76ca9f3d4a9cae6dbdf0d96b66fa257f678213431fbe8e55e8c8485c6a90628b896a9bcf17ccc058b33928230fdfc1bfad0b557d330b  0002-Pass-content-type-changes-on-to-Qt-Virtual-Keyboard.patch
+"

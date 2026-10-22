@@ -1,0 +1,178 @@
+From ea2bf0dcaf464a2be3366f117702f638b1de25b0 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 15:29:59 +0900
+Subject: [PATCH 89/94] arm64: dts: qcom: sdm660-hiby-rs6: Add stock's DDR
+ floor per CPU frequency
+
+Stock raises DDR with the CPU clock, before its BWMON sees the traffic:
+the "mincpubw" devbw client (APSS -> EBI, active-only) runs the
+devfreq-cpufreq governor ("cpufreq" in init.qcom.post_boot.sh), which
+maps each cluster's frequency through cpu-to-dev-map-0 (pwrcl) and
+cpu-to-dev-map-4 (perfcl) and votes the highest result. A frequency
+takes the first map entry at or above it, the last one past the end
+(governor_cpufreq.c cpu_to_dev_freq(), the same loop in the stock
+kernel's devfreq_cpufreq_get_freq()).
+
+  pwrcl  kHz  <=633600: 762  <=1401600: 1571  <=1881600: 2929  MiB/s
+  perfcl kHz <=1113600: 762  <=1401600: 2086  <=1747200: 2929
+             <=2150400: 3879 <=2457600: 6881
+
+Put each OPP's floor in opp-peak-kBps, in the units of the CPU BWMON
+table (MiB/s * 1048576 / 1000, the same RPM request as stock's
+ib = MiB/s * 2^20):
+
+  pwrcl   300.0- 633.6 MHz   762 MiB/s   799014 kB/s
+          902.4-1401.6 MHz  1571 MiB/s  1647312 kB/s
+         1536.0-1843.2 MHz  2929 MiB/s  3071279 kB/s
+  perfcl  300.0-1113.6 MHz   762 MiB/s   799014 kB/s
+               1401.6 MHz   2086 MiB/s  2187329 kB/s
+               1747.2 MHz   2929 MiB/s  3071279 kB/s
+         1958.4-2150.4 MHz  3879 MiB/s  4067426 kB/s
+               2208.0 MHz   6881 MiB/s  7215251 kB/s
+
+qcom-cpufreq-hw votes it on the cluster's APSS -> EBI path when it
+switches frequency; the interconnect core takes the highest peak of
+the two clusters and the BWMON, as msm_bus did for stock's clients.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts b/arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts
+index ecea00b10..38fa7a3c1 100644
+--- a/arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts
++++ b/arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts
+@@ -188,6 +188,11 @@ zap_shader_region: gpu@fc400000 {
+ 	 * The bin is inferred, not fuse-read: stock cpufreq tops out at
+ 	 * pwrcl 1843.2 MHz and perfcl 2208 MHz, and 2208 MHz is the perfcl
+ 	 * top only in speed bin 1.  Virtual corner N -> cprh_oppN.
++	 *
++	 * opp-peak-kBps: stock's mincpubw DDR floor for that frequency, from
++	 * its devfreq-cpufreq cpu-to-dev-map-0 (pwrcl) and -4 (perfcl), in
++	 * MiB/s: a frequency gets the first entry at or above it.  Same
++	 * MiB/s * 2^20 / 1000 scale as the CPU BWMON OPPs.
+ 	 */
+ 	/* qcom,pwrcl-speedbin1-v0 */
+ 	pwrcl_opp_table: opp-table-pwrcl {
+@@ -197,6 +202,7 @@ pwrcl_opp_table: opp-table-pwrcl {
+ 		opp-300000000 {
+ 			opp-hz = /bits/ 64 <300000000>;
+ 			required-opps = <&cprh_opp1>;
++			opp-peak-kBps = <(762 * 1048576 / 1000)>;
+ 			qcom,pll-override = <0x1200020>;
+ 			qcom,spare-data = <1>;
+ 		};
+@@ -204,6 +210,7 @@ opp-300000000 {
+ 		opp-633600000 {
+ 			opp-hz = /bits/ 64 <633600000>;
+ 			required-opps = <&cprh_opp2>;
++			opp-peak-kBps = <(762 * 1048576 / 1000)>;
+ 			qcom,pll-override = <0x3200020>;
+ 			qcom,spare-data = <1>;
+ 			qcom,pll-div = <1>;
+@@ -212,6 +219,7 @@ opp-633600000 {
+ 		opp-902400000 {
+ 			opp-hz = /bits/ 64 <902400000>;
+ 			required-opps = <&cprh_opp3>;
++			opp-peak-kBps = <(1571 * 1048576 / 1000)>;
+ 			qcom,pll-override = <0x4260026>;
+ 			qcom,spare-data = <1>;
+ 		};
+@@ -219,6 +227,7 @@ opp-902400000 {
+ 		opp-1113600000 {
+ 			opp-hz = /bits/ 64 <1113600000>;
+ 			required-opps = <&cprh_opp4>;
++			opp-peak-kBps = <(1571 * 1048576 / 1000)>;
+ 			qcom,pll-override = <0x52e002e>;
+ 			qcom,spare-data = <2>;
+ 		};
+@@ -226,6 +235,7 @@ opp-1113600000 {
+ 		opp-1401600000 {
+ 			opp-hz = /bits/ 64 <1401600000>;
+ 			required-opps = <&cprh_opp5>;
++			opp-peak-kBps = <(1571 * 1048576 / 1000)>;
+ 			qcom,pll-override = <0x73a003a>;
+ 			qcom,spare-data = <2>;
+ 		};
+@@ -233,6 +243,7 @@ opp-1401600000 {
+ 		opp-1536000000 {
+ 			opp-hz = /bits/ 64 <1536000000>;
+ 			required-opps = <&cprh_opp6>;
++			opp-peak-kBps = <(2929 * 1048576 / 1000)>;
+ 			qcom,pll-override = <0x8400040>;
+ 			qcom,spare-data = <2>;
+ 		};
+@@ -240,6 +251,7 @@ opp-1536000000 {
+ 		opp-1747200000 {
+ 			opp-hz = /bits/ 64 <1747200000>;
+ 			required-opps = <&cprh_opp7>;
++			opp-peak-kBps = <(2929 * 1048576 / 1000)>;
+ 			qcom,pll-override = <0x9480048>;
+ 			qcom,spare-data = <2>;
+ 		};
+@@ -247,6 +259,7 @@ opp-1747200000 {
+ 		opp-1843200000 {
+ 			opp-hz = /bits/ 64 <1843200000>;
+ 			required-opps = <&cprh_opp8>;
++			opp-peak-kBps = <(2929 * 1048576 / 1000)>;
+ 			qcom,pll-override = <0x94c004c>;
+ 			qcom,spare-data = <3>;
+ 		};
+@@ -260,6 +273,7 @@ perfcl_opp_table: opp-table-perfcl {
+ 		opp-300000000 {
+ 			opp-hz = /bits/ 64 <300000000>;
+ 			required-opps = <&cprh_opp1>;
++			opp-peak-kBps = <(762 * 1048576 / 1000)>;
+ 			qcom,pll-override = <0x1200020>;
+ 			qcom,spare-data = <1>;
+ 		};
+@@ -267,6 +281,7 @@ opp-300000000 {
+ 		opp-1113600000 {
+ 			opp-hz = /bits/ 64 <1113600000>;
+ 			required-opps = <&cprh_opp2>;
++			opp-peak-kBps = <(762 * 1048576 / 1000)>;
+ 			qcom,pll-override = <0x52e002e>;
+ 			qcom,spare-data = <1>;
+ 		};
+@@ -274,6 +289,7 @@ opp-1113600000 {
+ 		opp-1401600000 {
+ 			opp-hz = /bits/ 64 <1401600000>;
+ 			required-opps = <&cprh_opp3>;
++			opp-peak-kBps = <(2086 * 1048576 / 1000)>;
+ 			qcom,pll-override = <0x73a003a>;
+ 			qcom,spare-data = <2>;
+ 		};
+@@ -281,6 +297,7 @@ opp-1401600000 {
+ 		opp-1747200000 {
+ 			opp-hz = /bits/ 64 <1747200000>;
+ 			required-opps = <&cprh_opp4>;
++			opp-peak-kBps = <(2929 * 1048576 / 1000)>;
+ 			qcom,pll-override = <0x9480048>;
+ 			qcom,spare-data = <2>;
+ 		};
+@@ -288,6 +305,7 @@ opp-1747200000 {
+ 		opp-1958400000 {
+ 			opp-hz = /bits/ 64 <1958400000>;
+ 			required-opps = <&cprh_opp5>;
++			opp-peak-kBps = <(3879 * 1048576 / 1000)>;
+ 			qcom,pll-override = <0xa510051>;
+ 			qcom,spare-data = <2>;
+ 		};
+@@ -295,6 +313,7 @@ opp-1958400000 {
+ 		opp-2150400000 {
+ 			opp-hz = /bits/ 64 <2150400000>;
+ 			required-opps = <&cprh_opp6>;
++			opp-peak-kBps = <(3879 * 1048576 / 1000)>;
+ 			qcom,pll-override = <0xb590059>;
+ 			qcom,spare-data = <2>;
+ 		};
+@@ -302,6 +321,7 @@ opp-2150400000 {
+ 		opp-2208000000 {
+ 			opp-hz = /bits/ 64 <2208000000>;
+ 			required-opps = <&cprh_opp7>;
++			opp-peak-kBps = <(6881 * 1048576 / 1000)>;
+ 			qcom,pll-override = <0xb5c005c>;
+ 			qcom,spare-data = <3>;
+ 		};

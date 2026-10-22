@@ -1,0 +1,31 @@
+From 2f0b5b638a6b3c378c2ddbe3541a51ac4e570b79 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 12:24:15 +0900
+Subject: [PATCH 62/94] arm64: dts: qcom: sdm660-hiby-rs6: note native DSD on
+ MultiMedia1
+
+qcom,s32-as-s16-pairs now also brings native DSD on MultiMedia1, sent
+the way the stock HAL's DSD branch does; say so next to it.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts b/arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts
+index 45dff6bbf..9ca85677c 100644
+--- a/arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts
++++ b/arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts
+@@ -1227,7 +1227,10 @@ dai@0 {
+ 		reg = <MSM_FRONTEND_DAI_MULTIMEDIA1>;
+ 		/* the DAC clocks the I2S at the track rate; ASM/ADM/AFE stay at 384000 */
+ 		qcom,fixed-rate = <384000>;
+-		/* S32 in, sent as hi/lo S16 word pairs like the stock HAL output callback */
++		/*
++		 * S32 in, sent as hi/lo S16 word pairs like the stock HAL output callback;
++		 * native DSD (DSD_U32) as L/R bit-interleaved S16 words, like its DSD branch
++		 */
+ 		qcom,s32-as-s16-pairs;
+ 	};
+ };

@@ -1,0 +1,62 @@
+From 061587e398f6693e478d0dc7c1ec7c1de2c5cef7 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 13:04:12 +0900
+Subject: [PATCH 74/94] ASoC: qcom: q6asm-dai: offer PCM at the DAC's rates
+ only
+
+The qcom,s32-as-s16-pairs FEs feed the HiBy RS6 DAC, which plays PCM
+only at the rates its FPGA has a rate word for: the 44.1 and 48 kHz
+families from 44.1 to 768 kHz. The FE offered every rate from 8 kHz up,
+64 kHz included, and only the DSD formats had hw rules of their own.
+The BE is fixed up to the port rate, which hides the codec's rate_min
+from the FE, so such a rate got as far as the codec's hw_params and
+failed there with an error.
+
+Constrain these FEs to the DAC's rates, which include the DSD rates,
+so that negotiation never offers the others.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ sound/soc/qcom/qdsp6/q6asm-dai.c | 20 +++++++++++++++++++-
+ 1 file changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6asm-dai.c b/sound/soc/qcom/qdsp6/q6asm-dai.c
+index 7dae7de6e..9a5c739a3 100644
+--- a/sound/soc/qcom/qdsp6/q6asm-dai.c
++++ b/sound/soc/qcom/qdsp6/q6asm-dai.c
+@@ -449,6 +449,20 @@ static int q6asm_dai_trigger(struct snd_soc_component *component,
+  */
+ static const unsigned int q6asm_dai_dsd_rates[] = { 88200, 176400, 352800, 705600 };
+ 
++/*
++ * The same DAC plays PCM only at the rates of a PCM rate word (hiby-hm100 rate_table), the
++ * DSD rates among them. Its BE is fixed up to the port rate, which hides the codec's own
++ * rate_min from the FE, so the FE has to say it.
++ */
++static const unsigned int q6asm_dai_split_s32_rates[] = {
++	44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000, 705600, 768000,
++};
++
++static const struct snd_pcm_hw_constraint_list q6asm_dai_split_s32_rate_list = {
++	.count = ARRAY_SIZE(q6asm_dai_split_s32_rates),
++	.list = q6asm_dai_split_s32_rates,
++};
++
+ static bool q6asm_dai_only_dsd(const struct snd_mask *fmt)
+ {
+ 	snd_pcm_format_t f;
+@@ -579,8 +593,12 @@ static int q6asm_dai_open(struct snd_soc_component *component,
+ 				ret = snd_pcm_hw_rule_add(runtime, 0, SNDRV_PCM_HW_PARAM_FORMAT,
+ 							  q6asm_dai_rule_dsd_format, NULL,
+ 							  SNDRV_PCM_HW_PARAM_RATE, -1);
++			if (!ret)
++				ret = snd_pcm_hw_constraint_list(runtime, 0,
++								 SNDRV_PCM_HW_PARAM_RATE,
++								 &q6asm_dai_split_s32_rate_list);
+ 			if (ret < 0) {
+-				dev_err(dev, "DSD rate rules: %d\n", ret);
++				dev_err(dev, "rate rules: %d\n", ret);
+ 				q6asm_audio_client_free(prtd->audio_client);
+ 				runtime->private_data = NULL;
+ 				kfree(prtd);

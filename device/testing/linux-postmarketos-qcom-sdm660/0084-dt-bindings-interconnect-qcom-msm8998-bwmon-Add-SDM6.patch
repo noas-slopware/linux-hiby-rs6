@@ -1,0 +1,45 @@
+From 0596d44f5763db8f05d506e3df247e0270cd1131 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 15:02:22 +0900
+Subject: [PATCH 84/94] dt-bindings: interconnect: qcom,msm8998-bwmon: Add
+ SDM660 CPU BWMON
+
+SDM630/SDM660 have the same BWMON v4 instance as MSM8998 between the
+CPU and the BIMC: monitor registers at the start of the BIMC block
+(0x01008000), the global interrupt registers in a separate region
+(0x01001000), downstream compatible qcom,bimc-bwmon4. Add a
+SoC-specific compatible with qcom,msm8998-bwmon as the fallback, and
+match the two-region constraint with "contains" so it covers the
+fallback form too.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ .../bindings/interconnect/qcom,msm8998-bwmon.yaml          | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/interconnect/qcom,msm8998-bwmon.yaml b/Documentation/devicetree/bindings/interconnect/qcom,msm8998-bwmon.yaml
+index ff64225e8..4e65f56a8 100644
+--- a/Documentation/devicetree/bindings/interconnect/qcom,msm8998-bwmon.yaml
++++ b/Documentation/devicetree/bindings/interconnect/qcom,msm8998-bwmon.yaml
+@@ -23,6 +23,10 @@ properties:
+   compatible:
+     oneOf:
+       - const: qcom,msm8998-bwmon       # BWMON v4
++      - items:
++          - enum:
++              - qcom,sdm660-cpu-bwmon
++          - const: qcom,msm8998-bwmon
+       - items:
+           - enum:
+               - qcom,glymur-cpu-bwmon
+@@ -95,7 +99,8 @@ allOf:
+   - if:
+       properties:
+         compatible:
+-          const: qcom,msm8998-bwmon
++          contains:
++            const: qcom,msm8998-bwmon
+     then:
+       properties:
+         reg:

@@ -1,0 +1,351 @@
+From 0f7c32e5e19d0732d9d3f248c33c77fc6c256c73 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 12:23:19 +0900
+Subject: [PATCH 56/94] iio: common: qcom_smgr: check the AckNak of buffering
+ responses
+
+Only the QMI result of a buffering response was checked, so a request
+SMGR refused (AckNak, TLV 0x11) looked accepted. As the stock sensors
+HAL (SMGRSensor::processBufferingResp) does, take ACK_SUCCESS and
+ACK_MODIFIED (logged at debug level) as success and anything else as a
+refusal, except NAK_REPORT_ID on a DELETE, which is the answer for a
+report that is already gone. Decode the reason pairs (TLV 0x12) for
+the log.
+
+A refused rate must not leave the sensor without reports: an enable
+tries the current rate, then the default rate, each native rate and
+the maximum, and keeps the first one SMGR takes. A DELETE no longer
+zeroes the current rate, so a buffer disable keeps the user's rate.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ drivers/iio/common/qcom_smgr/qcom_smgr.c    | 169 +++++++++++++++++---
+ drivers/iio/common/qcom_smgr/qmi/sns_smgr.c |  39 +++++
+ drivers/iio/common/qcom_smgr/qmi/sns_smgr.h |  23 +++
+ 3 files changed, 212 insertions(+), 19 deletions(-)
+
+diff --git a/drivers/iio/common/qcom_smgr/qcom_smgr.c b/drivers/iio/common/qcom_smgr/qcom_smgr.c
+index 68b7e4cb8..63d04515a 100644
+--- a/drivers/iio/common/qcom_smgr/qcom_smgr.c
++++ b/drivers/iio/common/qcom_smgr/qcom_smgr.c
+@@ -243,9 +243,73 @@ static u16 qcom_smgr_default_sample_rate(const struct qcom_smgr_data_type_item *
+ 	return min_t(u16, SMGR_DEFAULT_SAMPLE_RATE_HZ, dt->max_sample_rate);
+ }
+ 
+-static int qcom_smgr_request_buffering(struct qcom_smgr *smgr,
+-				       struct qcom_smgr_sensor *sensor,
+-				       bool enable)
++/*
++ * Turn the AckNak of a buffering response into an error code. ACK_MODIFIED
++ * means SMGR substituted a parameter and runs the report anyway; the stock
++ * HAL logs it only at debug level, so does this. NAK_REPORT_ID answers a
++ * DELETE of a report SMGR does not have, which is what the DELETE wanted.
++ */
++static int qcom_smgr_check_buffering_resp(struct qcom_smgr *smgr,
++					  struct qcom_smgr_sensor *sensor,
++					  bool enable, u16 sample_rate,
++					  const struct sns_smgr_buffering_resp *resp)
++{
++	u8 reason = resp->reasons_len ? resp->reasons[0].reason : 0;
++
++	switch (resp->ack_nak) {
++	case SNS_SMGR_RESPONSE_ACK_SUCCESS:
++		break;
++	case SNS_SMGR_RESPONSE_ACK_MODIFIED:
++		dev_dbg(smgr->dev,
++			"0x%02x: %u Hz report added with changes, reason %u\n",
++			sensor->id, sample_rate, reason);
++		break;
++	case SNS_SMGR_RESPONSE_NAK_REPORT_ID:
++		if (!enable) {
++			dev_dbg(smgr->dev, "0x%02x: no report to delete\n",
++				sensor->id);
++			return 0;
++		}
++		fallthrough;
++	default:
++		if (enable)
++			dev_warn(smgr->dev,
++				 "0x%02x: SMGR refused a %u Hz report: ack_nak %u, reason %u, result 0x%x\n",
++				 sensor->id, sample_rate, resp->ack_nak, reason,
++				 resp->result);
++		else
++			dev_warn(smgr->dev,
++				 "0x%02x: SMGR refused to delete the report: ack_nak %u, reason %u, result 0x%x\n",
++				 sensor->id, resp->ack_nak, reason, resp->result);
++
++		switch (resp->ack_nak) {
++		case SNS_SMGR_RESPONSE_NAK_RESOURCES:
++			return -EBUSY;
++		case SNS_SMGR_RESPONSE_NAK_NO_ITEMS:
++			return -EINVAL;
++		default:
++			return -EREMOTEIO;
++		}
++	}
++
++	if (resp->result) {
++		dev_warn(smgr->dev, "0x%02x: buffering request failed: 0x%x\n",
++			 sensor->id, resp->result);
++		return -EREMOTEIO;
++	}
++
++	return 0;
++}
++
++/*
++ * Send one buffering ADD (at @sample_rate) or DELETE. Returns 0 if SMGR
++ * accepted it. @rejected tells an answer from SMGR saying no apart from a
++ * request that never got one.
++ */
++static int qcom_smgr_send_buffering(struct qcom_smgr *smgr,
++				    struct qcom_smgr_sensor *sensor,
++				    bool enable, u16 sample_rate,
++				    bool *rejected)
+ {
+ 	struct sns_smgr_buffering_req req = {
+ 		/*
+@@ -257,9 +321,10 @@ static int qcom_smgr_request_buffering(struct qcom_smgr *smgr,
+ 	};
+ 	struct sns_smgr_buffering_resp resp = {};
+ 	struct qmi_txn txn;
+-	u16 sample_rate = 0;
+ 	int ret;
+ 
++	*rejected = false;
++
+ 	if (enable) {
+ 		req.action = SNS_SMGR_BUFFERING_ACTION_ADD;
+ 
+@@ -277,10 +342,6 @@ static int qcom_smgr_request_buffering(struct qcom_smgr *smgr,
+ 		 * every report contains only 1 sample. This gives us the lowest
+ 		 * latency.
+ 		 */
+-		sample_rate = sensor->data_types[0].cur_sample_rate;
+-		if (sample_rate == 0)
+-			sample_rate = qcom_smgr_default_sample_rate(&sensor->data_types[0]);
+-
+ 		req.report_rate = sample_rate * SMGR_REPORT_RATE_HZ;
+ 
+ 		req.item_len = 1;
+@@ -318,20 +379,90 @@ static int qcom_smgr_request_buffering(struct qcom_smgr *smgr,
+ 	}
+ 
+ 	ret = qmi_txn_wait(&txn, 5 * HZ);
+-	if (ret < 0)
++	if (ret < 0) {
++		dev_err(smgr->dev, "No buffering response: %d\n", ret);
+ 		return ret;
++	}
+ 
+-	/* Check the response */
+-	if (resp.result) {
+-		dev_err(smgr->dev, "Buffering request failed: 0x%x\n",
+-			resp.result);
+-		return -EREMOTEIO;
++	ret = qcom_smgr_check_buffering_resp(smgr, sensor, enable, sample_rate,
++					     &resp);
++	*rejected = ret != 0;
++
++	return ret;
++}
++
++/* Remove the report of @sensor. A DELETE keeps cur_sample_rate for the next ADD. */
++static int qcom_smgr_stop_report(struct qcom_smgr *smgr,
++				 struct qcom_smgr_sensor *sensor)
++{
++	bool rejected;
++
++	return qcom_smgr_send_buffering(smgr, sensor, false, 0, &rejected);
++}
++
++/*
++ * Add the report of @sensor at its cur_sample_rate. If SMGR refuses that
++ * rate, fall back to the default rate, then to each native rate, then to the
++ * maximum, so a rate SMGR does not take never leaves the sensor without
++ * reports. cur_sample_rate is the rate that runs afterwards.
++ */
++static int qcom_smgr_start_report(struct qcom_smgr *smgr,
++				  struct qcom_smgr_sensor *sensor)
++{
++	struct qcom_smgr_data_type_item *dt = &sensor->data_types[0];
++	u16 tried[SNS_SMGR_NATIVE_SAMPLE_RATES_MAX_LEN + 3];
++	unsigned int n = 0, i, k;
++	u16 first, rate;
++	bool rejected;
++	int ret;
++
++	first = dt->cur_sample_rate;
++	if (first == 0)
++		first = qcom_smgr_default_sample_rate(dt);
++
++	ret = qcom_smgr_send_buffering(smgr, sensor, true, first, &rejected);
++	if (!ret) {
++		dt->cur_sample_rate = first;
++		return 0;
+ 	}
++	if (!rejected)
++		return ret;
+ 
+-	/* Keep track of requested sample rate */
+-	sensor->data_types[0].cur_sample_rate = sample_rate;
++	tried[n++] = first;
+ 
+-	return 0;
++	/* i == 0: the default rate, 1..count: the native rates, last: max */
++	for (i = 0; i <= dt->native_sample_rate_count + 1; i++) {
++		if (i == 0)
++			rate = qcom_smgr_default_sample_rate(dt);
++		else if (i <= dt->native_sample_rate_count)
++			rate = dt->native_sample_rates[i - 1];
++		else
++			rate = dt->max_sample_rate;
++
++		if (rate == 0 || rate > dt->max_sample_rate)
++			continue;
++		for (k = 0; k < n && tried[k] != rate; k++)
++			;
++		if (k < n || n == ARRAY_SIZE(tried))
++			continue;
++		tried[n++] = rate;
++
++		ret = qcom_smgr_send_buffering(smgr, sensor, true, rate,
++					       &rejected);
++		if (!ret) {
++			dev_warn(smgr->dev, "0x%02x: streaming at %u Hz instead of %u Hz\n",
++				 sensor->id, rate, first);
++			dt->cur_sample_rate = rate;
++			return 0;
++		}
++		if (!rejected)
++			return ret;
++	}
++
++	dev_err(smgr->dev, "0x%02x: SMGR refused every sampling rate\n",
++		sensor->id);
++
++	return ret;
+ }
+ 
+ static void qcom_smgr_buffering_report_handler(struct qmi_handle *hdl,
+@@ -407,7 +538,7 @@ static int qcom_smgr_sensor_postenable(struct iio_dev *iio_dev)
+ 	struct qcom_smgr_iio_priv *priv = iio_priv(iio_dev);
+ 	struct qcom_smgr_sensor *sensor = priv->sensor;
+ 
+-	return qcom_smgr_request_buffering(smgr, sensor, true);
++	return qcom_smgr_start_report(smgr, sensor);
+ }
+ 
+ static int qcom_smgr_sensor_postdisable(struct iio_dev *iio_dev)
+@@ -416,7 +547,7 @@ static int qcom_smgr_sensor_postdisable(struct iio_dev *iio_dev)
+ 	struct qcom_smgr_iio_priv *priv = iio_priv(iio_dev);
+ 	struct qcom_smgr_sensor *sensor = priv->sensor;
+ 
+-	return qcom_smgr_request_buffering(smgr, sensor, false);
++	return qcom_smgr_stop_report(smgr, sensor);
+ }
+ 
+ const struct iio_buffer_setup_ops qcom_smgr_buffer_ops = {
+diff --git a/drivers/iio/common/qcom_smgr/qmi/sns_smgr.c b/drivers/iio/common/qcom_smgr/qmi/sns_smgr.c
+index b82788bdb..b9c07ce92 100644
+--- a/drivers/iio/common/qcom_smgr/qmi/sns_smgr.c
++++ b/drivers/iio/common/qcom_smgr/qmi/sns_smgr.c
+@@ -511,6 +511,27 @@ const struct qmi_elem_info sns_smgr_buffering_req_ei[] = {
+ };
+ EXPORT_SYMBOL_GPL(sns_smgr_buffering_req_ei);
+ 
++/* sns_smgr_reason_pair_s: { u8 ItemNum, u8 Reason } */
++static const struct qmi_elem_info sns_smgr_reason_pair_ei[] = {
++	{
++		.data_type = QMI_UNSIGNED_1_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(struct sns_smgr_reason_pair, item_num),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_reason_pair, item_num),
++	},
++	{
++		.data_type = QMI_UNSIGNED_1_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(struct sns_smgr_reason_pair, reason),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_reason_pair, reason),
++	},
++	{
++		.data_type = QMI_EOTI,
++	},
++};
++
+ const struct qmi_elem_info sns_smgr_buffering_resp_ei[] = {
+ 	{
+ 		.data_type = QMI_UNSIGNED_2_BYTE,
+@@ -539,6 +560,24 @@ const struct qmi_elem_info sns_smgr_buffering_resp_ei[] = {
+ 		.tlv_type = 0x11,
+ 		.offset = offsetof(struct sns_smgr_buffering_resp, ack_nak),
+ 	},
++	{
++		.data_type = QMI_DATA_LEN,
++		.elem_len = 1,
++		.elem_size =
++			sizeof_field(struct sns_smgr_buffering_resp, reasons_len),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x12,
++		.offset = offsetof(struct sns_smgr_buffering_resp, reasons_len),
++	},
++	{
++		.data_type = QMI_STRUCT,
++		.elem_len = SNS_SMGR_MAX_NUM_REASONS,
++		.elem_size = sizeof(struct sns_smgr_reason_pair),
++		.array_type = VAR_LEN_ARRAY,
++		.tlv_type = 0x12,
++		.offset = offsetof(struct sns_smgr_buffering_resp, reasons),
++		.ei_array = sns_smgr_reason_pair_ei,
++	},
+ 	{
+ 		.data_type = QMI_EOTI,
+ 	},
+diff --git a/drivers/iio/common/qcom_smgr/qmi/sns_smgr.h b/drivers/iio/common/qcom_smgr/qmi/sns_smgr.h
+index 68d30b154..ce386c1ed 100644
+--- a/drivers/iio/common/qcom_smgr/qmi/sns_smgr.h
++++ b/drivers/iio/common/qcom_smgr/qmi/sns_smgr.h
+@@ -49,6 +49,21 @@
+ #define SNS_SMGR_BUFFERING_REPORT_MAX_INDICES	5
+ #define SNS_SMGR_BUFFERING_REPORT_MAX_SAMPLES	100
+ 
++/*
++ * AckNak of a buffering response (SNS_SMGR_RESPONSE_*_V01). The stock sensors
++ * HAL (SMGRSensor::processBufferingResp) takes anything above ACK_MODIFIED as
++ * an error, except NAK_REPORT_ID, the answer to a DELETE of a report SMGR
++ * does not have.
++ */
++#define SNS_SMGR_RESPONSE_ACK_SUCCESS		0
++#define SNS_SMGR_RESPONSE_ACK_MODIFIED		1
++#define SNS_SMGR_RESPONSE_NAK_RESOURCES		2
++#define SNS_SMGR_RESPONSE_NAK_REPORT_ID		3
++#define SNS_SMGR_RESPONSE_NAK_NO_ITEMS		4
++
++/* Reason pairs a buffering response carries at most (TLV 0x12) */
++#define SNS_SMGR_MAX_NUM_REASONS		10
++
+ enum sns_smgr_buffering_action {
+ 	SNS_SMGR_BUFFERING_ACTION_ADD	 = 1,
+ 	SNS_SMGR_BUFFERING_ACTION_DELETE = 2,
+@@ -133,10 +148,18 @@ struct sns_smgr_buffering_req {
+ 	struct sns_smgr_buffering_req_notify_suspend notify_suspend;
+ };
+ 
++/* Why SMGR changed or dropped item @item_num of the request */
++struct sns_smgr_reason_pair {
++	u8 item_num;
++	u8 reason;
++};
++
+ struct sns_smgr_buffering_resp {
+ 	u16 result;
+ 	u8 report_id;
+ 	u8 ack_nak;
++	u8 reasons_len;
++	struct sns_smgr_reason_pair reasons[SNS_SMGR_MAX_NUM_REASONS];
+ };
+ 
+ /* Which samples of a report belong to one requested item */

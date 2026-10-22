@@ -1,0 +1,43 @@
+From 664231c221a8abfc8b886d6945010f6b75a95804 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 13:05:12 +0900
+Subject: [PATCH 75/94] ASoC: codecs: hiby-hm100: log an unreachable PCM rate
+ at debug level
+
+q6asm-dai now offers PCM on MultiMedia1 only at the rates the FPGA has
+a PCM rate word for, as it offers DSD only at the DSD rates, so the
+PCM half of the hw_params rate check is no more reachable than the DSD
+half. Log it at debug level like that one, and say why in the comment,
+which still had the FE taking 8 to 32 kHz.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ sound/soc/codecs/hiby-hm100.c | 9 +++++----
+ 1 file changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/sound/soc/codecs/hiby-hm100.c b/sound/soc/codecs/hiby-hm100.c
+index 8fd2311a9..992363337 100644
+--- a/sound/soc/codecs/hiby-hm100.c
++++ b/sound/soc/codecs/hiby-hm100.c
+@@ -1322,15 +1322,16 @@ static int hm100_hw_params(struct snd_pcm_substream *substream, struct snd_pcm_h
+ 	if (substream->stream != SNDRV_PCM_STREAM_PLAYBACK)
+ 		return 0;
+ 	/*
+-	 * A DSD stream needs a DSD rate word (mode 2): DSD64..512. q6asm-dai's hw rule offers
+-	 * DSD only at those FE rates, so the DSD case is not reached from MultiMedia1; PCM
+-	 * still is (the FE takes 8000..32000, the BE fixup hides rate_min).
++	 * A DSD stream needs a DSD rate word (mode 2): DSD64..512, a PCM stream one of the
++	 * others. q6asm-dai's hw rules offer DSD only at those FE rates and PCM only at these
++	 * (the BE fixup hides rate_min from the FE), so neither case is reached from
++	 * MultiMedia1.
+ 	 */
+ 	if (w < 0 || !!dsd != ((w & 3) == 2)) {
+ 		if (dsd)
+ 			dev_dbg(h->dev, "DSD rate %u not supported\n", dsd);
+ 		else
+-			dev_err(h->dev, "PCM rate %u not supported\n", rate);
++			dev_dbg(h->dev, "PCM rate %u not supported\n", rate);
+ 		return -EINVAL;
+ 	}
+ 

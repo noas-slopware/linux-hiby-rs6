@@ -1,0 +1,47 @@
+From 9035b6b540c877fbb49070c56a9779c4e67ef691 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 12:19:47 +0900
+Subject: [PATCH 47/94] drm/msm/a5xx: don't free the preemption records twice
+
+a5xx_preempt_fini() runs twice when preemption is turned off after init
+(no WHERE_AM_I in the microcode, or a failed a5xx_preempt_init()): once
+from there, with nr_rings dropping to 1 afterwards, and again from
+a5xx_destroy(), which puts preempt_bo[0] and preempt_counters_bo[0] a
+second time. And every a5xx_submit() kept pointing the CP at the freed
+record through preempt_iova[0].
+
+Forget what was freed, so that the fallback looks like A510's single
+ring (iova 0).
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ drivers/gpu/drm/msm/adreno/a5xx_preempt.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a5xx_preempt.c b/drivers/gpu/drm/msm/adreno/a5xx_preempt.c
+index 216fd3042..d30a932a0 100644
+--- a/drivers/gpu/drm/msm/adreno/a5xx_preempt.c
++++ b/drivers/gpu/drm/msm/adreno/a5xx_preempt.c
+@@ -309,9 +309,21 @@ void a5xx_preempt_fini(struct msm_gpu *gpu)
+ 	struct a5xx_gpu *a5xx_gpu = to_a5xx_gpu(adreno_gpu);
+ 	int i;
+ 
++	/*
++	 * This runs twice when preemption gets turned off after init (no
++	 * WHERE_AM_I in the microcode, or a failed init): once from there,
++	 * with nr_rings dropping to 1 afterwards, and again from
++	 * a5xx_destroy().  Forget what was freed, and stop a5xx_submit()
++	 * from pointing the CP at a preemption record that is gone.
++	 */
+ 	for (i = 0; i < gpu->nr_rings; i++) {
+ 		msm_gem_kernel_put(a5xx_gpu->preempt_bo[i], gpu->vm);
+ 		msm_gem_kernel_put(a5xx_gpu->preempt_counters_bo[i], gpu->vm);
++
++		a5xx_gpu->preempt_bo[i] = NULL;
++		a5xx_gpu->preempt_counters_bo[i] = NULL;
++		a5xx_gpu->preempt[i] = NULL;
++		a5xx_gpu->preempt_iova[i] = 0;
+ 	}
+ }
+ 

@@ -1,0 +1,288 @@
+# Kernel config based on: arch/arm64/configs/sdm660_defconfig
+# RS6 overlay: upstream package + DRM_PANEL_SHARP_LS050T1SX18, BATTERY_CW2015, LEDS_LP5562,
+# SND_SOC_SM8250, SND_SOC_HIBY_HM100 (hm100 FPGA DAC + NJW1195A), QCOM_CPR3 + ARM_QCOM_CPUFREQ_HW (DVFS).
+# The kernel is sdm660-mainline's qcom-sdm660-7.2.y at _commit plus the 94 patches next to this file
+# (the same series as patches/linux on the main branch of noas-slopware/linux-hiby-rs6).
+maintainer="Barnabas Czeman <barnabas.czeman@postmarketos.org>"
+_flavor="postmarketos-qcom-sdm660"
+pkgname=linux-$_flavor
+pkgver=7.2.3
+pkgrel=29
+pkgdesc="Close to mainline linux kernel for Qualcomm Snapdragon 660 SoC"
+arch="aarch64"
+url="https://kernel.org/"
+license="GPL-2.0-only"
+options="!strip !check !tracedeps
+	pmb:cross-native
+	pmb:kconfigcheck-community
+	"
+makedepends="
+	bison
+	clang
+	diffutils
+	elfutils-dev
+	findutils
+	flex
+	linux-headers
+	lld
+	llvm
+	openssl-dev
+	pahole
+	perl
+	postmarketos-installkernel
+	python3
+	zstd
+	"
+
+_commit="dd1ed52c8ceef4f16715118ed0252fe75adbe71d"	# sdm660-mainline qcom-sdm660-7.2.y
+
+source="
+	linux-sdm660-$_commit.tar.gz::https://github.com/sdm660-mainline/linux/archive/$_commit.tar.gz
+	config-$_flavor.aarch64
+	0001-pmdomain-qcom-add-support-for-CPR-v3-v4-and-Hardened.patch
+	0002-cpufreq-qcom-hw-implement-CPRh-aware-OSM-programming.patch
+	0003-cpufreq-qcom-hw-only-read-a-DCVS-control-register-th.patch
+	0004-pmdomain-qcom-cpr3-arm-the-CPRh-loop-only-once-the-O.patch
+	0005-cpufreq-qcom-hw-BRINGUP-walk-the-OSM-setup-one-step-.patch
+	0006-pmdomain-qcom-cpr3-BRINGUP-walk-the-CPRh-setup-one-p.patch
+	0007-cpufreq-qcom-hw-do-not-device-link-a-CPU-to-its-CPRh.patch
+	0008-cpufreq-qcom-hw-let-the-genpd-core-bind-the-CPRh-req.patch
+	0009-pmdomain-qcom-cpr3-look-up-the-CPRh-thread-instead-o.patch
+	0010-cpufreq-qcom-hw-msm8998-request-a-corner-before-star.patch
+	0011-cpufreq-qcom-hw-msm8998-program-the-APM-threshold-co.patch
+	0012-cpufreq-qcom-hw-msm8998-do-not-enable-the-droop-FSMs.patch
+	0013-cpufreq-qcom-hw-cpr3-msm8998-default-the-bring-up-ga.patch
+	0014-cpufreq-qcom-hw-msm8998-busy-poll-the-ACD-transfers.patch
+	0015-cpuidle-psci-Fix-support-for-probe-deferral-by-dropp.patch
+	0016-drm-msm-a5xx-Reset-the-GPU-when-resuming-it.patch
+	0017-wifi-ath10k-don-t-reset-TxBF-on-disassociation.patch
+	0018-cpuidle-psci-report-probe-deferral-through-dev_err_p.patch
+	0019-pmdomain-qcom-cpr3-add-SDM630-SDM660-CPRh.patch
+	0020-cpufreq-qcom-hw-add-SDM630-SDM660-OSM-programming.patch
+	0021-cpufreq-dt-platdev-block-SDM630-and-SDM660.patch
+	0022-dt-bindings-CPRh-and-OSM-for-SDM630-SDM660.patch
+	0023-soc-qcom-spm-fix-the-SDM660-L2-SAW-AVS-setup.patch
+	0024-irqchip-qcom-mpm-program-the-vMPM-wakeup-timer-befor.patch
+	0025-pmdomain-governor-no-next-hrtimer-during-system-wide.patch
+	0026-fs-don-t-charge-do_file_open_root-lookups-to-the-cal.patch
+	0027-drm-msm-adreno-attach-all-GPU-power-domains.patch
+	0028-drm-msm-dsi-vote-the-MMSS-NoC-AHB-clock-on-SDM660.patch
+	0029-drm-panel-add-Sharp-LS050T1SX18.patch
+	0030-Input-misc-add-the-HiBy-volume-wheel.patch
+	0031-ASoC-codecs-add-the-HiBy-hm100-FPGA-DAC.patch
+	0032-ASoC-qcom-q6asm-dai-fixed-rate-streams-and-S32-as-16.patch
+	0033-ASoC-qcom-sm8250-codec-clocked-secondary-MI2S.patch
+	0034-Bluetooth-hci_qca-set-the-WCN3990-supply-voltages.patch
+	0035-regulator-qcom_smd-add-qcom-rpm-exact-voltage.patch
+	0036-power-supply-qcom_smbx-Type-C-role-switching-and-OTG.patch
+	0037-wifi-ath10k-keep-a-stopped-device-recoverable.patch
+	0038-iio-common-qcom_smgr-fix-sampling_frequency.patch
+	0039-dt-bindings-pinctrl-qcom-sdm630-allow-config-only-st.patch
+	0040-dt-bindings-watchdog-qcom-wdt-add-SDM660-APSS.patch
+	0041-arm64-dts-qcom-sdm630-sdm660-CPU-DVFS-idle-GPU-and-d.patch
+	0042-arm64-dts-qcom-add-the-HiBy-RS6.patch
+	0043-drm-msm-mdss-vote-the-MMSS-NoC-AHB-clock-on-SDM660.patch
+	0044-drm-msm-a5xx-don-t-read-the-GPMU-registers-on-GPUs-w.patch
+	0045-drm-msm-a5xx-say-why-the-GPMU-registers-are-only-dum.patch
+	0046-drm-msm-don-t-trust-a-fence-memptr-no-submit-wrote.patch
+	0047-drm-msm-a5xx-don-t-free-the-preemption-records-twice.patch
+	0048-drm-msm-reset-the-GPU-on-a-hardware-fault-with-no-su.patch
+	0049-drm-msm-check-every-ring-for-a-hang.patch
+	0050-drm-msm-a5xx-mask-the-hang-detector-until-the-GPU-is.patch
+	0051-dt-bindings-soc-qcom-smp2p-add-sleepstate-support.patch
+	0052-soc-qcom-smp2p-tell-the-remote-through-sleepstate-wh.patch
+	0053-arm64-dts-qcom-sdm630-add-the-ADSP-sleepstate-SMP2P-.patch
+	0054-iio-common-qcom_smgr-fix-the-QMI-layouts-of-the-buff.patch
+	0055-iio-common-qcom_smgr-default-to-the-lowest-native-ra.patch
+	0056-iio-common-qcom_smgr-check-the-AckNak-of-buffering-r.patch
+	0057-iio-common-qcom_smgr-no-sensor-reports-while-the-AP-.patch
+	0058-iio-common-qcom_smgr-batch-samples-up-to-the-buffer-.patch
+	0059-watchdog-hardlockup-skip-CPUs-whose-tick-is-frozen-f.patch
+	0060-ASoC-dt-bindings-qcom-q6asm-dais-native-DSD-on-qcom-.patch
+	0061-ASoC-qcom-q6asm-dai-native-DSD-on-qcom-s32-as-s16-pa.patch
+	0062-arm64-dts-qcom-sdm660-hiby-rs6-note-native-DSD-on-Mu.patch
+	0063-ASoC-qcom-q6asm-dai-offer-DSD-at-the-DSD-rates-only.patch
+	0064-ASoC-codecs-hiby-hm100-play-on-S-PDIF-with-nothing-p.patch
+	0065-ASoC-codecs-hiby-hm100-add-a-read-only-Output-Target.patch
+	0066-ASoC-codecs-hiby-hm100-leave-the-target-off-after-a-.patch
+	0067-ASoC-codecs-hiby-hm100-native-DSD.patch
+	0068-ASoC-codecs-hiby-hm100-keep-DSD-muted-across-pauses-.patch
+	0069-wifi-ath10k-use-connected-scan-timing-while-a-vdev-i.patch
+	0070-iio-common-qcom_smgr-accept-NAK_REPORT_ID-on-an-ADD-.patch
+	0071-iio-common-qcom_smgr-one-info-line-for-a-rate-fallba.patch
+	0072-iio-common-qcom_smgr-undo-the-probe-on-every-failure.patch
+	0073-ASoC-codecs-hiby-hm100-say-when-a-DSD-unmute-after-a.patch
+	0074-ASoC-qcom-q6asm-dai-offer-PCM-at-the-DAC-s-rates-onl.patch
+	0075-ASoC-codecs-hiby-hm100-log-an-unreachable-PCM-rate-a.patch
+	0076-arm64-dts-qcom-sdm630-Add-interconnect-paths-to-the-.patch
+	0077-arm64-dts-qcom-sdm660-hiby-rs6-give-the-hm100-SPI-co.patch
+	0078-interconnect-qcom-sdm660-Enable-keep_alive-and-sync_.patch
+	0079-clk-qcom-mmcc-sdm660-Do-not-keep-the-video-core-cloc.patch
+	0080-drm-msm-dsi-fix-AHB-clock-staying-enabled-across-sus.patch
+	0081-arm64-dts-qcom-sdm630-Switch-the-NoCs-to-two-interco.patch
+	0082-interconnect-qcom-icc-rpm-Allow-negative-QoS-offset.patch
+	0083-interconnect-qcom-sdm660-Start-the-BIMC-region-after.patch
+	0084-dt-bindings-interconnect-qcom-msm8998-bwmon-Add-SDM6.patch
+	0085-arm64-dts-qcom-sdm630-Add-the-CPU-BWMON.patch
+	0086-dt-bindings-opp-qcom-osm-Allow-a-peak-bandwidth-per-.patch
+	0087-cpufreq-qcom-hw-Vote-the-bandwidth-of-the-starting-f.patch
+	0088-arm64-dts-qcom-sdm630-Add-the-CPU-memory-paths.patch
+	0089-arm64-dts-qcom-sdm660-hiby-rs6-Add-stock-s-DDR-floor.patch
+	0090-dt-bindings-clock-qcom-gcc-sdm660-Add-the-CXO2-input.patch
+	0091-clk-qcom-gcc-sdm660-Fix-parent-for-CLKREF-clocks.patch
+	0092-arm64-dts-qcom-sdm630-Feed-the-GCC-CLKREF-clocks-fro.patch
+	0093-clk-qcom-smd-rpm-Drop-the-handoff-votes-nobody-claim.patch
+	0094-drm-msm-gpu-Remove-the-bus-vote-when-the-GPU-is-susp.patch
+"
+
+_carch="arm64"
+
+# for some reason, the directory inside .tar.gz does not match tag name: leading
+#     "v" is missing, so we can't use $_tag here
+builddir="$srcdir/linux-$_commit"
+
+prepare() {
+	default_prepare
+	cp -v "$srcdir/config-$_flavor.$CARCH" "$builddir"/.config
+	# config is olddefconfig'd against the 7.2.y RS6 tree; settle toolchain-dependent symbols
+	make -C "$builddir" ARCH="$_carch" LLVM=1 olddefconfig
+}
+
+build() {
+	unset LDFLAGS
+
+	make ARCH="$_carch" LLVM=1 \
+		KBUILD_BUILD_VERSION="$((pkgrel + 1 ))-$_flavor" all Image.gz
+}
+
+package() {
+	mkdir -p "$pkgdir"/boot
+
+	make modules_install dtbs_install \
+		ARCH="$_carch" \
+		LLVM=1 \
+		INSTALL_PATH="$pkgdir"/boot \
+		INSTALL_MOD_PATH="$pkgdir"/usr \
+		INSTALL_MOD_STRIP=1 \
+		INSTALL_DTBS_PATH="$pkgdir/boot/dtbs-tmp"
+
+	install -D "$builddir/arch/arm64/boot/vmlinuz.efi" \
+		"$pkgdir/boot/vmlinuz.efi"
+
+	install -D "$builddir/arch/arm64/boot/Image.gz" \
+		"$pkgdir/boot/vmlinuz"
+
+	# Reduce package size, install only qcom SDM630/636/660 dtbs.
+	# This reduces .apk size from ~46 Mb to ~30 Mb.
+	mkdir -p "$pkgdir"/boot/dtbs/qcom
+	cp -r "$pkgdir"/boot/dtbs-tmp/qcom/sda660* "$pkgdir"/boot/dtbs/qcom
+	cp -r "$pkgdir"/boot/dtbs-tmp/qcom/sdm630* "$pkgdir"/boot/dtbs/qcom
+	cp -r "$pkgdir"/boot/dtbs-tmp/qcom/sdm636* "$pkgdir"/boot/dtbs/qcom
+	cp -r "$pkgdir"/boot/dtbs-tmp/qcom/sdm660* "$pkgdir"/boot/dtbs/qcom
+	rm -r "$pkgdir"/boot/dtbs-tmp
+
+	# "build" is symlink that will be invalid in rootfs (points to /home/pmos...)
+	rm -f "$pkgdir"/usr/lib/modules/*/build "$pkgdir"/usr/lib/modules/*/source
+
+	install -D "$builddir/include/config/kernel.release" \
+		"$pkgdir/usr/share/kernel/$_flavor/kernel.release"
+}
+
+sha512sums="
+b56636f4d7429e971a70c1b7237fda4d5795fbe422c01f6fc6038220c2e831bf4479bd411b5e04e4db45de4fb8ec15a9e0e312b6479e2067709062af3dfd6997  linux-sdm660-dd1ed52c8ceef4f16715118ed0252fe75adbe71d.tar.gz
+17c88878814977106665771461a3250e3a372dd2af41b3ceb3037923bfb60b9c2310cdc95bcc50b6fcc20faf29c09d10d94ef0b983eed2fafece1f050690b5e8  config-postmarketos-qcom-sdm660.aarch64
+03a4a2d557fc73d0cf3e1755a249a47b783aa32dbdd08287733008b771f6834315f0921bc6a0e0d7d5e1f8ea651c8300888f0f3d81590c91c6815c046dd6b6f8  0001-pmdomain-qcom-add-support-for-CPR-v3-v4-and-Hardened.patch
+c98c284e16939afa845c3ad76c234c7dc91b2be9ab7466e45d0cb6aa4b49b301caff0ebff14112618bb54af264da38cfa3efad215ea9959e3bf1a89cc221ac87  0002-cpufreq-qcom-hw-implement-CPRh-aware-OSM-programming.patch
+76e16795e741754385d2ca93dda92505163725dfe8f8bba4b41293d1083da4ea269fc36295e9c72e95c49fc1a275f2b0f3848e2f20effe7ef18dce05b7e059b1  0003-cpufreq-qcom-hw-only-read-a-DCVS-control-register-th.patch
+b41854bb008b50a6775177ffe92699b524236d62c93927c03c6f4312cafa3cea56aea75c8edc65c5d8ebe0f7651788d9994fbc6e707c1c07485f27b007e0dd88  0004-pmdomain-qcom-cpr3-arm-the-CPRh-loop-only-once-the-O.patch
+237aa32f5bd370ac5d3a50883c2c1f2a9cf7988327302a7aac19336fd183e6b3d60a4e262ebbef9fddc70223be4fdf61e67eae53b3c9748f6b121c54fa7c1a24  0005-cpufreq-qcom-hw-BRINGUP-walk-the-OSM-setup-one-step-.patch
+5ef3f4c28127f3884d2df88cba28c8b466a554ef5387d27d1f508741dd601052638928190bf87910dc01c7ee124afd642afc1bba9276423b88051b48130d83a3  0006-pmdomain-qcom-cpr3-BRINGUP-walk-the-CPRh-setup-one-p.patch
+6034df3e18e735a6969d2da32119dd3f4b66626d7a4a7d543d6ad288284cf520a6877f51807639310bacbe429274163404a4f7727ab3c7fe7c2e5fdcba094d60  0007-cpufreq-qcom-hw-do-not-device-link-a-CPU-to-its-CPRh.patch
+5717eefa2ee195f90bc2e0e70459aad796ec7bd8b5c162d35f8288d0da383ea6a6f91ad9d396c758f882ac10e313f3812021dffd54b88b22213425faee847d5d  0008-cpufreq-qcom-hw-let-the-genpd-core-bind-the-CPRh-req.patch
+f001ae65289f6aac827e14f3aa3fe4c3c83d63313e98365392957b438b6d706edfad97761fef2aa19a8b9eab503c2917294fe848ef07e8d5ebbd50e9b32e2060  0009-pmdomain-qcom-cpr3-look-up-the-CPRh-thread-instead-o.patch
+9c994e2b77c2f049c4d499ac9d171bd1c390680697eda54572e2f1169ecafb894e6e81fc2623920d5976abb3b4a18b71e41641238f111c0713ad1f5b3fd59de4  0010-cpufreq-qcom-hw-msm8998-request-a-corner-before-star.patch
+73ceb369e1956f180a41426827486c011d9060c5492fd66e3af93ac05a7c1fe523ff8c2d4d3e63ef9f9762aa78b9ff1ccee09eb38fd39e97f8809386926857cf  0011-cpufreq-qcom-hw-msm8998-program-the-APM-threshold-co.patch
+0c4936dd2be3961dfe0909f6bfdc2236ac632839856caef1222efdf8f655486af88f2f87caf02f7f47b8daf7db3f1501fb3dc5debd428e5f8ac892ce9aa6353b  0012-cpufreq-qcom-hw-msm8998-do-not-enable-the-droop-FSMs.patch
+cd063d9a9cad9b8372bd94e367a1a2c4991c0b0a1b65d72adcd79c075ea6647ddad456d276a38225d5c0cd21cb71c9917e1a0755672335100758f587dff49eed  0013-cpufreq-qcom-hw-cpr3-msm8998-default-the-bring-up-ga.patch
+0bab1ca4ba2099faac768f42c83df94a72d54d3d9294171e4e5ef4c5ebf23b7253b28ecd0b8b68f70db7e61a0a4a50fdf189287ac3f424d00e23a49bc85b8f1b  0014-cpufreq-qcom-hw-msm8998-busy-poll-the-ACD-transfers.patch
+5a361d23a826f6a443a7293d575076c38de8cc4a1425bd410bc27af84c24836df5a98c972225aed6f5d0d80b2784a908ff136b80325687884688d8b10552b661  0015-cpuidle-psci-Fix-support-for-probe-deferral-by-dropp.patch
+cc71c1a9496658b9275cc777a32d276d8b206d888408f2ede0075af7d05a342d2e53cfa40318c8c9b670319018e2befc8817078398f4a913b2a5fc50378c5ac2  0016-drm-msm-a5xx-Reset-the-GPU-when-resuming-it.patch
+72e01cf25d028666434616e16eea911ca26faba211d6c7b6fe41e2057c7d16a9eb1aaa0d9fe2911b6999f535168ed56848c33007b70fd8c6879876c00c71a3e7  0017-wifi-ath10k-don-t-reset-TxBF-on-disassociation.patch
+b309d297d90af1cf5ab83d488ee1de188dd498d7c07a365fa2a929e6e21b97de568007b965ca81ef95c517307d37dd4c3df95937c6ac942d7b87719392a39fe5  0018-cpuidle-psci-report-probe-deferral-through-dev_err_p.patch
+0d7b7e7a8035a0ce7fbdc71a6d10168586aa3333de4efef1cc9942f8a0f7d6b34b18142af5bfff62021b17640d5713d598c5d9ff92c56c7ee06ad6867c815b46  0019-pmdomain-qcom-cpr3-add-SDM630-SDM660-CPRh.patch
+ea178040086f3d48f00aa178da77d37e040b1581db18ae81c5da24550912573dcaf58db9c1944d28e395e8c5a5f1dc1521049f9bde317a4eb4dcdfc7ca72298d  0020-cpufreq-qcom-hw-add-SDM630-SDM660-OSM-programming.patch
+ae035d0bbc4ed05ffe7aa7d75af8f07b184f39795a6b6737dfc32ac040c983d0dd632c9704c2890ddb5dacf5c76d8f4d5b1167f988f201a60b84f077590ac296  0021-cpufreq-dt-platdev-block-SDM630-and-SDM660.patch
+34f4ac4035064fab1bdf30a7606c7f2c5f1ff8778a49a922c4204783a58c1990893aaa0bf3cd39047d1d12fb675ff79d13ab69820448060d2260f449997196dd  0022-dt-bindings-CPRh-and-OSM-for-SDM630-SDM660.patch
+d89b015979e36e0726362f8e736df99b6dab98b95a350b78f0340c0322f77e299966c82251c0e48f9945867f3d4b914fd663473bf151254f4d24adc27fe6e189  0023-soc-qcom-spm-fix-the-SDM660-L2-SAW-AVS-setup.patch
+e79a76d980c6f3c33676b3cc1540536f6d42fc103393c48a79bd3a5b255c13f4b8678c506660e7f484933bd3e7d9a79365145acc5701c6330064741e5e04cfde  0024-irqchip-qcom-mpm-program-the-vMPM-wakeup-timer-befor.patch
+22d193af1e3302203bba78c73f4624dae3a379aee0bdaff6182c856c4eaab423fc4627ff3f80073d0f3f5241e0ac2d3bec4378f4124097df78ad31fb810a0c81  0025-pmdomain-governor-no-next-hrtimer-during-system-wide.patch
+d1c4bf4079f9b5d43012992c46841fe816f0878c4d03104fb6f1c60c1fa77293d6c549fbb7bd3dbb929f6efef766943d1a0f0964ef4ad0c18e95e0f53be1ccf1  0026-fs-don-t-charge-do_file_open_root-lookups-to-the-cal.patch
+1bddc7fa6f47315a6b615ab9325511b1b9b543a652207e0b221383dc728f9bad04538e5dd02200fce36eae4fc4911fafad46961088ecc99dcb311eb4edff579e  0027-drm-msm-adreno-attach-all-GPU-power-domains.patch
+9263ebf9079a82e6b89c34e5afdd8a99980480b7df8b5b16e11b2c698bfb22815063a0a1ca97db2da8d20eaacc95fa258868a094614d03c69deb92b714f9e1cd  0028-drm-msm-dsi-vote-the-MMSS-NoC-AHB-clock-on-SDM660.patch
+27a0a17355f5f073aabe1b60490add1b99078e301cf67a2a1b6476dcd4c6d408e2419305bc60443ca7f34634a2bd00dabd2e37e771933fffa0c07c85544ead33  0029-drm-panel-add-Sharp-LS050T1SX18.patch
+5111f849081cef4173b7b4e75f2753f8dcfd1128d682daa74953e9973363b0d71d8affbd2da189e628113778a4942e06cb83107a3efece78847d9d4b499a35b6  0030-Input-misc-add-the-HiBy-volume-wheel.patch
+aa819fa738dec4609d82f5f9033fb08dd3c6566c86b654bb8d25acd6f76f68f7ea1e584c468f96f8a1f388c53a181d5942d707f7965d05c8cc09848e768bbfbe  0031-ASoC-codecs-add-the-HiBy-hm100-FPGA-DAC.patch
+81f91e2e44e91ce33461439211d89adca9f94bc37434920deb70bc1588602d12df807d4f55562b7e2609cf9ca1ae2c3443c2128551c4fe8211321cd9f54ba729  0032-ASoC-qcom-q6asm-dai-fixed-rate-streams-and-S32-as-16.patch
+97df10ec0da61fd7f95f04f177ab81d3b4ad29075596ff25fc83754f34227b9d8ab4eae4190ff200b1f54d2e52c675b3b3054d682058507ef3734fd9e69fc82d  0033-ASoC-qcom-sm8250-codec-clocked-secondary-MI2S.patch
+0b72334f2e9bafe8a2dde2b3ff3e2b9892d2d72e90a37b2e2b377938f6361952f51e19438e0f7decce8a649b9f3a751384db6866a919584de2ec899951e39450  0034-Bluetooth-hci_qca-set-the-WCN3990-supply-voltages.patch
+b9d9a3f30e8c079bfdd4abe176a3d6e0d726e8cc7a467b18660d03999dcb4e30d69c64d9faa000aef5e8bf4abf043807e3bc711b5269595437f9cd59a13ae66b  0035-regulator-qcom_smd-add-qcom-rpm-exact-voltage.patch
+801ab779997f156120a5999e7f98e720311f140bf5a4ce5736c7bc65d2c99ef203783de492280aff85f2a66b53fade53fb6fe1192651dc1b186f4f5968c0b706  0036-power-supply-qcom_smbx-Type-C-role-switching-and-OTG.patch
+ae6025be8dfc5fb07461242a8d54b1d86f6a09b7327e7883342925a6a2bf3046b9ac03599ece38ae25b83c486db99dda5fe38b8e96e6f56af3fe2f203fb4d70f  0037-wifi-ath10k-keep-a-stopped-device-recoverable.patch
+a71d0ce6919b9ebdecd06480aca3ed1b90bfdbdf674d156f904c08dbbe2d7523bfe06c298ea35ac72843a488f98fe413c22277de9b7cf4e9c35e42c44e38cb12  0038-iio-common-qcom_smgr-fix-sampling_frequency.patch
+8c6134580b60fdd558274a2c70bd95a0ae9c08e78bf0981de5ba807f2f1ae3b7c0eb6e78606ef9b544378707cfb5648ecc6648580d18b7d17d59eb61d8bc88f6  0039-dt-bindings-pinctrl-qcom-sdm630-allow-config-only-st.patch
+57ca48a3f21183118a000b7739807972d79225f0f6f9cf0e33a3b9bddc36a5e0e6c44d9c5fc831a7e1a7dd78f41ab312fc4d2963bbd39b4af23babb59b8f7e51  0040-dt-bindings-watchdog-qcom-wdt-add-SDM660-APSS.patch
+ef2eb5fb1972f457b5b23cddc282e7fe2a3193542ab53feb638fa5688c62d51af292f42a1360604c212e82ddf9e5d35b9f9052ab3d0fd6deadce977b11dc817c  0041-arm64-dts-qcom-sdm630-sdm660-CPU-DVFS-idle-GPU-and-d.patch
+673dbb3ef63dd5a65d77244a881f8ce755c7a092f3d9db639d92262dc693d82dd73294470f245e9907519e4b5680fb2a433519c55846beaf7dacf2f4556d3546  0042-arm64-dts-qcom-add-the-HiBy-RS6.patch
+771e35910e783738e1e535696e721e49466317011287e866a2c8ac4a09833deb6a4fa5e1143f6e4d070ac09e8947c092f065b55e3730042b840357c149b70631  0043-drm-msm-mdss-vote-the-MMSS-NoC-AHB-clock-on-SDM660.patch
+c599d3485f31a2b76fe4549cfd2546c2e7ff04284cdddfcfdd096ef086e3edc8702c0453b21b331930338ab73a1cc3c062ca39355e84c1ccaa95658fc49d9db7  0044-drm-msm-a5xx-don-t-read-the-GPMU-registers-on-GPUs-w.patch
+94f615adfca20939fcce1023e6c773ad53b5e69d76c33bd07825cdcd088542217e27fbb5318c4fddfe6c24e59898755a57bb16b6f3db71c74b878a5d9bc2d694  0045-drm-msm-a5xx-say-why-the-GPMU-registers-are-only-dum.patch
+cb7bcafc69d4e735338c144b68d5dc1fad3abab8e6aeeaabb17ced9c1278f0b2035a8abf506cfde4aa2e65a5421cc7851e8c9b5638027e53696c15a29f219d29  0046-drm-msm-don-t-trust-a-fence-memptr-no-submit-wrote.patch
+bdb3c172376b1462f43d560887b083a5a9eac61ea55fc0fe93cc63ba0c3ceee6d27654a079edacaaff471b9c8ba6698795d63150a4a99da7628d8860912d1735  0047-drm-msm-a5xx-don-t-free-the-preemption-records-twice.patch
+47153a35f493930afea65cb0e2b9b4a6b228c54b6b2aad8e723803a885497710fac2fb143c9210df334cbc7fd2cdeb39df2622960a768b850382a765c461169e  0048-drm-msm-reset-the-GPU-on-a-hardware-fault-with-no-su.patch
+4fa8bb0011abad3cf39ee01718c6cf76463838d144f891f6864261a80669c28b45d3cdf1dc93332bd29d38b1dfec3c21c4aca71a2b93e9d114429c1a42ef26ba  0049-drm-msm-check-every-ring-for-a-hang.patch
+84999a530c7bd7f18c22438597a05ee4be7eeedd2b3484984e8e6aa4ab1ef9774b14cdc1adf97b3e0080f7c63d3695815d54946e808f9f3f1f8584544bfa074b  0050-drm-msm-a5xx-mask-the-hang-detector-until-the-GPU-is.patch
+de528807aaacfaaa58b7fc82b89abe45f7c65fc364ddd7b71f10ec4de7162931533d540f72923b761796b32332ff80b3246e6d31f46628ca01f8435040fcc68d  0051-dt-bindings-soc-qcom-smp2p-add-sleepstate-support.patch
+efa00efd456748b06d1e1ac34152915d99f23cd847858f181d72097a15d5e161e3dc999e5c3ca87e4d8f0e04babaa8496b519697f7707193f6ea80871022fee9  0052-soc-qcom-smp2p-tell-the-remote-through-sleepstate-wh.patch
+6ecf72f68a110245478a6018d61f0998bd8b86d387ecb3fa40b232de9fb36c785b12f3ab0b943f4ab99bde6fe7ce068f4b53b82d5be63aa294bd3451abc4aacc  0053-arm64-dts-qcom-sdm630-add-the-ADSP-sleepstate-SMP2P-.patch
+3024028ad9896dfa3df3b99a93519e375c2734ffd246916bd5f61bb8826443df3eef6ee84c62ff04f6a87f680dec5dc453e4bae83d534848bb0ca49160b91f8d  0054-iio-common-qcom_smgr-fix-the-QMI-layouts-of-the-buff.patch
+52fe2823141e172db3ed26180c736fc85c34e3585d4217890e13bc8378a0013fb7110fd178fabac3892c9161c35a85546425cecfbb6e58120faa8f621ba25e9d  0055-iio-common-qcom_smgr-default-to-the-lowest-native-ra.patch
+5fc3585eb11d3e203e2e22e2aa3f2f3cecd450772073abe5e70651e96d8b7d70bcebc3dab041e5644e9ff55b3507ec8e21a62877e5fbd563c2b2124084788a76  0056-iio-common-qcom_smgr-check-the-AckNak-of-buffering-r.patch
+362326908173ce81acd4535f811ec88d638beb4f9ae08e8728a24512848d6cc70605fe2b2cb8d23e35429f33b79fa3a69edf8fa83a6b31d1354f3caec4a429e7  0057-iio-common-qcom_smgr-no-sensor-reports-while-the-AP-.patch
+e866c975f66fc5471cc95f3b934d1aff814c0fc7ffcdebacd1a58fad638d16106b6a7bcf2d1e972dccb0d887f5254c95939baed3a31ce6daa0abb5cd3edcd83b  0058-iio-common-qcom_smgr-batch-samples-up-to-the-buffer-.patch
+21d2e76258ebf9c93ab765167691d056ee57ca0fd6e603b7588790f22f1b6d6859fcd1aa2c375a5d132945594b4f0f0d7eae45edaf4b2db9b97c2ae57c306033  0059-watchdog-hardlockup-skip-CPUs-whose-tick-is-frozen-f.patch
+a46145c8ae48faae751d1f0fc79276e63ff926d82f993a0aaa3380de1a148dc6691c4d696203f96fd44077507f31d525ae7ab3f29f9e49cf0395df3a5177cac1  0060-ASoC-dt-bindings-qcom-q6asm-dais-native-DSD-on-qcom-.patch
+a89a42ef504a47b10a08eb7e9152240a3beafdaac457eb3e03e2ae2c1f99218ec48a2e85c1e6b7531cbb07e1a8f50848e519f9e1c56d0f0202da9db8e4f5bc5b  0061-ASoC-qcom-q6asm-dai-native-DSD-on-qcom-s32-as-s16-pa.patch
+1cb7337724c94896d04de72191317e6a8bd9d588cd188ab3054bf13698b1ade126c4cd85cbc98d431e8caccfcd024207099e1df2f09aeb07236e7134d296a1b9  0062-arm64-dts-qcom-sdm660-hiby-rs6-note-native-DSD-on-Mu.patch
+345894fbf0f6f52919f8cb26087dc8e43adc2b78b2cc3a346455e98cafc8b4eb02cc044c5996947a1b5bae32b041a7d5b8e512d1169be1da38e70c7d8b235a27  0063-ASoC-qcom-q6asm-dai-offer-DSD-at-the-DSD-rates-only.patch
+57c5fac741ebd0de49c90058c65761b7acf313a45db69df76885976423860fe3a2680b9e87d883192337d6eedce333ba77f3ff6b4963146b10dfac89031a18e9  0064-ASoC-codecs-hiby-hm100-play-on-S-PDIF-with-nothing-p.patch
+e3505da6aca65b3a21f19218166708624a06fa2565cd126f61ed1961ad8f1e69b6eea59918029f5dcd4247107e6ef1c7f5d08d8f9f5ce611d93b760501d21d8f  0065-ASoC-codecs-hiby-hm100-add-a-read-only-Output-Target.patch
+8ec2604f46e1d786a2a5add1338aa2891ce663c45217d32e44ff7d947566c7a1baaf38ea6b11d223daee26d4eefbc7723013321d767216656c063a9989ad94b7  0066-ASoC-codecs-hiby-hm100-leave-the-target-off-after-a-.patch
+158fd57772503847a5cf8e59917e8c50478f39f855b48f4ca19209be3c506f231051f028a8063182884f3810f60d336d4cad868ccbc7af1ea44ee0ea2e5c4dac  0067-ASoC-codecs-hiby-hm100-native-DSD.patch
+4d1f138e7fc0a1c3e4890b820ed2df8b805b1696b5f36f83f151177fb16bcf44fb9f3d56e8da3bcc4eb94f2815eefbcae5e560ae1cc97ea66cc14b1d2e270c65  0068-ASoC-codecs-hiby-hm100-keep-DSD-muted-across-pauses-.patch
+6882ad29c03b08cb1380c2e8d5750445373a5d2e3335dfad5c5eaf7bfa0665e72f89cbaff79562764e2ceb1719e44baf0407e4f0de10d70bc0c79f58c9edc5b2  0069-wifi-ath10k-use-connected-scan-timing-while-a-vdev-i.patch
+35db8e60391933b66e5cd3d562120d8e4f121eb9a8a45afd31f1a7b0230ccd50c6b6ee43f620920ee6a4308fffc38a6e2da7a57bdee9b6caecc31e08010a9134  0070-iio-common-qcom_smgr-accept-NAK_REPORT_ID-on-an-ADD-.patch
+43f7bda31f0000c680f24beee4a2d9f2ddff776b5bf492a88d335e8ccbb6e72fce05c2ffcc1765c4a92afb81a87131f7dcea6adac6dc3cd42a33d32f15fc1daa  0071-iio-common-qcom_smgr-one-info-line-for-a-rate-fallba.patch
+4ffbfc4d9c855932df467b004a9f87293884d04514a8a5e95a2829468ef273c36a7640de530b053bf6098dc59d0f2881f12ad0a62d4b48aaf108d268dd0658a5  0072-iio-common-qcom_smgr-undo-the-probe-on-every-failure.patch
+5a3ad298130140da22c83e61f11d90ff3761d55717b7424cc08f71ff45b1f63b59309a91b9d8eec20d79d62725bbf8efbb71bd5a84fd04f037fb6934b5736737  0073-ASoC-codecs-hiby-hm100-say-when-a-DSD-unmute-after-a.patch
+fd17314c0530308727ff6323e5cc576fe1f0503666f2e62d843e025f70f667592de4571f46f98ce14157c45d2251322ed7a8eec474e87c3489e9217ba102da6b  0074-ASoC-qcom-q6asm-dai-offer-PCM-at-the-DAC-s-rates-onl.patch
+230cf25dcdc0a3e3f42019dd04b9cc3ff3bed7080e7a3a446d4e8ba2d81a35eefb71b7c9f7bb4282dfe321ecefc4f534ab694e0d4edf0b02544355d745e89294  0075-ASoC-codecs-hiby-hm100-log-an-unreachable-PCM-rate-a.patch
+fde46aad2bf3558a6ba9a2a4e26ae37b1b78b83437c2401a1c5b1e239b0db1ed111631d4d60301d8af6766b07f49ca2c42661b1c66d03a022dd6ac2bddb69f66  0076-arm64-dts-qcom-sdm630-Add-interconnect-paths-to-the-.patch
+7e819eccc5670f930858132c1d07475f15b76aca273151d93ec511b034251c5fcc284d9594007b9f8cdc2c24a84c0569fca8bb6ae8277a435c412ccc10356d9d  0077-arm64-dts-qcom-sdm660-hiby-rs6-give-the-hm100-SPI-co.patch
+3e1b0103eb76e4876b036d59b652a33753133e3b2ac3bb5e3a41a4bf428f8387df290910db81cb63b2605c51b768cf8847cc41187021405061b59ad11d768a0f  0078-interconnect-qcom-sdm660-Enable-keep_alive-and-sync_.patch
+198d94659fb9948b7eb37ea72ec61f31364f69f6d9fc16d2546c1c0be9713354f318082917f9b4b9ba4cc43ce93221f6cf1f937be7edfc7fe104050441eb08b0  0079-clk-qcom-mmcc-sdm660-Do-not-keep-the-video-core-cloc.patch
+3990739718016d542c0c44783ba766d033162377c27fc9c9435518ace688cbf2a33a9a6a5efae32e66b537a4aaf5ccd6c4c6f7c57545e7ccaacad58c24da1f50  0080-drm-msm-dsi-fix-AHB-clock-staying-enabled-across-sus.patch
+99d1350716caf4d598513bea33cbfa61e7bf63a6bb215529df4927c4cd275d6bb6eb5f6601c3aa8ae9513bc6a49a9f0161b8f88fb926cf14d812a0edba97449b  0081-arm64-dts-qcom-sdm630-Switch-the-NoCs-to-two-interco.patch
+e9a72f16c239202aab8dd5673875aaf767e8d0f0e3c363c7901351aee2302376d5c03ba6ff53ec0aac81955713b657b5860b98283fcd81d7a6ba552f1a87a071  0082-interconnect-qcom-icc-rpm-Allow-negative-QoS-offset.patch
+38d07fe4348cce8f9d7cdaa4206d4ab4ffb602c5b22f704e2b765549a71b43632e7a01622f7e2b52ee558f94a8003f8ee32fe2b808331097bcf3bd76a483a06e  0083-interconnect-qcom-sdm660-Start-the-BIMC-region-after.patch
+c5ab8d5b0b575fc112f7d4d5d253b6e9711fe6eb5d34180632c2b510ad45279de64914437ee04505f529120abc0e39fe393b8fe8564b73e28f975deb9bf08463  0084-dt-bindings-interconnect-qcom-msm8998-bwmon-Add-SDM6.patch
+eb155574cf16b432586432b5ac718252c694620838fa72c5622daa9ef70080d4d6b008a6232da16c2cbc27cd96dd4c3607051583bd3e8c9466726078c55bc571  0085-arm64-dts-qcom-sdm630-Add-the-CPU-BWMON.patch
+c18205921b48f38e3a859fa183344712b44b08e2280b724c4aaafa090304915adb246b8bccdd0fa41de3f611339daa9d4281fa5b8a8479bc1e842ab208557012  0086-dt-bindings-opp-qcom-osm-Allow-a-peak-bandwidth-per-.patch
+d95962f08b3189c310430df71dabf670ed53f5e650f92986314fe52ac471549fb648f8d8816a8102085b62c03d2101851462e3927244bdc19377ec0cb8aa5fc2  0087-cpufreq-qcom-hw-Vote-the-bandwidth-of-the-starting-f.patch
+7dbbde23533b603f3b18c4d2b97d03cedc57f889e0e1bd02d7951690cb0d5b5eb91fe7c18d177e6e6d2649d29d0038c581372707c3f1e0f6930050c73b67b57a  0088-arm64-dts-qcom-sdm630-Add-the-CPU-memory-paths.patch
+9594d5970c32160fe9702a09d970e371ad6b1608c9fcfe3a7b4077cc761341fb790aae3f106c1afaeb705cae5064067d2c67f9e647bc44e8222788988f0aa017  0089-arm64-dts-qcom-sdm660-hiby-rs6-Add-stock-s-DDR-floor.patch
+94a69b6b92fb4bee3463c65a5262918af2a21a7889227e2088fda85f61850101dc27927d2f80a568d34165f86af55c8a8db64750dc0f5f723b97ba94730282ea  0090-dt-bindings-clock-qcom-gcc-sdm660-Add-the-CXO2-input.patch
+6bb03297654fd820f4edeb6a098f95640720692b01c501e8a355f9b21aabb08abc3a30c7a870867f9567e45609aa5a4d3762192c0228f76b6b28c107f7313655  0091-clk-qcom-gcc-sdm660-Fix-parent-for-CLKREF-clocks.patch
+530c48bd51638adae34b24504242690ad3c646014bebff647e1521a5a8d69c229c0ecbb1918a0cfee66a619e6ce3106cd43d952ab6176ac06fea63b13b097593  0092-arm64-dts-qcom-sdm630-Feed-the-GCC-CLKREF-clocks-fro.patch
+a6fee308dfc7201f207dc2734ceb68b44a6840b9643b5457aa5f8780976ea6973d23039fc2dfc74f2bc1749f0175ce387edabcca1a143ace330167124c0c6023  0093-clk-qcom-smd-rpm-Drop-the-handoff-votes-nobody-claim.patch
+faa9f34f95fd3b8cfb7e0426acce5f983a4fa3fe5c739d0575bebfac957cc5fb6e6dcca4d7d612e0f51d9d8c835bdc88a6559b27a595c7228abbfc714b45dec1  0094-drm-msm-gpu-Remove-the-bus-vote-when-the-GPU-is-susp.patch
+"

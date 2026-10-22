@@ -1,0 +1,51 @@
+From 9b670008b7e3bd69dfd788d8279a44237a02b982 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 15:27:11 +0900
+Subject: [PATCH 87/94] cpufreq: qcom-hw: Vote the bandwidth of the starting
+ frequency
+
+With an OPP table in DT the driver votes each OPP's interconnect
+bandwidth from ->target_index(). The cpufreq core does not call that
+for the frequency a policy already runs at: __cpufreq_driver_target()
+returns early when the target equals policy->cur. So a policy whose
+governor asks for the frequency the OSM already runs at, and keeps
+asking for it, never votes at all: the performance governor on a
+cluster that is already at its top frequency, or schedutil under
+steady full load.
+
+Vote the bandwidth of the frequency the OSM runs at once the OPPs are
+in place, as the downstream devfreq-cpufreq governor does with the
+policy's current frequency when the policy appears.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ drivers/cpufreq/qcom-cpufreq-hw.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/drivers/cpufreq/qcom-cpufreq-hw.c b/drivers/cpufreq/qcom-cpufreq-hw.c
+index 58222a11b..d4a2594e7 100644
+--- a/drivers/cpufreq/qcom-cpufreq-hw.c
++++ b/drivers/cpufreq/qcom-cpufreq-hw.c
+@@ -1832,6 +1832,21 @@ static int qcom_cpufreq_hw_cpu_init(struct cpufreq_policy *policy)
+ 		return -ENODEV;
+ 	}
+ 
++	/*
++	 * The bandwidth is only voted from ->target_index(), and the core
++	 * skips that for the frequency the policy already runs at.  Vote it
++	 * for the starting frequency here, or a policy that stays there
++	 * (e.g. under the performance governor) never asks for any.
++	 */
++	if (icc_scaling_enabled) {
++		unsigned int freq = qcom_cpufreq_get_freq(policy);
++
++		ret = qcom_cpufreq_set_bw(policy, freq);
++		if (ret)
++			dev_warn(cpu_dev, "Failed to set bandwidth for %u kHz: %d\n",
++				 freq, ret);
++	}
++
+ 	return qcom_cpufreq_hw_lmh_init(policy, index);
+ }
+ 

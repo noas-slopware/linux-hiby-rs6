@@ -1,0 +1,37 @@
+From b8df15577aecd63c8644a417ef2b9279c589920c Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 13:46:38 +0900
+Subject: [PATCH 77/94] arm64: dts: qcom: sdm660-hiby-rs6: give the hm100 SPI
+ controller its DDR path
+
+blsp_spi3 (the QUP the hm100 FPGA bitstream and SRAM data go through)
+sits in the board file, so the sdm630.dtsi BLSP paths do not cover it.
+spi-qup asks for an interconnect path whatever the node says and votes
+bandwidth on it while a transfer runs; without a path it gets none.
+Once the interconnect providers sync their state, nothing would keep
+BLSP_1 to DDR up during a DMA transfer if the SoC entered system sleep.
+
+Stock votes the same master for this controller (qcom,master-id = <86>,
+BLSP_1, to EBI). Describe the path as the sdm630.dtsi QUPs have it.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts b/arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts
+index 9ca85677c..30cdf5831 100644
+--- a/arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts
++++ b/arch/arm64/boot/dts/qcom/sdm660-hiby-rs6.dts
+@@ -1330,6 +1330,10 @@ blsp_spi3: spi@c177000 {
+ 		clock-names = "core", "iface";
+ 		dmas = <&blsp1_dma 8>, <&blsp1_dma 9>;
+ 		dma-names = "tx", "rx";
++
++		/* stock votes qcom,master-id = <86> (BLSP_1) to DDR, like the sdm630.dtsi QUPs */
++		interconnects = <&a2noc MASTER_BLSP_1 &bimc SLAVE_EBI>;
++
+ 		#address-cells = <1>;
+ 		#size-cells = <0>;
+ 

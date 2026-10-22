@@ -1,0 +1,5 @@
+# Adreno 512 microcode (stock) and zap shader: msm binds the GPU from the initramfs, so without
+# these its first firmware load fails and the GPU only comes up once the rootfs is mounted
+/usr/lib/firmware/updates/qcom/a530_pm4.fw
+/usr/lib/firmware/updates/qcom/a530_pfp.fw
+/usr/lib/firmware/a512_zap.mbn

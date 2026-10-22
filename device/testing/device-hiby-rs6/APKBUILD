@@ -1,0 +1,199 @@
+# Reference: <https://postmarketos.org/devicepkg>
+maintainer="Noa Himesaka <himesaka@noa.codes>"
+pkgname=device-hiby-rs6
+pkgdesc="HiBy RS6"
+pkgver=1
+pkgrel=24
+url="https://postmarketos.org"
+license="MIT"
+arch="aarch64"
+options="!check !archcheck"
+depends="
+	firmware-hiby-rs6
+	firmware-qcom-adreno-a530
+	linux-postmarketos-qcom-sdm660
+	mkbootimg
+	postmarketos-base
+	postmarketos-bootsplash
+	postmarketos-plymouth-themes
+	rs6-spdif
+	soc-qcom-sdm660
+	soc-qcom-sdm660-rproc
+"
+makedepends="alsa-lib-dev devicepkg-dev ffmpeg-dev linux-headers"
+subpackages="$pkgname-systemd:_systemd $pkgname-firefox:_firefox"
+# Firmware comes from firmware-hiby-rs6 (stock slot B blobs), not from the partitions:
+# Nura owns the whole user area (tools/repartition-nura.sh on the main branch), no msm-firmware-loader.
+source="
+	deviceinfo
+	kernel-cmdline.conf
+	modules-initfs
+	ucm-card.conf
+	ucm-HiFi.conf
+	pipewire-rs6.conf
+	wireplumber-rs6.conf
+	wireplumber-exclusive-takeover.lua
+	wireplumber-output-handover.lua
+	pipewire-pulse-rs6.conf
+	udev-rs6-no-ssc.rules
+	plasmaparc
+	kwinrc
+	nura-swap.service
+	90-hiby-rs6-perf.rules
+	hiby-rs6-perf.conf
+	hiby-rs6-shutdown.conf
+	hiby-rs6-shutdown-target.conf
+	firefox-v4l2-fix.c
+	firefox-hiby-rs6
+	firefox-hiby-rs6.js
+	firefox-hiby-rs6.desktop
+	firefox-hiby-rs6-env.conf
+	firefox-hiby-rs6-plasma-env.sh
+	rs6-touchboost.c
+	rs6-touchboost.service
+	darwinctl.c
+	darwinctl.tmpfiles
+	darwinctl-restore.service
+	rs6-vt-lock.c
+	rs6-vt-lock.service
+	logind-hiby-rs6.conf
+"
+
+build() {
+	devicepkg_build $startdir $pkgname
+
+	# plain cc so the shim builds the same on any distro (musl or glibc)
+	${CC:-cc} $CFLAGS -shared -fPIC -Wall -o "$srcdir"/firefox-v4l2-fix.so "$srcdir"/firefox-v4l2-fix.c \
+		$(pkg-config --cflags libavcodec) -ldl -lpthread $LDFLAGS
+	${CC:-cc} $CFLAGS -Wall -o "$srcdir"/rs6-touchboost "$srcdir"/rs6-touchboost.c $LDFLAGS
+	${CC:-cc} $CFLAGS -Wall -o "$srcdir"/darwinctl "$srcdir"/darwinctl.c -lasound $LDFLAGS
+	${CC:-cc} $CFLAGS -Wall -o "$srcdir"/rs6-vt-lock "$srcdir"/rs6-vt-lock.c $LDFLAGS
+}
+
+package() {
+	devicepkg_package $startdir $pkgname
+
+	install -Dm644 "$srcdir"/ucm-card.conf "$pkgdir/usr/share/alsa/ucm2/conf.d/sdm660/HiBy RS6.conf"
+	install -Dm644 "$srcdir"/ucm-HiFi.conf "$pkgdir"/usr/share/alsa/ucm2/HiBy/RS6/HiFi.conf
+	install -Dm644 "$srcdir"/pipewire-rs6.conf \
+		"$pkgdir"/usr/share/pipewire/pipewire.conf.d/50-hiby-rs6.conf
+	install -Dm644 "$srcdir"/wireplumber-rs6.conf \
+		"$pkgdir"/usr/share/wireplumber/wireplumber.conf.d/50-hiby-rs6.conf
+	install -Dm644 "$srcdir"/wireplumber-exclusive-takeover.lua \
+		"$pkgdir"/usr/share/wireplumber/scripts/hiby-rs6/exclusive-takeover.lua
+	install -Dm644 "$srcdir"/wireplumber-output-handover.lua \
+		"$pkgdir"/usr/share/wireplumber/scripts/hiby-rs6/output-handover.lua
+	install -Dm644 "$srcdir"/pipewire-pulse-rs6.conf \
+		"$pkgdir"/usr/share/pipewire/pipewire-pulse.conf.d/50-hiby-rs6.conf
+	install -Dm644 "$srcdir"/udev-rs6-no-ssc.rules \
+		"$pkgdir"/usr/lib/udev/rules.d/91-hiby-rs6-no-ssc.rules
+	install -Dm644 "$srcdir"/plasmaparc "$pkgdir"/etc/xdg/plasmaparc
+	install -Dm644 "$srcdir"/kwinrc "$pkgdir"/etc/xdg/kwinrc
+	install -Dm644 "$srcdir"/90-hiby-rs6-perf.rules -t "$pkgdir"/usr/lib/udev/rules.d/
+	install -Dm755 "$srcdir"/rs6-touchboost "$pkgdir"/usr/lib/hiby-rs6/rs6-touchboost
+	# the DAC filter from the command line (Darwin filters: firmware-hiby-rs6)
+	install -Dm755 "$srcdir"/darwinctl "$pkgdir"/usr/bin/darwinctl
+	install -Dm755 "$srcdir"/rs6-vt-lock "$pkgdir"/usr/libexec/rs6-vt-lock
+	install -Dm644 "$srcdir"/darwinctl.tmpfiles "$pkgdir"/usr/lib/tmpfiles.d/darwinctl.conf
+}
+
+_systemd() {
+	pkgdesc="$pkgdesc (systemd: 8 GiB swap on nura_swap1 + nura_swap2, cellular services masked)"
+	install_if="$pkgname=$pkgver-r$pkgrel systemd"
+	install -Dm644 "$srcdir"/nura-swap.service -t "$subpkgdir"/usr/lib/systemd/system/
+	mkdir -p "$subpkgdir"/usr/lib/systemd/system/swap.target.wants
+	ln -s ../nura-swap.service "$subpkgdir"/usr/lib/systemd/system/swap.target.wants/nura-swap.service
+
+	# no cellular on a DAP: the modem DSP stays (WCN3990 Wi-Fi runs on it), the modem
+	# management and its "no signal" indicator do not
+	mkdir -p "$subpkgdir"/etc/systemd/system
+	for u in ModemManager.service msm-modem-uim-selection.service; do
+		ln -s /dev/null "$subpkgdir"/etc/systemd/system/$u
+	done
+
+	install -Dm644 "$srcdir"/hiby-rs6-perf.conf -t "$subpkgdir"/usr/lib/tmpfiles.d/
+
+	install -Dm644 "$srcdir"/darwinctl-restore.service -t "$subpkgdir"/usr/lib/systemd/system/
+	mkdir -p "$subpkgdir"/usr/lib/systemd/system/sound.target.wants
+	ln -s ../darwinctl-restore.service \
+		"$subpkgdir"/usr/lib/systemd/system/sound.target.wants/darwinctl-restore.service
+
+	install -Dm644 "$srcdir"/rs6-touchboost.service -t "$subpkgdir"/usr/lib/systemd/system/
+	mkdir -p "$subpkgdir"/usr/lib/systemd/system/multi-user.target.wants
+	ln -s ../rs6-touchboost.service "$subpkgdir"/usr/lib/systemd/system/multi-user.target.wants/rs6-touchboost.service
+
+	# No X11 helpers: Plasma Mobile has no X11 tray or global menu to proxy, and these two are
+	# X11 clients, so running them made KWin start Xwayland at every login (KWin starts it on
+	# the first X11 connection; an X11 app still gets it on demand)
+	mkdir -p "$subpkgdir"/etc/systemd/user
+	for u in plasma-xembedsniproxy.service plasma-gmenudbusmenuproxy.service; do
+		ln -s /dev/null "$subpkgdir"/etc/systemd/user/$u
+	done
+
+	# one VT: no gettys on the others, and VT switching locked once the session is up
+	install -Dm644 "$srcdir"/logind-hiby-rs6.conf "$subpkgdir"/usr/lib/systemd/logind.conf.d/50-hiby-rs6.conf
+	install -Dm644 "$srcdir"/rs6-vt-lock.service -t "$subpkgdir"/usr/lib/systemd/system/
+	mkdir -p "$subpkgdir"/usr/lib/systemd/system/graphical.target.wants
+	ln -s ../rs6-vt-lock.service "$subpkgdir"/usr/lib/systemd/system/graphical.target.wants/rs6-vt-lock.service
+
+	# shutdown/reboot can never hang: stop timeouts, forced targets, watchdog in the last stage
+	install -Dm644 "$srcdir"/hiby-rs6-shutdown.conf \
+		"$subpkgdir"/usr/lib/systemd/system.conf.d/50-hiby-rs6-shutdown.conf
+	for t in poweroff reboot halt; do
+		install -Dm644 "$srcdir"/hiby-rs6-shutdown-target.conf \
+			"$subpkgdir"/usr/lib/systemd/system/$t.target.d/50-hiby-rs6.conf
+	done
+}
+
+_firefox() {
+	pkgdesc="$pkgdesc (Firefox: Venus V4L2 hardware video decoding, display defaults)"
+	install_if="$pkgname=$pkgver-r$pkgrel firefox"
+	depends="ffmpeg-libavcodec"
+	install -Dm755 "$srcdir"/firefox-v4l2-fix.so "$subpkgdir"/usr/lib/hiby-rs6/firefox-v4l2-fix.so
+	install -Dm755 "$srcdir"/firefox-hiby-rs6 "$subpkgdir"/usr/lib/hiby-rs6/firefox
+	# our firefox.desktop, found ahead of Firefox's own through XDG_DATA_DIRS
+	install -Dm644 "$srcdir"/firefox-hiby-rs6.desktop \
+		"$subpkgdir"/usr/share/hiby-rs6/applications/firefox.desktop
+	install -Dm644 "$srcdir"/firefox-hiby-rs6-env.conf \
+		"$subpkgdir"/usr/lib/environment.d/60-hiby-rs6-firefox.conf
+	# Plasma only keeps XDG_* variables it got from its own env scripts
+	install -Dm644 "$srcdir"/firefox-hiby-rs6-plasma-env.sh \
+		"$subpkgdir"/etc/xdg/plasma-workspace/env/hiby-rs6-firefox.sh
+	install -Dm644 "$srcdir"/firefox-hiby-rs6.js \
+		"$subpkgdir"/usr/lib/firefox/defaults/pref/hiby-rs6.js
+}
+
+sha512sums="
+78c80d5a482c9dec04028cceb3411880c7ee27a6eaa0ceacd39892dc9b3511c62251772949ae3c16ec3674bece69e358ca505546f294cf54a3a42fcf0d0da2db  deviceinfo
+20c49c33c9a887ad9c7c724de9047d9855e12c0a7b494beb8d60c2e584a174425d897d0afb875a204ac1ba841aca2c65df26eed9c5736ce99a6f4b516c6184a0  kernel-cmdline.conf
+06d23246adefaebdc8438d7d91b908ea6b164f4656d227b0d2a2891fa2d74d6fca586d88203440ce5693711a28aeedb0f335531e157bd3d2c54a2486509cf680  modules-initfs
+398a710166344fd4482837ecdaa37745f0789cb138702d39f2eda57c051611b0df259a2f4b0694183d6b24a8c44c9717fdc5cc21b83d335cc615a4eebbfef7fe  ucm-card.conf
+9932b4bbb690687d062896cf3a920c071baf173c022c1de1635062af132c517c36307653c58d92d1d5b32f4350fa84f8c30acca322d06f2d9dd1bae7604a238e  ucm-HiFi.conf
+dfa7a61710c7fd0241b8c95a69e590d3855c9b97a4ffb4e68f088cc91ec6096371869386e02006e48d29e67389f3dba1b893e6f5e9cdcf67a5fa8315b5b00210  pipewire-rs6.conf
+f49ffebb6909829bd4e8abe051b56d680ec049b44c2e212583f8cbd77af2b32d46786f885333ef4893409175c87e004e7748c44bd99b4dcde83d8b1c7e75a189  wireplumber-rs6.conf
+22cfd369f83553d911be43c7e53d85e493e000a8b203d7e9b23c6d100a0706e0b6daae1efd1355894d20ff6143900f52b6c53ed8089f3eff79ea258f7701e646  wireplumber-exclusive-takeover.lua
+707d2e5c2bbbb1679b232bf619157f120d5a83b01bb313c3e1be68e68823dcfc02e7c798911bd0e93990d245d87e78f5d1121bae4ca1f9b72ec5970db36664d1  wireplumber-output-handover.lua
+f1ca433ad2656412910f17ecd554fd9758c0c1ee3eb9debad25cffbddb8eabae20cdffb24bf0eafc88ef8e19802509742f5d1aa118960ae7adc5996e6fae65fc  pipewire-pulse-rs6.conf
+5ee7202f11ea66506186d4f99130ffb52d4cc723fd01de14a2245abf013addc8fc7152d51446faa83ed3a05690af1fe3f2ce840e3c43f15ca7c9ee988ae6a0e4  udev-rs6-no-ssc.rules
+92ddfebbd457cb8cbad8f055e8365464f5b4c1bd252ad5730e0323168058a7b8c338c8b3fef60db7cf067346f838b4fd8dfbb7367ccee6d2cb234649c7f63762  plasmaparc
+f271599bf259feee4a0da680dec49d2c0087ba8b42e8a2b6f635bca21ddcf647fe3e0af1de0b97fc44616812a20a020e61f14c444c71bba1d0864c3f973baffe  kwinrc
+91d413015a34f39e9a07e316977c4851e802db85dddff37090df6b2205d77942c7d1126f25eeb163487c5804b55b410b5c58185fc853ad316266d5c7fe9876f4  nura-swap.service
+b020d82e5e51cfa29dc206646e5b2c9f3eed4061f9fcc47441f114824b556521adb07d1271776da15e6af727398bed2a726c05af8fe75e48b717944a4424cab9  90-hiby-rs6-perf.rules
+967c591bef18983bf2f809cad78b88e22cbf12006272462fab4181d9cd6284a8a76cee2e245a92a48d7fe5e0eee09c80eb955eeb170a3bff1c15f5c762a2a10f  hiby-rs6-perf.conf
+30d25a7475f6185dd47bb4416943108df0619ee987e72f1dc9fc69ee1fd49adcd08535bc86acac9be5791a8225c2e597f76cec2c8e7c09efa25c2b85760c4cb0  hiby-rs6-shutdown.conf
+4685b4e7d4e2a2653eaa64df636eff34b4940f9a91cda057bf23f130682c2817031d129af8c3984e5128ca40682031b2b1f5c29f1f48c60dbeea02ded7c2d25e  hiby-rs6-shutdown-target.conf
+b9b873f39a34a9d3b57274836728d849e5bff99dc75d404d6109f004dc269e64a25b1fc00a3a79559ebd38a279ce5676a09915d523ce28535c35004445577f0c  firefox-v4l2-fix.c
+4daf2276e44e218a3f00cb26114d9e947eedaebb1d2cd6778223cbac72b3af925ac5e00efa9251d08333a3a94ff6a8d3a7b1d526ea7946702140771b253a9785  firefox-hiby-rs6
+6f7e8f48b84e4a7f731f77e10ead9e33b749bed12db6de00a36d1ddc1a7500ea14894e2557d90b03538e5bc2e9c2a58b0fbd3b2f42ee13b08951dd3f57f6d876  firefox-hiby-rs6.js
+8c385cdfa30ef46af662fe02c29e62a8964679efc2ed2357bf526c98eb43c9149f5892b72a61272a52e9a60326b6123021cfc7a17f6e7e753bd05393d03b1a70  firefox-hiby-rs6.desktop
+97c467d7085e2d70828381ead427e467d70c1896a14c9a9ffa6255a59dd700ad185b209e5adf2ba9a6d772c4f3ac7bd6176f35f1d11f195d6010736e54d48e2b  firefox-hiby-rs6-env.conf
+b24cf749f79249931dedf4c20d6f8cfc2dcef2fc5fcda6dc564ca2dfd4d82adaaba88aceaacd178b4696e940c8fd958ea5e84c8bf9647508fc0dd5ed25a79790  firefox-hiby-rs6-plasma-env.sh
+9b9e5cd00cebbd6fe9b5a793eb3debd63567b56189f022e0b63fe20b82bca8658bf218d1e9d0562fedc075907fc760482f73cedb9dd84a54fa2031174698fed9  rs6-touchboost.c
+f7360478195762af6ba2e120bc1b674599fb9da3b7454f306ec83a6e3f3987f06986938a8211cb0524a2433fd2d0e0f76d642a877731be0afa4ee8109ba7fcd4  rs6-touchboost.service
+00551a84736416f9bab9748ce54cb0b2781485bec7b4ef1f70b0b4ef8202fb739e286c70735962def35126e12a2da0feaf483755eb59151e00472e6787f8adb7  darwinctl.c
+b6400e92c20f765176d238c250aa5655f5d840da79503e019747c79f5c311d9b2ca99faaa589b37c26d5d5bffd772c3e293c23fa05cb5fb9d3e6d4682ee40030  darwinctl.tmpfiles
+f06df031f5340962fcf4f87a8ee6d0e192f8e400cd27663b958aee11fd30cb4c075f78b308998dd0815918a500c34aa1710a576e17231aceb030301e31922575  darwinctl-restore.service
+4e03a01c10147551f0de554c2bc5e78dece736b3fb3a497eab3bea7716d206378e2bfd174753a9daaab2fa622eac04218cf9f4169f005961183870c84e49bf15  rs6-vt-lock.c
+f131dfbff8e41ef0ead2ecda14424eb23eecb7a6a4069212cf27262cd5ca12f48225af97230a228e085b834714820724c35df313d826ce3e48ae0d785804469f  rs6-vt-lock.service
+48e6c6de3a4897fda5895a5d9ce0b148440ffc9e0053750727bd6bf103b6e4544eb891ac5a0edd2624c2173922792ae9e217ecfe407d5288f96f53285fbbb279  logind-hiby-rs6.conf
+"

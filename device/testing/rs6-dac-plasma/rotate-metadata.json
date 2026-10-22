@@ -1,0 +1,11 @@
+{
+    "KPackageStructure": "KPackage/GenericQML",
+    "KPlugin": {
+        "Authors": [ { "Email": "himesaka@noa.codes", "Name": "Noa Himesaka" } ],
+        "Description": "Switch the screen between portrait and landscape",
+        "Icon": "object-rotate-right",
+        "Id": "codes.noa.quicksetting.rotate",
+        "License": "MIT",
+        "Name": "Rotate"
+    }
+}

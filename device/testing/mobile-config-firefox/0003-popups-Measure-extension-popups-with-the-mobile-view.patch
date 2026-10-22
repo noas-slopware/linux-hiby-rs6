@@ -1,0 +1,138 @@
+From 0b200b8c11a9d769b0d5f11ec83807065af54362 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 19:34:13 +0900
+Subject: [PATCH] popups: Measure extension popups with the mobile viewport on
+
+With dom.meta-viewport.enabled (set for Fenix parity), PresShell::ResizeReflow
+hands every reflow to the MobileViewportManager, which ignores the size
+nsDocumentViewer::GetContentSize asks for. GetContentSize then reports the
+current viewport instead of the popup's preferred size, so a popup never grows
+past the 300x150 its browser starts at (Bitwarden 258x150, other popups
+smaller) on windows wider than 700 px, where popups aren't stretched to the
+panel. Measure the preferred size directly instead: lay the document out with
+html at max-content (capped at the popup's maximum width) through a user
+sheet, read its size, and send it to the parent the way BrowserListener does.
+
+Also only stretch the popup browser to the panel width in the narrow layout:
+unconditionally, width: 100% of the shrink-wrapped stack together with
+min-width: 0 collapsed the browser on wide windows.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ src/modules/popup-browser-content.js | 64 ++++++++++++++++++++++++++++
+ src/themes/shared/chrome/popups.css  | 17 ++++++--
+ 2 files changed, 78 insertions(+), 3 deletions(-)
+
+diff --git a/src/modules/popup-browser-content.js b/src/modules/popup-browser-content.js
+index 771faf7..eebed13 100644
+--- a/src/modules/popup-browser-content.js
++++ b/src/modules/popup-browser-content.js
+@@ -48,6 +48,10 @@ function mcfPatchBrowserListener() {
+     };
+ 
+     BrowserListener._handleDOMChange = function (detail) {
++        if (!this.fixedWidth && mcfUsesMobileViewport()) {
++            mcfMeasureWithMobileViewport(this, detail);
++            return;
++        }
+         // In device pixels, like the size BrowserChild::UpdateDimensions sets.
+         const baseWindow = docShell.QueryInterface(Ci.nsIBaseWindow);
+         const bounds = () => {
+@@ -67,6 +71,66 @@ function mcfPatchBrowserListener() {
+     };
+ }
+ 
++// With meta viewport support on (boot.sys.mjs, like Android), the document has
++// a MobileViewportManager, and getContentSize() can't measure the popup:
++// nsDocumentViewer::GetContentSize computes the preferred width, but then
++// reflows through PresShell::ResizeReflow(), which with a MobileViewportManager
++// ignores the size it is given and lays the page out at the viewport the
++// manager computes from the browser's current size (the "width=device-width"
++// below). GetContentSize returns the size of that viewport instead of the
++// preferred size, so a popup measures as large as it already is: 300x150, the
++// size a new browser starts at, and then it never grows. Narrow windows don't
++// notice because popups.css makes the popup fill the panel there anyway.
++//
++// So measure with layout instead. The preferred size is what the root element
++// takes when it is as wide as its content (max-content, at most maxWidth,
++// like GetContentSize) and as tall as its content, whatever the viewport is.
++// Do that with a user style sheet: it changes no DOM, so the MutationObserver
++// of ext-browser-content.js doesn't see it and re-measure.
++function mcfUsesMobileViewport() {
++    return Services.prefs.getBoolPref("dom.meta-viewport.enabled", false);
++}
++
++function mcfMeasureWithMobileViewport(listener, detail) {
++    const background = content.windowUtils.canvasBackgroundColor;
++    if (background !== listener.oldBackground) {
++        sendAsyncMessage("Extension:BrowserBackgroundChanged", { background });
++    }
++    listener.oldBackground = background;
++
++    const { windowUtils } = content;
++    const root = content.document.documentElement;
++    const maxWidth = listener.maxWidth > 0 ? `${listener.maxWidth}px` : "none";
++    const css = `html{width:max-content!important;max-width:${maxWidth}!important;height:auto!important}`;
++    const uri = "data:text/css," + encodeURIComponent(css);
++
++    let width = 0, height = 0;
++    windowUtils.loadSheetUsingURIString(uri, windowUtils.USER_SHEET);
++    try {
++        const rect = root.getBoundingClientRect();
++        const style = content.getComputedStyle(root);
++        width = rect.width + parseFloat(style.marginLeft) + parseFloat(style.marginRight);
++        height = rect.height + parseFloat(style.marginTop) + parseFloat(style.marginBottom);
++    } finally {
++        windowUtils.removeSheetUsingURIString(uri, windowUtils.USER_SHEET);
++        // Lay the page out as it was before this returns. Otherwise the
++        // scrolled area Firefox reports (MozScrolledAreaChanged) can still be
++        // the measured one when the event is dispatched, and the next
++        // measurement follows.
++        root.getBoundingClientRect();
++    }
++
++    if (listener.maxHeight > 0) {
++        height = Math.min(height, listener.maxHeight);
++    }
++    const zoom = content.browsingContext.fullZoom;
++    sendAsyncMessage("Extension:BrowserResized", {
++        width: Math.ceil(width * zoom),
++        height: Math.ceil(height * zoom),
++        detail,
++    });
++}
++
+ mcfPatchBrowserListener();
+ // Our listener was added first, so it runs before BrowserListener's own.
+ addMessageListener("Extension:InitBrowser", mcfPatchBrowserListener);
+diff --git a/src/themes/shared/chrome/popups.css b/src/themes/shared/chrome/popups.css
+index 5388255..7ff1772 100644
+--- a/src/themes/shared/chrome/popups.css
++++ b/src/themes/shared/chrome/popups.css
+@@ -227,11 +227,22 @@ panelview[extension] > .webextension-popup-stack {
+ /* Make large extensions (e.g., uBlock origin) popups useful
+  * by allowing them to be horizontally scrolled.
+  * Firefox pins the popup browser to the content's preferred width with an
+- * inline min-width, which beats max-width, so drop it; PopupFit.sys.mjs then
+- * zooms popups that are still too wide (e.g., Bitwarden) to fit. */
++ * inline min-width, which beats max-width, so drop it; the popup is then
++ * as wide as its inline width (the preferred width) but at most the window.
++ * PopupFit.sys.mjs zooms popups that are still too wide (e.g., Bitwarden)
++ * to fit when meta viewport support is off. */
+ .webextension-popup-browser, .webextension-popup-stack {
+     max-width: 100vw !important;
+     min-width: 0 !important;
+-    width: 100% !important;
+     overflow-x: scroll !important;
+ }
++
++/* On narrow windows the popup fills the panel (see above). On wider windows
++ * it must not: a width of 100% of a stack that is as wide as the browser
++ * is circular and collapses to the browser's default 300px or less, ignoring
++ * the width Firefox measured for the popup. */
++@media (max-width: 700px) {
++    .webextension-popup-browser, .webextension-popup-stack {
++        width: 100% !important;
++    }
++}

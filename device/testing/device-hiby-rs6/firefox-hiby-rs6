@@ -1,0 +1,10 @@
+#!/bin/sh
+# Firefox with the RS6 V4L2 fix preloaded (see firefox-v4l2-fix.c). Installed as
+# /usr/lib/hiby-rs6/firefox; the firefox.desktop override points here.
+lib=/usr/lib/hiby-rs6/firefox-v4l2-fix.so
+case ":$LD_PRELOAD:" in
+*":$lib:"*) ;;
+*) LD_PRELOAD="$lib${LD_PRELOAD:+:$LD_PRELOAD}" ;;
+esac
+export LD_PRELOAD
+exec /usr/bin/firefox "$@"

@@ -1,0 +1,95 @@
+From a6b739b62833dc58bf0a6f84d18d963bb694703f Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 15:00:52 +0900
+Subject: [PATCH 83/94] interconnect: qcom: sdm660: Start the BIMC region after
+ the CPU BWMON
+
+The CPU bandwidth monitor (BWMON v4, "qcom,msm8998-bwmon") lives in the
+first 0x300 bytes of the BIMC block at 0x01008000, the same layout as
+on MSM8998. Downstream describes it there (qcom,bimc-bwmon4 at
+<0x1008000 0x300>), and the BIMC QoS port registers only begin at
+0x01008300 (M_BKE_REG_BASE(0) = 0x300). With the BIMC provider
+claiming <0x01008000 0x78000>, the BWMON driver can never request its
+monitor region, and the two nodes would share a unit address.
+
+Do what the MSM8998 interconnect series does (Dmitry Baryshkov,
+<20261019-msm8998-icc-v1-7-c2da3934b6c8@oss.qualcomm.com>): start
+the BIMC node at 0x01008300 (same end address, 0x01080000) and give
+the driver a QoS offset of -0x300, so every BKE register keeps its
+absolute address.
+Shrink max_register to the last word of the new mapping; 0x80000 was
+already past the end of the old 0x78000 window, so a regmap debugfs
+dump could read beyond it. The binding example moves along.
+
+DT and driver change together on purpose: either half on its own
+writes the BIMC QoS settings 0x300 bytes away from the real registers
+(into the BWMON block, with an old DT and a new driver).
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ .../devicetree/bindings/interconnect/qcom,sdm660.yaml  |  4 ++--
+ arch/arm64/boot/dts/qcom/sdm630.dtsi                   |  4 ++--
+ drivers/interconnect/qcom/sdm660.c                     | 10 +++++++++-
+ 3 files changed, 13 insertions(+), 5 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/interconnect/qcom,sdm660.yaml b/Documentation/devicetree/bindings/interconnect/qcom,sdm660.yaml
+index 51428a2b0..8cbe309c7 100644
+--- a/Documentation/devicetree/bindings/interconnect/qcom,sdm660.yaml
++++ b/Documentation/devicetree/bindings/interconnect/qcom,sdm660.yaml
+@@ -98,9 +98,9 @@ examples:
+     #include <dt-bindings/clock/qcom,mmcc-sdm660.h>
+     #include <dt-bindings/clock/qcom,rpmcc.h>
+ 
+-    bimc: interconnect@1008000 {
++    bimc: interconnect@1008300 {
+         compatible = "qcom,sdm660-bimc";
+-        reg = <0x01008000 0x78000>;
++        reg = <0x01008300 0x77d00>;
+         #interconnect-cells = <1>;
+     };
+ 
+diff --git a/arch/arm64/boot/dts/qcom/sdm630.dtsi b/arch/arm64/boot/dts/qcom/sdm630.dtsi
+index 936d70115..29913c23b 100644
+--- a/arch/arm64/boot/dts/qcom/sdm630.dtsi
++++ b/arch/arm64/boot/dts/qcom/sdm630.dtsi
+@@ -627,9 +627,9 @@ rng: rng@793000 {
+ 			clock-names = "core";
+ 		};
+ 
+-		bimc: interconnect@1008000 {
++		bimc: interconnect@1008300 {
+ 			compatible = "qcom,sdm660-bimc";
+-			reg = <0x01008000 0x78000>;
++			reg = <0x01008300 0x77d00>;
+ 			#interconnect-cells = <2>;
+ 		};
+ 
+diff --git a/drivers/interconnect/qcom/sdm660.c b/drivers/interconnect/qcom/sdm660.c
+index 82dd0b916..ea074a64b 100644
+--- a/drivers/interconnect/qcom/sdm660.c
++++ b/drivers/interconnect/qcom/sdm660.c
+@@ -1532,7 +1532,7 @@ static const struct regmap_config sdm660_bimc_regmap_config = {
+ 	.reg_bits	= 32,
+ 	.reg_stride	= 4,
+ 	.val_bits	= 32,
+-	.max_register	= 0x80000,
++	.max_register	= 0x77cfc,
+ 	.fast_io	= true,
+ };
+ 
+@@ -1542,6 +1542,14 @@ static const struct qcom_icc_desc sdm660_bimc = {
+ 	.num_nodes = ARRAY_SIZE(sdm660_bimc_nodes),
+ 	.bus_clk_desc = &bimc_clk,
+ 	.regmap_cfg = &sdm660_bimc_regmap_config,
++	/*
++	 * The first 0x300 bytes of the BIMC block are the CPU BWMON
++	 * monitor registers, so the DT region starts at BIMC + 0x300.
++	 * QPORT n's BKE registers (BIMC + 0x300 + 0x4000 * n) are then
++	 * at 0x4000 * n in our mapping; -0x300 cancels the 0x300 that
++	 * M_BKE_REG_BASE() adds. Same layout as MSM8998.
++	 */
++	.qos_offset = -0x300,
+ 	.ab_coeff = 153,
+ 	.keep_alive = true,
+ };

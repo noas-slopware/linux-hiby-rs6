@@ -1,0 +1,75 @@
+From 5ebbee593ead0344691cac1a7b4d8c79226731c3 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 17:48:36 +0900
+Subject: [PATCH 91/94] clk: qcom: gcc-sdm660: Fix parent for CLKREF clocks
+
+The CLKREF clocks are fed by the clock signal on the CXO2 pad, which
+comes from the PM660 LN_BB_CLK1 buffer. They are registered without a
+parent, so nothing votes for that buffer while a PHY uses them, and the
+PHYs only get a reference clock because clk-smd-rpm's handoff votes
+every RPM clock on at probe and never takes the vote back.
+
+Take the parent from the "cxo2" input, the way Bjorn did for MSM8996 in
+"clk: qcom: gcc-msm8996: Fix parent for CLKREF clocks"
+(<20200106080546.3192125-2-bjorn.andersson@linaro.org>). Keep "xo" as
+the global name fallback so a DT without the new input behaves as
+before.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ drivers/clk/qcom/gcc-sdm660.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/drivers/clk/qcom/gcc-sdm660.c b/drivers/clk/qcom/gcc-sdm660.c
+index 5d00f1fd4..e7406eac0 100644
+--- a/drivers/clk/qcom/gcc-sdm660.c
++++ b/drivers/clk/qcom/gcc-sdm660.c
+@@ -1857,6 +1857,11 @@ static struct clk_branch gcc_rx0_usb2_clkref_clk = {
+ 		.enable_mask = BIT(0),
+ 		.hw.init = &(struct clk_init_data){
+ 			.name = "gcc_rx0_usb2_clkref_clk",
++			.parent_data = &(const struct clk_parent_data){
++				.fw_name = "cxo2",
++				.name = "xo",
++			},
++			.num_parents = 1,
+ 			.ops = &clk_branch2_ops,
+ 		},
+ 	},
+@@ -1870,6 +1875,11 @@ static struct clk_branch gcc_rx1_usb2_clkref_clk = {
+ 		.enable_mask = BIT(0),
+ 		.hw.init = &(struct clk_init_data){
+ 			.name = "gcc_rx1_usb2_clkref_clk",
++			.parent_data = &(const struct clk_parent_data){
++				.fw_name = "cxo2",
++				.name = "xo",
++			},
++			.num_parents = 1,
+ 			.ops = &clk_branch2_ops,
+ 		},
+ 	},
+@@ -1994,6 +2004,11 @@ static struct clk_branch gcc_ufs_clkref_clk = {
+ 		.enable_mask = BIT(0),
+ 		.hw.init = &(struct clk_init_data){
+ 			.name = "gcc_ufs_clkref_clk",
++			.parent_data = &(const struct clk_parent_data){
++				.fw_name = "cxo2",
++				.name = "xo",
++			},
++			.num_parents = 1,
+ 			.ops = &clk_branch2_ops,
+ 		},
+ 	},
+@@ -2198,6 +2213,11 @@ static struct clk_branch gcc_usb3_clkref_clk = {
+ 		.enable_mask = BIT(0),
+ 		.hw.init = &(struct clk_init_data){
+ 			.name = "gcc_usb3_clkref_clk",
++			.parent_data = &(const struct clk_parent_data){
++				.fw_name = "cxo2",
++				.name = "xo",
++			},
++			.num_parents = 1,
+ 			.ops = &clk_branch2_ops,
+ 		},
+ 	},

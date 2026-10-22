@@ -1,0 +1,1773 @@
+From edf1d0a6f44ae2b6afb89b826565e9d2c73e66c9 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Wed, 21 Oct 2026 18:25:01 +0900
+Subject: [PATCH 31/94] ASoC: codecs: add the HiBy hm100 FPGA DAC
+
+The HiBy RS6 DAC is a Gowin GW1N-9 FPGA (hm100) behind an NJW1195A
+volume controller. The driver loads the FPGA bitstream over JTAG/SPI
+from firmware (the stock kernel's own data and checksum, picked by
+IDCODE), sets the sample rate, output routing and power sequencing as
+the stock 1.80 kernel does, follows the jack switches, and exposes gain,
+digital filter, NOS and volume controls.
+
+Assisted-by: Claude:claude-mythos-5-1
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ .../devicetree/bindings/sound/hiby,hm100.yaml |  186 ++
+ sound/soc/codecs/Kconfig                      |    8 +
+ sound/soc/codecs/Makefile                     |    2 +
+ sound/soc/codecs/hiby-hm100.c                 | 1512 +++++++++++++++++
+ 4 files changed, 1708 insertions(+)
+ create mode 100644 Documentation/devicetree/bindings/sound/hiby,hm100.yaml
+ create mode 100644 sound/soc/codecs/hiby-hm100.c
+
+diff --git a/Documentation/devicetree/bindings/sound/hiby,hm100.yaml b/Documentation/devicetree/bindings/sound/hiby,hm100.yaml
+new file mode 100644
+index 000000000..fdea25d1c
+--- /dev/null
++++ b/Documentation/devicetree/bindings/sound/hiby,hm100.yaml
+@@ -0,0 +1,186 @@
++# SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/sound/hiby,hm100.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: HiBy HM100 FPGA DAC with NJW1195A volume
++
++maintainers:
++  - Noa Himesaka <himesaka@noa.codes>
++
++description:
++  Digital audio path of the HiBy RS6, a Gowin FPGA acting as DAC. The FPGA is
++  configured by bit-banging a JTAG-like bus on GPIOs (shared with the NJW1195A
++  volume chip), and its sample data is loaded over SPI. The driver switches
++  the shared pins between the "jtag" (plain GPIO) and "spi" (SPI function)
++  pinctrl states. It requests the firmware files hiby/rs6/hm100-pcm.bin and
++  hiby/rs6/hm100-fir-default.bin.
++
++allOf:
++  - $ref: dai-common.yaml#
++  - $ref: /schemas/spi/spi-peripheral-props.yaml#
++
++properties:
++  compatible:
++    const: hiby,hm100
++
++  reg:
++    maxItems: 1
++
++  '#sound-dai-cells':
++    const: 0
++
++  pinctrl-names:
++    items:
++      - const: jtag
++      - const: spi
++
++  pinctrl-0: true
++  pinctrl-1: true
++
++  sdo-gpios:
++    maxItems: 1
++    description: Serial data out of the bit-banged control bus.
++
++  tdo-gpios:
++    maxItems: 1
++    description: Serial data in from the FPGA (JTAG TDO), read as input.
++
++  cs-gpios:
++    maxItems: 1
++    description: Chip select of the bit-banged control bus.
++
++  clk-gpios:
++    maxItems: 1
++    description: Clock of the bit-banged control bus.
++
++  run-gpios:
++    maxItems: 1
++    description: Run/reset line of the FPGA.
++
++  share-select-gpios:
++    maxItems: 1
++    description: Selects the NJW1195A volume chip on the shared control bus.
++
++  vol-power-gpios:
++    maxItems: 1
++    description: Power enable of the volume chip.
++
++  dac-power1-gpios:
++    maxItems: 1
++    description: First DAC power rail enable.
++
++  dac-power2-gpios:
++    maxItems: 1
++    description: Second DAC power rail enable.
++
++  hp-bal-select-gpios:
++    maxItems: 1
++    description: Selects the balanced headphone output.
++
++  lpf-select-gpios:
++    maxItems: 1
++    description: Selects the output low-pass filter.
++
++  jtag-select-gpios:
++    maxItems: 1
++    description: Routes the shared pins to the FPGA JTAG interface.
++
++  power-gpios:
++    maxItems: 1
++    description: FPGA power enable.
++
++  lpf-mute-gpios:
++    maxItems: 1
++    description: Mutes the low-pass filter stage.
++
++  line-mute-gpios:
++    maxItems: 1
++    description: Mutes the line output.
++
++  po-power-gpios:
++    maxItems: 1
++    description: Power enable of the output stage.
++
++  balance-detect-gpios:
++    maxItems: 1
++    description: Balanced headphone jack detect, high when plugged.
++
++  balance-lo-detect-gpios:
++    maxItems: 1
++    description: Balanced line out jack detect, high when plugged.
++
++  headset-detect-gpios:
++    maxItems: 1
++    description: Headphone jack detect, high when plugged.
++
++  lineout-detect-gpios:
++    maxItems: 1
++    description: Line out jack detect, high when plugged.
++
++required:
++  - compatible
++  - reg
++  - '#sound-dai-cells'
++  - pinctrl-names
++  - pinctrl-0
++  - pinctrl-1
++  - sdo-gpios
++  - tdo-gpios
++  - cs-gpios
++  - clk-gpios
++  - run-gpios
++  - share-select-gpios
++  - vol-power-gpios
++  - dac-power1-gpios
++  - dac-power2-gpios
++  - hp-bal-select-gpios
++  - lpf-select-gpios
++  - jtag-select-gpios
++  - power-gpios
++  - lpf-mute-gpios
++  - line-mute-gpios
++  - po-power-gpios
++
++unevaluatedProperties: false
++
++examples:
++  - |
++    #include <dt-bindings/gpio/gpio.h>
++
++    spi {
++        #address-cells = <1>;
++        #size-cells = <0>;
++
++        fpga@0 {
++            compatible = "hiby,hm100";
++            reg = <0>;
++            spi-max-frequency = <10000000>;
++            #sound-dai-cells = <0>;
++            pinctrl-names = "jtag", "spi";
++            pinctrl-0 = <&hm100_jtag>;
++            pinctrl-1 = <&hm100_jtag_as_spi>;
++            sdo-gpios = <&tlmm 8 GPIO_ACTIVE_HIGH>;
++            tdo-gpios = <&tlmm 9 GPIO_ACTIVE_HIGH>;
++            cs-gpios = <&tlmm 10 GPIO_ACTIVE_HIGH>;
++            clk-gpios = <&tlmm 11 GPIO_ACTIVE_HIGH>;
++            run-gpios = <&tlmm 12 GPIO_ACTIVE_HIGH>;
++            share-select-gpios = <&tlmm 13 GPIO_ACTIVE_HIGH>;
++            vol-power-gpios = <&tlmm 15 GPIO_ACTIVE_HIGH>;
++            dac-power1-gpios = <&tlmm 28 GPIO_ACTIVE_HIGH>;
++            hp-bal-select-gpios = <&tlmm 29 GPIO_ACTIVE_HIGH>;
++            lpf-select-gpios = <&tlmm 34 GPIO_ACTIVE_HIGH>;
++            dac-power2-gpios = <&tlmm 40 GPIO_ACTIVE_HIGH>;
++            jtag-select-gpios = <&tlmm 44 GPIO_ACTIVE_HIGH>;
++            power-gpios = <&tlmm 55 GPIO_ACTIVE_HIGH>;
++            lpf-mute-gpios = <&tlmm 61 GPIO_ACTIVE_HIGH>;
++            line-mute-gpios = <&tlmm 76 GPIO_ACTIVE_HIGH>;
++            po-power-gpios = <&pm660_gpios 13 GPIO_ACTIVE_HIGH>;
++            balance-detect-gpios = <&tlmm 72 GPIO_ACTIVE_HIGH>;
++            balance-lo-detect-gpios = <&tlmm 21 GPIO_ACTIVE_HIGH>;
++            headset-detect-gpios = <&tlmm 41 GPIO_ACTIVE_HIGH>;
++            lineout-detect-gpios = <&tlmm 14 GPIO_ACTIVE_HIGH>;
++        };
++    };
++...
+diff --git a/sound/soc/codecs/Kconfig b/sound/soc/codecs/Kconfig
+index 2efa0bae2..e0a0a48e3 100644
+--- a/sound/soc/codecs/Kconfig
++++ b/sound/soc/codecs/Kconfig
+@@ -2083,6 +2083,14 @@ config SND_SOC_SMA1307
+ 	  If you are using a system with an SMA1307 amplifier connected
+ 	  via I2C, enable this option.
+ 
++config SND_SOC_HIBY_HM100
++	tristate "HiBy RS6 hm100 FPGA DAC"
++	depends on SPI && OF && GPIOLIB
++	help
++	  The HiBy RS6 DAC: a Gowin GW1N-9 FPGA (hm100, R2R) loaded over its
++	  JTAG port with the data phase on SPI, plus the NJW1195A volume IC on
++	  the same bit-banged bus, driven as the stock firmware does.
++
+ config SND_SOC_SPDIF
+ 	tristate "S/PDIF CODEC"
+ 
+diff --git a/sound/soc/codecs/Makefile b/sound/soc/codecs/Makefile
+index b8a2f639a..479faa957 100644
+--- a/sound/soc/codecs/Makefile
++++ b/sound/soc/codecs/Makefile
+@@ -299,6 +299,7 @@ snd-soc-sigmadsp-regmap-y := sigmadsp-regmap.o
+ snd-soc-si476x-y := si476x.o
+ snd-soc-sma1303-y := sma1303.o
+ snd-soc-sma1307-y := sma1307.o
++snd-soc-hiby-hm100-y := hiby-hm100.o
+ snd-soc-spdif-tx-y := spdif_transmitter.o
+ snd-soc-spdif-rx-y := spdif_receiver.o
+ snd-soc-src4xxx-y := src4xxx.o
+@@ -738,6 +739,7 @@ obj-$(CONFIG_SND_SOC_SIGMADSP_REGMAP)	+= snd-soc-sigmadsp-regmap.o
+ obj-$(CONFIG_SND_SOC_SI476X)	+= snd-soc-si476x.o
+ obj-$(CONFIG_SND_SOC_SMA1303)	+= snd-soc-sma1303.o
+ obj-$(CONFIG_SND_SOC_SMA1307)	+= snd-soc-sma1307.o
++obj-$(CONFIG_SND_SOC_HIBY_HM100)	+= snd-soc-hiby-hm100.o
+ obj-$(CONFIG_SND_SOC_SPDIF)	+= snd-soc-spdif-rx.o snd-soc-spdif-tx.o
+ obj-$(CONFIG_SND_SOC_SRC4XXX)	+= snd-soc-src4xxx.o
+ obj-$(CONFIG_SND_SOC_SRC4XXX_I2C)	+= snd-soc-src4xxx-i2c.o
+diff --git a/sound/soc/codecs/hiby-hm100.c b/sound/soc/codecs/hiby-hm100.c
+new file mode 100644
+index 000000000..5b0d83875
+--- /dev/null
++++ b/sound/soc/codecs/hiby-hm100.c
+@@ -0,0 +1,1512 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * HiBy RS6 DAC: hm100 (Gowin GW1N-9 FPGA, R2R) + NJW1195A volume, as the stock 1.80 kernel drives
++ * them (hiby-hm100, sound_platform, njw1195a, hiby_snd_* in the machine driver).
++ *
++ * Bus: TLMM 8 (sdo/tdi), 9 (tdo), 10 (cs/tms), 11 (clk/tck) are shared by the FPGA TAP, the FPGA
++ * control port and the NJW1195A; gpio13 high hands the lines to the NJW (the FPGA ignores them).
++ * The SRAM load bit-bangs the TAP and streams the Shift-DR data over blsp_spi3 at 10 MHz with
++ * gpio8/11 muxed to the QUP (stock hbc3000_program_ram / hm100_jtag_as_spi).
++ *
++ * Control frame: (reg << 10) | data[9:0], MSB first, latched on CS rising.
++ *   reg0 rate word, reg1/reg2 GPO groups, reg3 control (b1 load_flash, b4 osr_bypass = NOS),
++ *   reg 0x10-0x13 coefficient block.
++ * gpio12 is RUN: the FPGA clocks (BCLK/WS, it is the I2S provider) stop while it is low.
++ *
++ * Playback, as stock hiby_snd_hw_params / hiby_snd_trigger:
++ *   hw_params:      reg1 pcm_dsd_sel = 0, RUN low, reg0 = rate word of the FE (track) rate
++ *   trigger START:  RUN high, unmute work queued with no delay (per output target, as stock
++ *                   hiby_target_poweron_umute) only if a mute is pending
++ *   trigger STOP:   mute work queued with no delay
++ * The DSP side stays at 384 kHz (FE media format, ADM, AFE), as stock hiby_fixed_samplerate.
++ * What matters for correct sound is the init rate word: a 48k-family init frame before the
++ * load_flash pulse breaks the R2R calibration (right channel blasts on negative samples, ear
++ * test 2026-10-20). Stock's hm100_enable_init writes the last-set rate, but its HAL opened the
++ * DAC at 44.1k, so in practice stock always inited with 0x0120; we write 0x0120 every time,
++ * because our idle power-off and output switches re-init after 48k streams too.
++ */
++#include <linux/delay.h>
++#include <linux/firmware.h>
++#include <linux/gpio/consumer.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/pinctrl/consumer.h>
++#include <linux/slab.h>
++#include <linux/spi/spi.h>
++#include <linux/uaccess.h>
++#include <linux/unaligned.h>
++#include <linux/workqueue.h>
++#include <sound/pcm_params.h>
++#include <sound/soc.h>
++#include <sound/soc-dpcm.h>
++#include <sound/tlv.h>
++
++/*
++ * Bitstream files: stock's FS_data (hbc3000_get_fw_pages() = 1737 pages of 256 bytes, sent as
++ * is) followed by its 8-byte FS_chksum, whose first two bytes are the design's USERCODE.
++ * Stock 2.10 (rs6_hbc3000_program_ram, hm100_program_by_hw_param) loads FS_gw1n9c_data
++ * instead when the FPGA's IDCODE is 0x1100481b: later RS6 units have a GW1N-9C.
++ */
++#define HM100_IDCODE_GW1N9C	0x1100481b
++#define HM100_FW		"hiby/rs6/hm100-pcm.bin"
++#define HM100_FW_GW1N9C		"hiby/rs6/hm100-pcm-gw1n9c.bin"
++#define HM100_FIR		"hiby/rs6/hm100-fir-default.bin"
++#define HM100_FW_DATA		(1737 * 256)
++#define HM100_FW_SIZE		(HM100_FW_DATA + 8)
++
++/* reg 1 GPO bits (stock hm100 gpo names) */
++#define IOB27B	BIT(2)	/* bal_amp_en */
++#define IOB29A	BIT(3)	/* po_amp_en */
++#define IOB29B	BIT(4)	/* hp_mute */
++#define IOB35A	BIT(5)	/* iv_mute */
++#define IOB35B	BIT(6)	/* pcm_dsd_sel */
++#define IOB39A	BIT(7)	/* lpf_pwr_en */
++
++#define REG3_LOAD_FLASH	BIT(1)
++#define REG3_OSR_BYPASS	BIT(4)
++
++/* stock hiby_target_poweron/poweroff targets (_current_target_on) */
++enum { T_NONE = 0, T_LO = 1, T_PO = 2, T_BAL = 3, T_BALLO = 7 };
++
++/* stock hiby,sa_sound_switch jacks, in report_only_one priority order */
++enum { J_BAL, J_BALLO, J_PO, J_LO, J_NUM };
++static const int jack_target[J_NUM] = { T_BAL, T_BALLO, T_PO, T_LO };
++static const char * const jack_names[J_NUM] = {
++	"balance-detect", "balance-lo-detect", "headset-detect", "lineout-detect",
++};
++
++struct hm100 {
++	struct spi_device *spi;
++	struct device *dev;
++	struct pinctrl *pinctrl;
++	struct pinctrl_state *jtag, *as_spi;
++
++	/* shared bus: sdo = TDI, cs = TMS, clk = TCK */
++	struct gpio_desc *sdo, *tdo, *cs, *clk;
++	struct gpio_desc *run, *njw_sel, *vol_pwr, *dac_pwr1, *hp_bal_sel, *lpf_sel, *dac_pwr2;
++	struct gpio_desc *jtag_sel, *fpga_pwr, *lpf_mute, *line_mute, *po_pwr;
++
++	struct gpio_desc *jack[J_NUM];
++
++	struct mutex lock;		/* bus and state below */
++	struct delayed_work unmute_work, mute_work, volume_work;
++	struct delayed_work poweroff_work;	/* stock switch_work_schedule, 500 jiffies at HZ=100 */
++	struct delayed_work jack_work;		/* stock sa_switch_work_schedule, 20 jiffies */
++	struct delayed_work idle_work;		/* not stock: power the output off when idle */
++	int idle_off;			/* seconds without a stream before power-off, 0 = never */
++	bool streaming;			/* between hw_params and hw_free */
++	bool running;			/* between trigger START and STOP */
++	struct work_struct switch_work;
++	bool mute_pending;		/* stock sound_platform +0x134 */
++	bool powered;			/* a target is on */
++	bool enabled;			/* stock hm100_enabled: FPGA programmed */
++	unsigned int gpo, reg3;
++	unsigned int rate;
++	int target;			/* stock _current_target_on */
++	int want;			/* stock _current_target */
++	int output;			/* Output control: 0 = Auto (jacks), else a target */
++	int jack_state[J_NUM], jack_last[J_NUM], jack_cnt[J_NUM];
++	int jack_target;		/* target the jacks ask for */
++	/* stock _left_level/_right_level, _current_*_level, _plat_vol_gain, _plat_pregain, _plat_vol_lrbalance */
++	int left, right, cur_left, cur_right;
++	int gain, pregain, lrbalance;
++	unsigned int fir_idx;
++	u8 fir[4][1024];		/* hm100_fir_coef_default */
++	unsigned int nfir;
++	u8 fir_custom[1024];		/* hm100_fir_coef_custom */
++	bool fir_custom_set;		/* seeded from the default set, or written by the user */
++	u32 usercode;
++};
++
++/* ---- bit-banged lines, back to back like stock gpiod_set_raw_value sequences ---- */
++
++static void set(struct gpio_desc *d, int v)
++{
++	gpiod_set_raw_value(d, v);
++}
++
++/*
++ * JTAG as stock hbc3000 does it: TCK = clk, TMS = cs, TDI = sdo, TDO = tdo.
++ * jtag_tms / run_test / tap_reset / shift_ir / read_reg follow the stock helpers of the
++ * same names (firmware 1.80, Ghidra), including their settle delays.
++ */
++static void jtag_tms(struct hm100 *h, int tms)
++{
++	set(h->clk, 0);
++	set(h->cs, tms);
++	set(h->clk, 1);
++}
++
++static void run_test(struct hm100 *h, int n)
++{
++	while (n--) {
++		set(h->clk, 0);
++		set(h->clk, 1);
++	}
++}
++
++static void tap_reset(struct hm100 *h)
++{
++	set(h->cs, 1);
++	run_test(h, 8);
++	jtag_tms(h, 0);
++}
++
++static void shift_ir(struct hm100 *h, u8 ir)
++{
++	int i;
++
++	jtag_tms(h, 1);			/* Select-DR */
++	jtag_tms(h, 1);			/* Select-IR */
++	jtag_tms(h, 0);			/* Capture-IR */
++	jtag_tms(h, 0);			/* Shift-IR */
++	udelay(300);
++	set(h->cs, 0);
++	for (i = 0; i < 8; i++) {
++		set(h->clk, 0);
++		if (i == 7)
++			set(h->cs, 1);	/* Exit1-IR on the last bit */
++		set(h->sdo, (ir >> i) & 1);
++		set(h->clk, 1);
++	}
++	udelay(500);
++	jtag_tms(h, 1);			/* Update-IR */
++	jtag_tms(h, 0);			/* Run-Test/Idle */
++	run_test(h, 1);
++	udelay(300);
++	run_test(h, 7);
++}
++
++static u32 read_reg(struct hm100 *h, u8 ir)
++{
++	u32 v = 0;
++	int i;
++
++	shift_ir(h, ir);
++	jtag_tms(h, 1);			/* Select-DR */
++	jtag_tms(h, 0);			/* Capture-DR */
++	jtag_tms(h, 0);			/* Shift-DR */
++	for (i = 0; i < 32; i++) {
++		set(h->clk, 0);
++		if (i == 31)
++			set(h->cs, 1);
++		set(h->clk, 1);
++		v |= (u32)!!gpiod_get_raw_value(h->tdo) << i;
++	}
++	jtag_tms(h, 1);			/* Update-DR */
++	jtag_tms(h, 0);
++	run_test(h, 1);
++	return v;
++}
++
++/* stock hm100_spi_write_lock_or_unlock: CLK low, CS low, 16 x (CLK low, SDO, CLK high), CS high */
++static void frame(struct hm100 *h, u16 w)
++{
++	int i;
++
++	set(h->clk, 0);
++	set(h->cs, 0);
++	for (i = 15; i >= 0; i--) {
++		set(h->clk, 0);
++		set(h->sdo, (w >> i) & 1);
++		set(h->clk, 1);
++	}
++	set(h->cs, 1);
++}
++
++static void reg_write(struct hm100 *h, unsigned int reg, unsigned int data)
++{
++	frame(h, (reg << 10) | (data & 0x3ff));
++}
++
++static void gpo_set(struct hm100 *h, unsigned int bit, int on)
++{
++	h->gpo = on ? h->gpo | bit : h->gpo & ~bit;
++	reg_write(h, 1, h->gpo);
++}
++
++/* stock njw1195a_spi_write: CLK low, LATCH high, LATCH low, 16 x (CLK low, DATA, CLK high), CLK low, LATCH high */
++static void njw_word(struct hm100 *h, u16 w)
++{
++	int i;
++
++	set(h->clk, 0);
++	set(h->cs, 1);
++	set(h->cs, 0);
++	for (i = 15; i >= 0; i--) {
++		set(h->clk, 0);
++		set(h->sdo, (w >> i) & 1);
++		set(h->clk, 1);
++	}
++	set(h->clk, 0);
++	set(h->cs, 1);
++}
++
++/* hm100_share_spi_lock/unlock around the words, 5 us between words */
++static void njw(struct hm100 *h, const u16 *w, int n)
++{
++	int i;
++
++	set(h->njw_sel, 1);
++	for (i = 0; i < n; i++) {
++		if (i)
++			udelay(5);
++		njw_word(h, w[i]);
++	}
++	set(h->njw_sel, 0);
++}
++
++/* stock njw1195a_volume_db, 0.1 dB per level 0..100 */
++static const s16 volume_db[101] = {
++	-960, -880, -830, -780, -730, -710, -690, -670, -650, -630, -620, -610, -600, -590, -580,
++	-570, -560, -550, -540, -530, -520, -510, -500, -490, -480, -470, -460, -450, -440, -430,
++	-420, -410, -400, -390, -380, -370, -360, -350, -340, -330, -320, -310, -300, -290, -280,
++	-275, -270, -265, -260, -255, -250, -245, -240, -235, -230, -225, -220, -215, -210, -205,
++	-200, -195, -190, -185, -180, -175, -170, -165, -160, -155, -150, -145, -140, -135, -130,
++	-125, -120, -115, -110, -105, -100, -95, -90, -85, -80, -75, -70, -65, -60, -55, -50, -45,
++	-40, -35, -30, -25, -20, -15, -10, -5, 0,
++};
++
++static const int gain_db[] = { -24, -12, 0 };	/* low, middle, high (stock _plat_vol_gain) */
++
++/*
++ * stock lrch_volume_imm_set(target, l, r, 1) for PO/BAL: x = table[level] + pregain + 5 * gain,
++ * balance < 0 raises L by -5 * balance, > 0 raises R by 5 * balance; clamp [-955, 315];
++ * code = 255 - (x + 955) / 5; words L 0x00, L 0x10, R 0x20, R 0x30 in one share-select window.
++ */
++static unsigned int njw_code(int x)
++{
++	x = clamp(x, -955, 315);
++	return 255 - (x + 955) / 5;
++}
++
++static void njw_volume_set(struct hm100 *h, int l, int r)
++{
++	int xl = h->pregain + 5 * gain_db[h->gain], xr;
++	unsigned int cl, cr;
++	u16 w[4];
++
++	xr = xl;
++	if (h->lrbalance < 0)
++		xl += -5 * h->lrbalance;
++	else if (h->lrbalance > 0)
++		xr += 5 * h->lrbalance;
++	cl = njw_code(volume_db[l] + xl);
++	cr = njw_code(volume_db[r] + xr);
++	w[0] = cl << 8;
++	w[1] = cl << 8 | 0x10;
++	w[2] = cr << 8 | 0x20;
++	w[3] = cr << 8 | 0x30;
++	njw(h, w, 4);
++}
++
++/* stock volume_work_schedule: one level step per jiffy towards the target, then the target */
++static void hm100_volume_work(struct work_struct *work)
++{
++	struct hm100 *h = container_of(to_delayed_work(work), struct hm100, volume_work);
++
++	mutex_lock(&h->lock);
++	/* lrch_volume_imm_set touches the NJW only for PO and BAL (LO/BAL-LO bypass it) */
++	if (!h->powered || (h->target != T_PO && h->target != T_BAL))
++		goto out;
++	if (h->left == h->cur_left && h->right == h->cur_right) {
++		njw_volume_set(h, h->left, h->right);
++		goto out;
++	}
++	if (h->left == h->cur_left) {
++		if (h->left == -1)
++			h->cur_left = h->left;
++		else
++			h->cur_left++;
++	} else if (h->cur_left == -1) {
++		h->cur_left = h->left;
++	} else if (h->left < h->cur_left) {
++		h->cur_left--;
++	} else {
++		h->cur_left++;
++	}
++	if (h->cur_right == -1)
++		h->cur_right = h->left;
++	else if (h->right < h->cur_right)
++		h->cur_right--;
++	else
++		h->cur_right++;
++	h->cur_left = clamp(h->cur_left, 0, 100);
++	h->cur_right = clamp(h->cur_right, 0, 100);
++	njw_volume_set(h, h->cur_left, h->cur_right);
++	queue_delayed_work(system_dfl_wq, &h->volume_work, 1);
++out:
++	mutex_unlock(&h->lock);
++}
++
++/*
++ * stock hm100_set_samplerate over dsd_i2s_table_hm100 {rate, f0, f1, f2}:
++ * word = f0 << 9 | (f1 & 3) << 7 | (f2 & 0xf) << 3 | mode, mode 2 above 768 kHz (DSD rates).
++ * 705.6k/768k are the HDR (DARWIN-I-CIFB) rates.
++ */
++static const struct { u32 rate; u8 f0, f1, f2; } rate_table[] = {
++	{ 44100, 0, 2, 4 }, { 48000, 1, 2, 4 }, { 88200, 0, 1, 2 }, { 96000, 1, 1, 2 },
++	{ 176400, 0, 0, 1 }, { 192000, 1, 0, 1 }, { 352800, 0, 1, 0 }, { 384000, 1, 1, 0 },
++	{ 705600, 0, 0, 5 }, { 768000, 1, 0, 5 }, { 2822400, 0, 0, 2 }, { 5644800, 0, 0, 1 },
++	{ 11289600, 0, 0, 0 }, { 22579200, 0, 1, 5 },
++};
++
++static int rate_word(unsigned int rate)
++{
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(rate_table); i++)
++		if (rate_table[i].rate == rate)
++			return rate_table[i].f0 << 9 | (rate_table[i].f1 & 3) << 7 |
++			       (rate_table[i].f2 & 0xf) << 3 | (rate - 32000 > 736000 ? 2 : 0);
++	return -EINVAL;
++}
++
++/* ---- SRAM load ---- */
++
++static int load_bitstream(struct hm100 *h, const u8 *bs, size_t n)
++{
++	u8 *buf;
++	int ret;
++
++	buf = kvmalloc(n, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++	memcpy(buf, bs, n);
++
++	/* stock hbc3000_jtag_program_ram */
++	tap_reset(h);
++	shift_ir(h, 0x3c);
++	shift_ir(h, 0x3c);
++	shift_ir(h, 0x15);		/* CONFIG_ENABLE */
++	shift_ir(h, 0x05);		/* ERASE_SRAM */
++	shift_ir(h, 0x05);
++	shift_ir(h, 0x3a);		/* CONFIG_DISABLE */
++	shift_ir(h, 0x15);
++	shift_ir(h, 0x17);		/* XFER_WRITE */
++	jtag_tms(h, 1);			/* Select-DR */
++	jtag_tms(h, 0);			/* Capture-DR */
++	jtag_tms(h, 0);			/* Shift-DR, TMS stays low for the data phase */
++	udelay(500);
++
++	/* data phase: gpio8/11 to blsp_spi3, one transfer like stock (len 444672) */
++	ret = pinctrl_select_state(h->pinctrl, h->as_spi);
++	set(h->cs, 0);
++	if (!ret)
++		ret = spi_write(h->spi, buf, n);
++	pinctrl_select_state(h->pinctrl, h->jtag);
++	kvfree(buf);
++	if (ret)
++		return ret;
++
++	udelay(500);
++	jtag_tms(h, 1);			/* Exit1-DR */
++	jtag_tms(h, 1);			/* Update-DR */
++	jtag_tms(h, 0);
++	shift_ir(h, 0x3a);
++	shift_ir(h, 0x02);		/* NOOP */
++	tap_reset(h);
++	return 0;
++}
++
++static int hm100_load(struct hm100 *h)
++{
++	const struct firmware *fw;
++	const char *name;
++	u32 id, uc, want;
++	ktime_t t0;
++	int ret;
++
++	tap_reset(h);
++	id = read_reg(h, 0x11);
++	/* stock hbc3000_jtag_program_ram's IDCODE check */
++	if (id != 0x0900281b && id != 0x0100381b && (id & ~BIT(12)) != HM100_IDCODE_GW1N9C) {
++		dev_err(h->dev, "IDCODE %08x, not loading\n", id);
++		return -ENODEV;
++	}
++	name = id == HM100_IDCODE_GW1N9C ? HM100_FW_GW1N9C : HM100_FW;
++	ret = request_firmware(&fw, name, h->dev);
++	if (ret)
++		return ret;
++	if (fw->size != HM100_FW_SIZE || memcmp(fw->data, "GW1N", 4)) {
++		dev_err(h->dev, "%s: not a %d-byte bitstream + checksum\n", name, HM100_FW_SIZE);
++		ret = -EINVAL;
++		goto out;
++	}
++
++	/* USERCODE: the checksum's first two bytes (stock compares them with USERCODE >> 8, & 0xff) */
++	want = fw->data[HM100_FW_DATA] << 8 | fw->data[HM100_FW_DATA + 1];
++	uc = read_reg(h, 0x13);
++	if (uc != want) {
++		t0 = ktime_get();
++		ret = load_bitstream(h, fw->data, HM100_FW_DATA);
++		if (ret)
++			goto out;
++		uc = read_reg(h, 0x13);
++		dev_info(h->dev, "IDCODE %08x, %s loaded in %lld ms, usercode %08x\n",
++			 id, name, ktime_ms_delta(ktime_get(), t0), uc);
++		if (uc != want) {
++			dev_err(h->dev, "usercode mismatch, status %08x\n", read_reg(h, 0x41));
++			ret = -EIO;
++			goto out;
++		}
++	}
++	h->usercode = uc;
++out:
++	release_firmware(fw);
++	return ret;
++}
++
++/* stock hm100_set_module_coef(2, 0, coef, 256): module, address, 4 bytes per tap MSB first, commit */
++static void set_module_coef(struct hm100 *h, const u8 *coef)
++{
++	int i, s;
++	u32 c;
++
++	reg_write(h, 0x10, 2);
++	reg_write(h, 0x11, 0);
++	for (i = 0; i < 256; i++) {
++		c = get_unaligned_le32(coef + 4 * i);
++		for (s = 24; s >= 0; s -= 8)
++			reg_write(h, 0x12, (c >> s) & 0xff);
++	}
++	frame(h, 0x4c00);
++}
++
++/* ---- outputs: stock sound_platform (hiby_target_poweron/poweroff and their helpers) ---- */
++
++/* hiby_delay: busy-wait milliseconds */
++static void hiby_delay(unsigned int ms)
++{
++	mdelay(ms);
++}
++
++static void hiby_iv_mute(struct hm100 *h, int m)
++{
++	gpo_set(h, IOB35A, m);
++}
++
++static void hiby_po_mute(struct hm100 *h, int m)
++{
++	if (!m) {
++		gpo_set(h, IOB29B, 0);
++		set(h->lpf_mute, 0);
++	} else {
++		set(h->lpf_mute, 0);
++		gpo_set(h, IOB29B, 1);
++	}
++}
++
++static void hiby_lo_mute(struct hm100 *h, int m)
++{
++	if (!m) {
++		set(h->lpf_mute, 0);
++		set(h->line_mute, 1);
++	} else {
++		set(h->line_mute, 1);
++		set(h->lpf_mute, 1);
++	}
++}
++
++static void hiby_bal_lo_mute(struct hm100 *h, int m)
++{
++	if (!m) {
++		set(h->lpf_mute, 0);
++		set(h->line_mute, 0);
++	} else {
++		set(h->line_mute, 1);
++		set(h->lpf_mute, 1);
++	}
++}
++
++/* audio_dc_dc_en (gpio28), 10 ms, dac_pwr_en (gpio40) */
++static void hiby_dac_power(struct hm100 *h, int on)
++{
++	set(h->dac_pwr1, on);
++	hiby_delay(10);
++	set(h->dac_pwr2, on);
++}
++
++static void hiby_lpf_power(struct hm100 *h, int on)
++{
++	gpo_set(h, IOB39A, on);
++}
++
++static void hiby_lpf_sel(struct hm100 *h, int on)
++{
++	set(h->lpf_sel, on);
++}
++
++static void hiby_volume_power(struct hm100 *h, int on)
++{
++	set(h->vol_pwr, on);
++}
++
++/* po_pwr_en (pm660 gpio13), 10 ms, po_amp_en (IOB29A) */
++static void hiby_po_amp_power(struct hm100 *h, int on)
++{
++	gpiod_set_raw_value_cansleep(h->po_pwr, on);
++	hiby_delay(10);
++	gpo_set(h, IOB29A, on);
++}
++
++static void hiby_bal_po_amp_power(struct hm100 *h, int on)
++{
++	gpo_set(h, IOB27B, on);
++}
++
++/* hm100_program: power on, 50 ms, JTAG select, load; up to 3 tries with a power cycle */
++static int hm100_program(struct hm100 *h)
++{
++	int i, ret = -EIO;
++
++	set(h->fpga_pwr, 1);
++	hiby_delay(50);
++	for (i = 0; i < 3; i++) {
++		set(h->jtag_sel, 0);
++		ret = hm100_load(h);
++		if (!ret)
++			return 0;
++		set(h->jtag_sel, 1);
++		set(h->fpga_pwr, 0);
++		msleep(1000);
++		set(h->fpga_pwr, 1);
++		hiby_delay(50);
++	}
++	set(h->fpga_pwr, 0);
++	return ret;
++}
++
++/* hm100_enable_init */
++static void hm100_enable_init(struct hm100 *h)
++{
++	set(h->cs, 1);		/* control-bus idle after the TAP: CS and CLK high */
++	set(h->clk, 1);
++	h->reg3 &= ~BIT(9);	/* power_down off */
++	reg_write(h, 3, h->reg3);
++	reg_write(h, 1, h->gpo);
++	reg_write(h, 2, 0);
++	set(h->run, 0);		/* hm100_set_samplerate: hm100_stop, reg0 */
++	reg_write(h, 0, rate_word(44100));	/* 0x0120 always, see the top of this file */
++	set(h->run, 1);		/* hm100_start */
++	reg_write(h, 3, h->reg3 | REG3_LOAD_FLASH);	/* per-unit R2R calibration from FPGA flash */
++	hiby_delay(2);
++	reg_write(h, 3, h->reg3);
++	set_module_coef(h, h->fir_idx < h->nfir ? h->fir[h->fir_idx] : h->fir_custom);
++	set_module_coef(h, h->fir_idx < h->nfir ? h->fir[h->fir_idx] : h->fir_custom);
++	set(h->run, 0);		/* hm100_stop */
++}
++
++/* hm100_enable: program if needed, then init */
++static int hm100_enable(struct hm100 *h)
++{
++	const struct firmware *fir;
++	int ret;
++
++	ret = request_firmware(&fir, HM100_FIR, h->dev);
++	if (ret)
++		return ret;
++	if (fir->size < 1024) {
++		release_firmware(fir);
++		return -EINVAL;
++	}
++	h->nfir = min_t(size_t, fir->size / 1024, ARRAY_SIZE(h->fir));
++	memcpy(h->fir, fir->data, h->nfir * 1024);
++	release_firmware(fir);
++	/* stock probe: memcpy(hm100_fir_coef_custom, hm100_fir_coef_default, 0x400) */
++	if (!h->fir_custom_set) {
++		memcpy(h->fir_custom, h->fir[0], sizeof(h->fir_custom));
++		h->fir_custom_set = true;
++	}
++
++	if (!h->enabled) {
++		ret = hm100_program(h);
++		if (ret)
++			return ret;
++		h->enabled = true;
++	}
++	hm100_enable_init(h);
++	return 0;
++}
++
++/* hm100_disable */
++static void hm100_disable(struct hm100 *h)
++{
++	set(h->fpga_pwr, 0);
++	h->enabled = false;
++}
++
++/* NJW volume at power-on: lrch_volume_imm_set(target, l, r, 1), then the input select */
++static void njw_power_on(struct hm100 *h, u16 insel)
++{
++	const u16 w[2] = { 0x2840, insel };
++
++	h->cur_left = h->left;
++	h->cur_right = h->right;
++	njw_volume_set(h, h->left, h->right);
++	njw(h, w, 2);
++}
++
++/* hiby_target_poweron */
++static int hiby_target_poweron(struct hm100 *h, int t)
++{
++	int ret = 0;
++
++	switch (t) {
++	case T_LO:
++		hiby_lo_mute(h, 1);
++		hiby_lpf_sel(h, 1);
++		hiby_dac_power(h, 1);
++		ret = hm100_enable(h);
++		hiby_delay(10);
++		hiby_lpf_power(h, 1);
++		hiby_delay(10);
++		hiby_volume_power(h, 0);
++		hiby_po_amp_power(h, 0);
++		hiby_bal_po_amp_power(h, 0);
++		hiby_lpf_sel(h, 0);
++		break;
++	case T_PO:
++	case T_BAL:
++		hiby_po_mute(h, 1);
++		hiby_dac_power(h, 1);
++		ret = hm100_enable(h);
++		hiby_delay(10);
++		hiby_lpf_power(h, 1);
++		hiby_delay(10);
++		hiby_lpf_sel(h, 1);
++		hiby_delay(t == T_BAL ? 50 : 10);
++		hiby_volume_power(h, 1);
++		hiby_po_amp_power(h, 1);
++		hiby_delay(10);
++		hiby_bal_po_amp_power(h, t == T_BAL);
++		hiby_delay(t == T_BAL ? 50 : 10);
++		njw_power_on(h, t == T_BAL ? 0x2850 : 0x0050);
++		set(h->hp_bal_sel, t == T_BAL);	/* hiby_headphone_balance_select */
++		break;
++	case T_BALLO:
++		hiby_bal_lo_mute(h, 1);
++		hiby_dac_power(h, 1);
++		ret = hm100_enable(h);
++		hiby_delay(10);
++		hiby_lpf_power(h, 1);
++		hiby_delay(10);
++		hiby_lpf_sel(h, 0);
++		hiby_volume_power(h, 0);
++		hiby_po_amp_power(h, 0);
++		hiby_bal_po_amp_power(h, 0);
++		break;
++	default:
++		return -EINVAL;
++	}
++	h->target = t;
++	WRITE_ONCE(h->powered, true);
++	h->mute_pending = true;		/* sound_platform +0x134 */
++	dev_info(h->dev, "target %d on (reg1 0x%03x)%s\n", t, h->gpo, ret ? ", FPGA load failed" : "");
++	return ret;
++}
++
++/* hiby_target_poweroff */
++static void hiby_target_poweroff(struct hm100 *h, int t)
++{
++	switch (t) {
++	case T_LO:
++		hiby_lo_mute(h, 1);
++		hiby_delay(10);
++		break;
++	case T_PO:
++	case T_BAL:
++		hiby_po_mute(h, 1);
++		hiby_delay(10);
++		break;
++	case T_BALLO:
++		hiby_bal_lo_mute(h, 1);
++		hiby_delay(100);
++		break;
++	default:
++		return;
++	}
++	hiby_bal_po_amp_power(h, 0);
++	hiby_po_amp_power(h, 0);
++	hiby_volume_power(h, 0);
++	hiby_lpf_sel(h, 0);
++	hiby_lpf_power(h, 0);
++	hm100_disable(h);
++	hiby_dac_power(h, 0);
++	if (t == T_LO)
++		hiby_lo_mute(h, 0);
++	else if (t == T_BALLO)
++		hiby_bal_lo_mute(h, 0);
++	else
++		hiby_po_mute(h, 0);
++	h->target = T_NONE;
++	WRITE_ONCE(h->powered, false);
++	dev_info(h->dev, "target %d off\n", t);
++}
++
++/* hiby_output_switch; T_NONE powers off after 5 s (500 jiffies at the stock HZ=100) */
++static void hm100_output_switch(struct hm100 *h, int t)
++{
++	if (t == T_NONE) {
++		mutex_lock(&h->lock);
++		h->want = T_NONE;
++		mutex_unlock(&h->lock);
++		mod_delayed_work(system_dfl_wq, &h->poweroff_work, msecs_to_jiffies(5000));
++		return;
++	}
++	cancel_delayed_work_sync(&h->poweroff_work);
++	mutex_lock(&h->lock);
++	h->want = t;
++	if (h->target != t) {
++		int ret;
++
++		if (h->target != T_NONE)
++			hiby_target_poweroff(h, h->target);
++		ret = hiby_target_poweron(h, t);
++		/*
++		 * Not stock (its HAL put the stream in standby on a routing change): a stream is
++		 * playing, but the re-init left the FPGA stopped and the new output muted. Restart
++		 * it the hm100_set_samplerate way and let the unmute work open the output.
++		 */
++		if (!ret && h->running) {
++			set(h->run, 0);
++			reg_write(h, 0, rate_word(h->rate));
++			set(h->run, 1);
++			queue_delayed_work(system_dfl_wq, &h->unmute_work, 0);
++		}
++	}
++	if (h->idle_off && !h->streaming)
++		mod_delayed_work(system_dfl_wq, &h->idle_work, secs_to_jiffies(h->idle_off));
++	mutex_unlock(&h->lock);
++}
++
++/* switch_work_schedule */
++static void hm100_poweroff_work(struct work_struct *work)
++{
++	struct hm100 *h = container_of(to_delayed_work(work), struct hm100, poweroff_work);
++
++	mutex_lock(&h->lock);
++	if (h->want == T_NONE && h->target != T_NONE)
++		hiby_target_poweroff(h, h->target);
++	mutex_unlock(&h->lock);
++}
++
++/*
++ * sa_switch_work_schedule: poll every 200 ms; a jack changes state after 4 reads in a row that
++ * differ from the last reported state; report_only_one: the first plugged jack in DT order wins.
++ */
++static void hm100_jack_work(struct work_struct *work)
++{
++	struct hm100 *h = container_of(to_delayed_work(work), struct hm100, jack_work);
++	int i, t = T_NONE;
++
++	for (i = 0; i < J_NUM; i++) {
++		int v;
++
++		if (!h->jack[i])
++			continue;
++		v = gpiod_get_raw_value_cansleep(h->jack[i]) == 1;
++		if (v == h->jack_last[i]) {
++			h->jack_cnt[i] = 0;
++			continue;
++		}
++		if (++h->jack_cnt[i] > 3) {
++			h->jack_last[i] = v;
++			h->jack_state[i] = v;
++			h->jack_cnt[i] = 0;
++		}
++	}
++	for (i = 0; i < J_NUM; i++)
++		if (h->jack_state[i]) {
++			t = jack_target[i];
++			break;
++		}
++	if (t != h->jack_target) {
++		h->jack_target = t;
++		dev_info(h->dev, "jacks: target %d\n", t);
++		if (!h->output)
++			hm100_output_switch(h, t);
++	}
++	queue_delayed_work(system_dfl_wq, &h->jack_work, msecs_to_jiffies(200));
++}
++
++/* ---- mute/unmute works (stock unmute_work_schedule / mute_work_schedule) ---- */
++
++static void hm100_unmute_work(struct work_struct *work)
++{
++	struct hm100 *h = container_of(to_delayed_work(work), struct hm100, unmute_work);
++
++	/*
++	 * Stock cancels the other work with cancel_delayed_work_sync; two works doing that to
++	 * each other can deadlock, so cancel without waiting: h->lock serializes them anyway.
++	 */
++	cancel_delayed_work(&h->mute_work);
++	mutex_lock(&h->lock);
++	if (h->mute_pending && h->powered) {
++		/* hiby_target_poweron_umute */
++		switch (h->target) {
++		case T_LO:
++			hiby_iv_mute(h, 0);
++			hiby_lo_mute(h, 0);
++			break;
++		case T_PO:
++			hiby_iv_mute(h, 0);
++			hiby_po_mute(h, 0);
++			break;
++		case T_BAL:
++			hiby_iv_mute(h, 0);
++			gpo_set(h, IOB29B, 0);
++			set(h->lpf_mute, 0);
++			set(h->line_mute, 0);
++			break;
++		case T_BALLO:
++			hiby_iv_mute(h, 0);
++			hiby_bal_lo_mute(h, 0);
++			break;
++		}
++	}
++	mutex_unlock(&h->lock);
++}
++
++static void hm100_mute_work(struct work_struct *work)
++{
++	struct hm100 *h = container_of(to_delayed_work(work), struct hm100, mute_work);
++
++	cancel_delayed_work(&h->unmute_work);
++	mutex_lock(&h->lock);
++	if (h->powered) {
++		/* hiby_target_poweron_mute */
++		switch (h->target) {
++		case T_LO:
++		case T_BALLO:
++			hiby_iv_mute(h, 1);
++			break;
++		case T_PO:
++			hiby_iv_mute(h, 1);
++			hiby_po_mute(h, 1);
++			break;
++		case T_BAL:
++			hiby_iv_mute(h, 1);
++			set(h->line_mute, 0);
++			set(h->lpf_mute, 0);
++			gpo_set(h, IOB29B, 1);
++			break;
++		}
++	}
++	h->mute_pending = true;
++	mutex_unlock(&h->lock);
++}
++
++/* Output control change: Auto follows the jacks, anything else is forced */
++static void hm100_switch_work(struct work_struct *work)
++{
++	struct hm100 *h = container_of(work, struct hm100, switch_work);
++
++	hm100_output_switch(h, h->output ? h->output : h->jack_target);
++}
++
++/*
++ * Not stock: stock keeps the whole analog chain (FPGA, R2R, LPF, NJW, amps) powered while a
++ * jack is plugged. After idle_off seconds without a stream, do the stock power-off; the next
++ * hw_params powers the target back on (same 0x0120 init).
++ */
++static void hm100_idle_work(struct work_struct *work)
++{
++	struct hm100 *h = container_of(to_delayed_work(work), struct hm100, idle_work);
++
++	mutex_lock(&h->lock);
++	if (h->powered && !h->streaming) {
++		dev_info(h->dev, "idle %d s, target %d off\n", h->idle_off, h->target);
++		hiby_target_poweroff(h, h->target);
++	}
++	mutex_unlock(&h->lock);
++}
++
++/* ---- DAI ---- */
++
++/* the BE runs at the fixed 384 kHz; the FPGA wants the FE (track) rate, as stock's un-fixed-up BE params */
++static unsigned int fe_rate(struct snd_pcm_substream *substream, struct snd_pcm_hw_params *params)
++{
++	struct snd_soc_pcm_runtime *be = snd_soc_substream_to_rtd(substream);
++	struct snd_soc_dpcm *dpcm;
++	unsigned int rate = params_rate(params);
++
++	for_each_dpcm_fe(be, substream->stream, dpcm)
++		rate = params_rate(&dpcm->fe->dpcm[substream->stream].hw_params);
++	return rate;
++}
++
++static int hm100_hw_params(struct snd_pcm_substream *substream, struct snd_pcm_hw_params *params,
++			   struct snd_soc_dai *dai)
++{
++	struct hm100 *h = snd_soc_component_get_drvdata(dai->component);
++	unsigned int rate = fe_rate(substream, params);
++	int w = rate_word(rate);
++
++	if (substream->stream != SNDRV_PCM_STREAM_PLAYBACK)
++		return 0;
++	if (w < 0) {
++		dev_err(h->dev, "rate %u not supported\n", rate);
++		return w;
++	}
++
++	cancel_delayed_work_sync(&h->idle_work);
++	mutex_lock(&h->lock);
++	if (!h->powered) {
++		/* idle power-off (or not powered yet): bring the wanted output back */
++		int t = h->output ? h->output : h->jack_target;
++
++		if (t != T_NONE)
++			hiby_target_poweron(h, t);
++	}
++	h->streaming = true;
++	h->rate = rate;
++	/*
++	 * Nothing plugged in (Output Auto, no jack): take the stream anyway, the samples go
++	 * nowhere, like stock, whose output switch only powers the DAC off. Plugging a jack
++	 * powers the target on and hm100_output_switch() restarts the running stream at
++	 * h->rate. Refusing it here made PipeWire's probe at login drop the UCM profile for
++	 * the whole session.
++	 */
++	if (h->powered) {
++		gpo_set(h, IOB35B, 0);	/* hm100_set_gpo(pcm_dsd_sel, 0) */
++		set(h->run, 0);		/* hm100_set_samplerate: hm100_stop, reg0 */
++		reg_write(h, 0, w);
++	}
++	mutex_unlock(&h->lock);
++	return 0;
++}
++
++/* stock hiby_snd_trigger; runs atomic, the bus work happens in the works */
++static int hm100_trigger(struct snd_pcm_substream *substream, int cmd, struct snd_soc_dai *dai)
++{
++	struct hm100 *h = snd_soc_component_get_drvdata(dai->component);
++
++	if (substream->stream != SNDRV_PCM_STREAM_PLAYBACK)
++		return 0;
++
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_STOP:
++		WRITE_ONCE(h->running, false);
++		queue_delayed_work(system_dfl_wq, &h->mute_work, 0);
++		break;
++	case SNDRV_PCM_TRIGGER_SUSPEND:
++	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
++		WRITE_ONCE(h->running, false);
++		break;
++	case SNDRV_PCM_TRIGGER_START:
++	case SNDRV_PCM_TRIGGER_RESUME:
++	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
++		WRITE_ONCE(h->running, true);
++		if (READ_ONCE(h->powered))
++			set(h->run, 1);	/* hm100_start */
++		queue_delayed_work(system_dfl_wq, &h->unmute_work, 0);
++		break;
++	}
++	return 0;
++}
++
++/* not stock: stop the FPGA clocks when the stream closes, start the idle power-off timer */
++static int hm100_hw_free(struct snd_pcm_substream *substream, struct snd_soc_dai *dai)
++{
++	struct hm100 *h = snd_soc_component_get_drvdata(dai->component);
++
++	if (substream->stream != SNDRV_PCM_STREAM_PLAYBACK)
++		return 0;
++	mutex_lock(&h->lock);
++	h->streaming = false;
++	WRITE_ONCE(h->running, false);
++	if (h->powered)
++		set(h->run, 0);		/* hm100_stop */
++	mutex_unlock(&h->lock);
++	if (h->idle_off)
++		mod_delayed_work(system_dfl_wq, &h->idle_work, secs_to_jiffies(h->idle_off));
++	return 0;
++}
++
++static const struct snd_soc_dai_ops hm100_dai_ops = {
++	.hw_params = hm100_hw_params,
++	.hw_free = hm100_hw_free,
++	.trigger = hm100_trigger,
++};
++
++static struct snd_soc_dai_driver hm100_dai = {
++	.name = "hm100",
++	.playback = {
++		.stream_name = "Playback",
++		.channels_min = 2,
++		.channels_max = 2,
++		.rates = SNDRV_PCM_RATE_KNOT,
++		.rate_min = 44100,
++		.rate_max = 768000,
++		.formats = SNDRV_PCM_FMTBIT_S16_LE,
++	},
++	.ops = &hm100_dai_ops,
++};
++
++/* ---- controls ---- */
++
++/* integer controls with a signed range */
++struct hm100_int {
++	int min, max;
++	size_t off;
++	bool volume;	/* re-send the NJW volume */
++};
++
++#define HM100_INT(xname, field, xmin, xmax, vol) { \
++	.iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = xname, \
++	.info = int_info, .get = int_get, .put = int_put, \
++	.private_value = (unsigned long)&(struct hm100_int) { \
++		.min = xmin, .max = xmax, .off = offsetof(struct hm100, field), .volume = vol } }
++
++static int int_info(struct snd_kcontrol *kc, struct snd_ctl_elem_info *ui)
++{
++	struct hm100_int *c = (struct hm100_int *)kc->private_value;
++
++	ui->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
++	ui->count = 1;
++	ui->value.integer.min = c->min;
++	ui->value.integer.max = c->max;
++	return 0;
++}
++
++static int int_get(struct snd_kcontrol *kc, struct snd_ctl_elem_value *uc)
++{
++	struct hm100 *h = snd_soc_component_get_drvdata(snd_kcontrol_chip(kc));
++	struct hm100_int *c = (struct hm100_int *)kc->private_value;
++
++	uc->value.integer.value[0] = *(int *)((u8 *)h + c->off);
++	return 0;
++}
++
++static int int_put(struct snd_kcontrol *kc, struct snd_ctl_elem_value *uc)
++{
++	struct hm100 *h = snd_soc_component_get_drvdata(snd_kcontrol_chip(kc));
++	struct hm100_int *c = (struct hm100_int *)kc->private_value;
++	long v = uc->value.integer.value[0];
++	int *p = (int *)((u8 *)h + c->off);
++
++	if (v < c->min || v > c->max)
++		return -EINVAL;
++	mutex_lock(&h->lock);
++	if (*p == v) {
++		mutex_unlock(&h->lock);
++		return 0;
++	}
++	*p = v;
++	mutex_unlock(&h->lock);
++	if (c->volume)	/* lrch_volume_imm_set(..., 0): queue the volume work */
++		queue_delayed_work(system_dfl_wq, &h->volume_work, 0);
++	return 1;
++}
++
++/*
++ * Stereo level 0..100 (stock _left_level/_right_level) as a normal volume control, so PipeWire
++ * and the desktop slider drive it. dB per stock njw1195a_volume_db, at gain "High" (0 dB);
++ * Gain/Pregain/LR Balance add on top as in lrch_volume_imm_set.
++ */
++static const DECLARE_TLV_DB_RANGE(level_tlv,
++	0, 0, TLV_DB_SCALE_ITEM(-9600, 0, 1),
++	1, 4, TLV_DB_SCALE_ITEM(-8800, 500, 0),
++	5, 9, TLV_DB_SCALE_ITEM(-7100, 200, 0),
++	10, 44, TLV_DB_SCALE_ITEM(-6200, 100, 0),
++	45, 100, TLV_DB_SCALE_ITEM(-2750, 50, 0)
++);
++
++static int level_info(struct snd_kcontrol *kc, struct snd_ctl_elem_info *ui)
++{
++	ui->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
++	ui->count = 2;
++	ui->value.integer.min = 0;
++	ui->value.integer.max = 100;
++	return 0;
++}
++
++static int level_get(struct snd_kcontrol *kc, struct snd_ctl_elem_value *uc)
++{
++	struct hm100 *h = snd_soc_component_get_drvdata(snd_kcontrol_chip(kc));
++
++	uc->value.integer.value[0] = h->left;
++	uc->value.integer.value[1] = h->right;
++	return 0;
++}
++
++static int level_put(struct snd_kcontrol *kc, struct snd_ctl_elem_value *uc)
++{
++	struct hm100 *h = snd_soc_component_get_drvdata(snd_kcontrol_chip(kc));
++	long l = uc->value.integer.value[0], r = uc->value.integer.value[1];
++
++	if (l < 0 || l > 100 || r < 0 || r > 100)
++		return -EINVAL;
++	mutex_lock(&h->lock);
++	if (l == h->left && r == h->right) {
++		mutex_unlock(&h->lock);
++		return 0;
++	}
++	h->left = l;
++	h->right = r;
++	mutex_unlock(&h->lock);
++	queue_delayed_work(system_dfl_wq, &h->volume_work, 0);
++	return 1;
++}
++
++static const char * const gain_texts[] = { "Low", "Middle", "High" };
++/* stock output_select names; Auto = follow the jacks (the stock HAL did that from the switches) */
++static const char * const output_texts[] = { "Auto", "Lineout", "Headset", "Balance", "BalanceLo" };
++static const int output_target[] = { 0, T_LO, T_PO, T_BAL, T_BALLO };
++/*
++ * stock plat_set_digital_filter names; only the first four select a coefficient set. Not
++ * stock: "custom" (last, so the stock indices keep their meaning) selects the FIR Custom set,
++ * the stock Darwin .flt path, which stock's init reloaded on every power-up.
++ */
++static const char * const filter_texts[] = {
++	"sharp_roll_off", "slow_roll_off", "short_delay_sharp_roll_off",
++	"short_delay_slow_roll_off", "super_sharp_roll_off", "super_slow_roll_off",
++	"low_dispersion_short_delay", "custom",
++};
++#define FIR_CUSTOM	(ARRAY_SIZE(filter_texts) - 1)
++static SOC_ENUM_SINGLE_EXT_DECL(gain_enum, gain_texts);
++static SOC_ENUM_SINGLE_EXT_DECL(output_enum, output_texts);
++static SOC_ENUM_SINGLE_EXT_DECL(filter_enum, filter_texts);
++
++static int gain_get(struct snd_kcontrol *kc, struct snd_ctl_elem_value *uc)
++{
++	struct hm100 *h = snd_soc_component_get_drvdata(snd_kcontrol_chip(kc));
++
++	uc->value.enumerated.item[0] = h->gain;
++	return 0;
++}
++
++static int gain_put(struct snd_kcontrol *kc, struct snd_ctl_elem_value *uc)
++{
++	struct hm100 *h = snd_soc_component_get_drvdata(snd_kcontrol_chip(kc));
++	unsigned int v = uc->value.enumerated.item[0];
++
++	if (v >= ARRAY_SIZE(gain_texts))
++		return -EINVAL;
++	mutex_lock(&h->lock);
++	if (v == h->gain) {
++		mutex_unlock(&h->lock);
++		return 0;
++	}
++	h->gain = v;
++	mutex_unlock(&h->lock);
++	queue_delayed_work(system_dfl_wq, &h->volume_work, 0);
++	return 1;
++}
++
++static int output_get(struct snd_kcontrol *kc, struct snd_ctl_elem_value *uc)
++{
++	struct hm100 *h = snd_soc_component_get_drvdata(snd_kcontrol_chip(kc));
++	unsigned int i;
++
++	for (i = 0; i < ARRAY_SIZE(output_target); i++)
++		if (output_target[i] == h->output)
++			uc->value.enumerated.item[0] = i;
++	return 0;
++}
++
++static int output_put(struct snd_kcontrol *kc, struct snd_ctl_elem_value *uc)
++{
++	struct hm100 *h = snd_soc_component_get_drvdata(snd_kcontrol_chip(kc));
++	unsigned int v = uc->value.enumerated.item[0];
++
++	if (v >= ARRAY_SIZE(output_target))
++		return -EINVAL;
++	if (output_target[v] == h->output)
++		return 0;
++	h->output = output_target[v];
++	schedule_work(&h->switch_work);
++	return 1;
++}
++
++static int filter_get(struct snd_kcontrol *kc, struct snd_ctl_elem_value *uc)
++{
++	struct hm100 *h = snd_soc_component_get_drvdata(snd_kcontrol_chip(kc));
++
++	uc->value.enumerated.item[0] = h->fir_idx;
++	return 0;
++}
++
++/* stock hm100_set_filter_coef(2, idx): one coefficient load, indices 4-6 only log */
++static int filter_put(struct snd_kcontrol *kc, struct snd_ctl_elem_value *uc)
++{
++	struct hm100 *h = snd_soc_component_get_drvdata(snd_kcontrol_chip(kc));
++	unsigned int v = uc->value.enumerated.item[0];
++
++	if (v >= ARRAY_SIZE(filter_texts))
++		return -EINVAL;
++	mutex_lock(&h->lock);
++	if (v == h->fir_idx) {
++		mutex_unlock(&h->lock);
++		return 0;
++	}
++	h->fir_idx = v;
++	if (v < h->nfir && h->powered) {
++		set_module_coef(h, h->fir[v]);
++	} else if (v == FIR_CUSTOM) {
++		if (h->powered) {	/* as hm100_filter_path_set_by_vendor: twice */
++			set_module_coef(h, h->fir_custom);
++			set_module_coef(h, h->fir_custom);
++		}
++	} else if (v >= h->nfir) {
++		dev_info(h->dev, "filter %s has no coefficient set\n", filter_texts[v]);
++	}
++	mutex_unlock(&h->lock);
++	return 1;
++}
++
++/*
++ * stock hm100_filter_path_set_by_vendor: 1024 bytes (.flt, 256 taps), loaded twice.
++ * The bytes TLV callback gets the whole alsa-lib container (snd_ctl_elem_tlv_read/write):
++ * two header words (type, length) and then the data, as the SOF bytes controls parse it.
++ */
++static int fir_custom_get(struct snd_kcontrol *kc, unsigned int __user *bytes, unsigned int size)
++{
++	struct hm100 *h = snd_soc_component_get_drvdata(snd_kcontrol_chip(kc));
++	struct snd_ctl_tlv hdr = { .numid = 0, .length = sizeof(h->fir_custom) };
++
++	if (size < sizeof(hdr) + sizeof(h->fir_custom))
++		return -EINVAL;
++	if (copy_to_user(bytes, &hdr, sizeof(hdr)) ||
++	    copy_to_user(bytes + 2, h->fir_custom, sizeof(h->fir_custom)))
++		return -EFAULT;
++	return 0;
++}
++
++static int fir_custom_put(struct snd_kcontrol *kc, const unsigned int __user *bytes,
++			  unsigned int size)
++{
++	struct snd_soc_component *c = snd_kcontrol_chip(kc);
++	struct hm100 *h = snd_soc_component_get_drvdata(c);
++	struct snd_kcontrol *filter;
++	struct snd_ctl_tlv hdr;
++	bool reselected;
++	u8 *buf;
++
++	if (size < sizeof(hdr) + sizeof(h->fir_custom))
++		return -EINVAL;	/* stock: short reads are rejected */
++	if (copy_from_user(&hdr, bytes, sizeof(hdr)))
++		return -EFAULT;
++	if (hdr.length != sizeof(h->fir_custom))
++		return -EINVAL;
++	buf = memdup_user(bytes + 2, sizeof(h->fir_custom));
++	if (IS_ERR(buf))
++		return PTR_ERR(buf);
++	mutex_lock(&h->lock);
++	memcpy(h->fir_custom, buf, sizeof(h->fir_custom));
++	h->fir_custom_set = true;
++	if (h->powered) {
++		set_module_coef(h, h->fir_custom);
++		set_module_coef(h, h->fir_custom);
++	}
++	/* a loaded filter is the active one, also after the next power-up */
++	reselected = h->fir_idx != FIR_CUSTOM;
++	h->fir_idx = FIR_CUSTOM;
++	mutex_unlock(&h->lock);
++	kfree(buf);
++	if (reselected) {
++		filter = snd_ctl_find_id_mixer(c->card->snd_card, "Digital Filter");
++		if (filter)
++			snd_ctl_notify(c->card->snd_card, SNDRV_CTL_EVENT_MASK_VALUE, &filter->id);
++	}
++	return 1;
++}
++
++static int nos_get(struct snd_kcontrol *kc, struct snd_ctl_elem_value *uc)
++{
++	struct hm100 *h = snd_soc_component_get_drvdata(snd_kcontrol_chip(kc));
++
++	uc->value.integer.value[0] = !!(h->reg3 & REG3_OSR_BYPASS);
++	return 0;
++}
++
++/* stock hm100_osr_bypass_set_by_vendor: reg3 bit 4, written only on change */
++static int nos_put(struct snd_kcontrol *kc, struct snd_ctl_elem_value *uc)
++{
++	struct hm100 *h = snd_soc_component_get_drvdata(snd_kcontrol_chip(kc));
++	unsigned int reg3 = uc->value.integer.value[0] ? h->reg3 | REG3_OSR_BYPASS :
++				h->reg3 & ~REG3_OSR_BYPASS;
++
++	mutex_lock(&h->lock);
++	if (reg3 == h->reg3) {
++		mutex_unlock(&h->lock);
++		return 0;
++	}
++	h->reg3 = reg3;
++	if (h->powered)
++		reg_write(h, 3, h->reg3);
++	mutex_unlock(&h->lock);
++	return 1;
++}
++
++static const struct snd_kcontrol_new hm100_controls[] = {
++	{
++		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
++		.name = "Headphone Playback Volume",
++		.access = SNDRV_CTL_ELEM_ACCESS_READWRITE | SNDRV_CTL_ELEM_ACCESS_TLV_READ,
++		.tlv.p = level_tlv,
++		.info = level_info, .get = level_get, .put = level_put,
++	},
++	HM100_INT("Pregain", pregain, -955, 315, true),
++	HM100_INT("Idle Power Off Seconds", idle_off, 0, 3600, false),
++	HM100_INT("LR Balance", lrbalance, -254, 254, true),
++	SOC_ENUM_EXT("Gain", gain_enum, gain_get, gain_put),
++	SOC_ENUM_EXT("Output", output_enum, output_get, output_put),
++	SOC_ENUM_EXT("Digital Filter", filter_enum, filter_get, filter_put),
++	SND_SOC_BYTES_TLV("FIR Custom", sizeof(struct snd_ctl_tlv) + 1024, fir_custom_get,
++			  fir_custom_put),
++	SOC_SINGLE_BOOL_EXT("NOS Switch", 0, nos_get, nos_put),
++};
++
++static const struct snd_soc_component_driver hm100_component = {
++	.controls = hm100_controls,
++	.num_controls = ARRAY_SIZE(hm100_controls),
++	.endianness = 1,
++};
++
++/* ---- probe ---- */
++
++static int hm100_gpio(struct hm100 *h, struct gpio_desc **d, const char *name,
++		      enum gpiod_flags flags)
++{
++	*d = devm_gpiod_get(h->dev, name, flags);
++	if (IS_ERR(*d))
++		return dev_err_probe(h->dev, PTR_ERR(*d), "%s gpio\n", name);
++	return 0;
++}
++
++static int hm100_probe(struct spi_device *spi)
++{
++	struct device *dev = &spi->dev;
++	struct hm100 *h;
++	int ret, i, njack = 0;
++
++	h = devm_kzalloc(dev, sizeof(*h), GFP_KERNEL);
++	if (!h)
++		return -ENOMEM;
++	h->spi = spi;
++	h->dev = dev;
++	mutex_init(&h->lock);
++	INIT_DELAYED_WORK(&h->unmute_work, hm100_unmute_work);
++	INIT_DELAYED_WORK(&h->mute_work, hm100_mute_work);
++	INIT_DELAYED_WORK(&h->volume_work, hm100_volume_work);
++	INIT_WORK(&h->switch_work, hm100_switch_work);
++	INIT_DELAYED_WORK(&h->poweroff_work, hm100_poweroff_work);
++	INIT_DELAYED_WORK(&h->jack_work, hm100_jack_work);
++	INIT_DELAYED_WORK(&h->idle_work, hm100_idle_work);
++	spi_set_drvdata(spi, h);
++
++	h->gpo = IOB35A | IOB29B;	/* muted until the first START */
++	h->reg3 = REG3_OSR_BYPASS;	/* NOS: every traced stock reg3 is 0x010/0x012 */
++	h->rate = 44100;		/* stock hm100_sample_rate default: init frame 0x0120 */
++	h->output = 0;			/* Auto */
++	h->left = h->right = 45;
++	h->cur_left = h->cur_right = -1;
++	h->gain = 1;			/* middle */
++	h->idle_off = 60;
++
++	h->pinctrl = devm_pinctrl_get(dev);
++	if (IS_ERR(h->pinctrl))
++		return PTR_ERR(h->pinctrl);
++	h->jtag = pinctrl_lookup_state(h->pinctrl, "jtag");
++	if (IS_ERR(h->jtag))
++		return PTR_ERR(h->jtag);
++	h->as_spi = pinctrl_lookup_state(h->pinctrl, "spi");
++	if (IS_ERR(h->as_spi))
++		return PTR_ERR(h->as_spi);
++	ret = pinctrl_select_state(h->pinctrl, h->jtag);
++	if (ret)
++		return ret;
++
++	if ((ret = hm100_gpio(h, &h->sdo, "sdo", GPIOD_OUT_LOW)) ||
++	    (ret = hm100_gpio(h, &h->tdo, "tdo", GPIOD_IN)) ||
++	    (ret = hm100_gpio(h, &h->cs, "cs", GPIOD_OUT_LOW)) ||
++	    (ret = hm100_gpio(h, &h->clk, "clk", GPIOD_OUT_LOW)) ||
++	    (ret = hm100_gpio(h, &h->run, "run", GPIOD_OUT_LOW)) ||
++	    (ret = hm100_gpio(h, &h->njw_sel, "share-select", GPIOD_OUT_LOW)) ||
++	    (ret = hm100_gpio(h, &h->vol_pwr, "vol-power", GPIOD_OUT_LOW)) ||
++	    (ret = hm100_gpio(h, &h->dac_pwr1, "dac-power1", GPIOD_OUT_LOW)) ||
++	    (ret = hm100_gpio(h, &h->hp_bal_sel, "hp-bal-select", GPIOD_OUT_LOW)) ||
++	    (ret = hm100_gpio(h, &h->lpf_sel, "lpf-select", GPIOD_OUT_LOW)) ||
++	    (ret = hm100_gpio(h, &h->dac_pwr2, "dac-power2", GPIOD_OUT_LOW)) ||
++	    (ret = hm100_gpio(h, &h->jtag_sel, "jtag-select", GPIOD_OUT_LOW)) ||
++	    (ret = hm100_gpio(h, &h->fpga_pwr, "power", GPIOD_OUT_LOW)) ||
++	    (ret = hm100_gpio(h, &h->lpf_mute, "lpf-mute", GPIOD_OUT_LOW)) ||
++	    (ret = hm100_gpio(h, &h->line_mute, "line-mute", GPIOD_OUT_LOW)) ||
++	    (ret = hm100_gpio(h, &h->po_pwr, "po-power", GPIOD_OUT_LOW)))
++		return ret;
++
++	for (i = 0; i < J_NUM; i++) {
++		h->jack[i] = devm_gpiod_get_optional(dev, jack_names[i], GPIOD_IN);
++		if (IS_ERR(h->jack[i]))
++			return dev_err_probe(dev, PTR_ERR(h->jack[i]), "%s gpio\n", jack_names[i]);
++		njack += !!h->jack[i];
++	}
++
++	ret = devm_snd_soc_register_component(dev, &hm100_component, &hm100_dai, 1);
++	if (ret)
++		return ret;
++
++	if (njack) {
++		queue_delayed_work(system_dfl_wq, &h->jack_work, msecs_to_jiffies(200));
++	} else {
++		/* no jack detect in this DT: start on Balance like before */
++		h->output = T_BAL;
++		schedule_work(&h->switch_work);
++	}
++	return 0;
++}
++
++static void hm100_remove(struct spi_device *spi)
++{
++	struct hm100 *h = spi_get_drvdata(spi);
++
++	/*
++	 * No more trigger/hw_params/kcontrol calls before the works go (devm would only
++	 * unregister the component after .remove); then cancel the works that can queue
++	 * others (jack -> switch path -> idle/poweroff) before the ones they queue.
++	 */
++	snd_soc_unregister_component(&spi->dev);
++	cancel_delayed_work_sync(&h->jack_work);
++	cancel_work_sync(&h->switch_work);
++	cancel_delayed_work_sync(&h->poweroff_work);
++	cancel_delayed_work_sync(&h->idle_work);
++	cancel_delayed_work_sync(&h->volume_work);
++	cancel_delayed_work_sync(&h->unmute_work);
++	cancel_delayed_work_sync(&h->mute_work);
++	mutex_lock(&h->lock);
++	if (h->powered)
++		hiby_target_poweroff(h, h->target);
++	mutex_unlock(&h->lock);
++}
++
++static const struct of_device_id hm100_of_match[] = {
++	{ .compatible = "hiby,hm100" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, hm100_of_match);
++
++static const struct spi_device_id hm100_id[] = {
++	{ "hm100" },
++	{ }
++};
++MODULE_DEVICE_TABLE(spi, hm100_id);
++
++static struct spi_driver hm100_driver = {
++	.driver = {
++		.name = "hiby-hm100",
++		.of_match_table = hm100_of_match,
++	},
++	.probe = hm100_probe,
++	.remove = hm100_remove,
++	.id_table = hm100_id,
++};
++module_spi_driver(hm100_driver);
++
++MODULE_DESCRIPTION("HiBy RS6 hm100 FPGA DAC + NJW1195A volume");
++MODULE_LICENSE("GPL");
++MODULE_FIRMWARE(HM100_FW);
++MODULE_FIRMWARE(HM100_FW_GW1N9C);
++MODULE_FIRMWARE(HM100_FIR);

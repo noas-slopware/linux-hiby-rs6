@@ -1,0 +1,27 @@
+From: Noa Himesaka <himesaka@noa.codes>
+Subject: [PATCH] extlinux: add the entries from extlinux.d
+
+Every run writes extlinux.conf anew, so entries added by hand (a known-good
+kernel to fall back to) were lost on the next kernel or initramfs update.
+Append /usr/share/boot-deploy/extlinux.d/*.conf and
+/etc/boot-deploy/extlinux.d/*.conf, looked up the way the hooks are.
+---
+--- a/boot-deploy-functions.sh
++++ b/boot-deploy-functions.sh
+@@ -1180,6 +1180,16 @@
+ 	$_cmdline_line
+ EOF
+ 
++	# Extra entries (a known-good kernel to fall back to, say) are kept in
++	# extlinux.d, like the hooks, since every run writes extlinux.conf anew.
++	local _entry
++	for _entry in /usr/share/boot-deploy/extlinux.d/*.conf /etc/boot-deploy/extlinux.d/*.conf; do
++		[ -f "$_entry" ] || continue
++		log "Adding extlinux entries from $_entry"
++		printf '\n' >> "$work_dir/extlinux.conf"
++		cat "$_entry" >> "$work_dir/extlinux.conf"
++	done
++
+ 	additional_files="$additional_files extlinux.conf:/extlinux/extlinux.conf"
+ }
+ 

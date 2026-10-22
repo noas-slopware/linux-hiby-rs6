@@ -1,0 +1,45 @@
+# Alpine community/mobile-config-firefox 5.5.0-r0 + 0001 (extension popups wider than the
+# window were cut off: Bitwarden 2026.10 is 480px on the RS6's 432px; also stops Firefox
+# re-measuring zoomed/odd-sized popups ten times a second), 0002-0004 (Firefox for Android (Fenix)
+# look and behaviour on narrow windows, Firefox 154 and 158) and 0003 (popup measurement with meta
+# viewport on). pkgrel above Alpine so this wins.
+maintainer="Noa Himesaka <himesaka@noa.codes>"
+pkgname=mobile-config-firefox
+pkgver=5.5.0
+pkgrel=5
+pkgdesc="Firefox tweaks for mobile and privacy"
+url="https://gitlab.postmarketos.org/postmarketOS/mobile-config-firefox"
+arch="noarch"
+license="GPL-3.0-or-later"
+subpackages="$pkgname-librewolf"
+source="https://gitlab.postmarketos.org/postmarketOS/mobile-config-firefox/-/archive/$pkgver/mobile-config-firefox-$pkgver.tar.gz
+	0001-popups-Fit-extension-popups-that-are-wider-than-the-window.patch
+	0002-Match-Firefox-for-Android-Fenix-on-narrow-windows.patch
+	0003-popups-Measure-extension-popups-with-the-mobile-view.patch
+	0004-Match-Fenix-toolbar-URL-editing-and-home-on-Firefox-154-and-158.patch
+	"
+options="!check" # No tests
+
+package() {
+	make DESTDIR="$pkgdir" FIREFOX_DIR=/usr/lib/firefox install
+	make DESTDIR="$pkgdir" FIREFOX_DIR=/usr/lib/firefox-developer-edition install
+	make DESTDIR="$pkgdir" FIREFOX_DIR=/usr/lib/firefox-esr install
+	make DESTDIR="$pkgdir" FIREFOX_DIR=/usr/lib/librewolf install
+}
+
+librewolf() {
+	depends="librewolf"
+	amove /usr/lib/librewolf
+
+	# Librewolf already ships a policies.json file, which does similar
+	# things. Avoid the conflict.
+	rm "$subpkgdir"/usr/lib/librewolf/distribution/policies.json
+}
+
+sha512sums="
+6ef7360ec97b1dcce4a0891b6953bfcc0943846c767cb3e27d0dec2234a4f92a283f67cf0eaecf8abcbf3eef4c6c5cb6f06d7c1c82fa2b907322b9290f853d06  mobile-config-firefox-5.5.0.tar.gz
+191885af8e22a183a58a8f927aa38992acb36a3643ecaa5e560f935f16a045952934ab9b9b6028efe222ee37979726a208354e08ffba2402758cfb1935790d70  0001-popups-Fit-extension-popups-that-are-wider-than-the-window.patch
+801a34da7a8a14566160ca77a86b8b9531aa2694ee08393ddff7140fafd7c735f46772b053687a7ee0a4eb4d1584537b6a4b7119d9b475892ec6b01a66aaae67  0002-Match-Firefox-for-Android-Fenix-on-narrow-windows.patch
+0e5a9c41398702e2bdb8f672e503f16f94ae9570233177475419426b26cc9cc06f6d56d49dfd0b5d55d69ffd2ece611cbf08a555507b2702677c146ea2649c65  0003-popups-Measure-extension-popups-with-the-mobile-view.patch
+5736f5e92ccb182bb98095fb265dd200edb85cada5750eba5253c8ac426047a093cb18f3af2c032bcd011d601e30f7f577b2e3e5929895ae90fd11ceb6bea0dc  0004-Match-Fenix-toolbar-URL-editing-and-home-on-Firefox-154-and-158.patch
+"

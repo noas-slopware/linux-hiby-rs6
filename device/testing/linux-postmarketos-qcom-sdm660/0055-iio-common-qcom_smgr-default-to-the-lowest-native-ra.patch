@@ -1,0 +1,80 @@
+From 2fa29c244e032e4a951680700b121ee842119438 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 12:23:14 +0900
+Subject: [PATCH 55/94] iio: common: qcom_smgr: default to the lowest native
+ rate from 15 Hz
+
+The default sampling rate was the sensor's highest native rate, 200 Hz
+for the RS6's accelerometer, which nobody that leaves the rate alone
+needs: iio-sensor-proxy only raises rates below 10 Hz and reads every
+700 ms, and Android rotates the screen from SENSOR_DELAY_UI
+(66.667 ms). Default to the sensor's lowest native rate at or above
+15 Hz instead, the highest one if all are below, and 15 Hz capped at
+the maximum for a sensor without a native rate list.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ drivers/iio/common/qcom_smgr/qcom_smgr.c | 36 ++++++++++++++++++------
+ 1 file changed, 28 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/iio/common/qcom_smgr/qcom_smgr.c b/drivers/iio/common/qcom_smgr/qcom_smgr.c
+index 7397552e4..68b7e4cb8 100644
+--- a/drivers/iio/common/qcom_smgr/qcom_smgr.c
++++ b/drivers/iio/common/qcom_smgr/qcom_smgr.c
+@@ -25,6 +25,16 @@
+ #define SMGR_REPORT_RATE_HZ		(SMGR_TICKS_PER_SECOND * 2)
+ #define SMGR_VALUE_DIV			65536
+ 
++/*
++ * Default sampling rate, for consumers that never set one: at least the rate
++ * Android asks for when it rotates the screen from the accelerometer
++ * (SENSOR_DELAY_UI, 66.667 ms). iio-sensor-proxy only raises rates below
++ * 10 Hz and reads the buffer every 700 ms, so this is plenty for it as well.
++ * The sensor's lowest native rate at or above it is used (see
++ * qcom_smgr_default_sample_rate()).
++ */
++#define SMGR_DEFAULT_SAMPLE_RATE_HZ	15
++
+ struct qcom_smgr {
+ 	struct device *dev;
+ 
+@@ -207,20 +217,30 @@ static int qcom_smgr_request_single_sensor_info(struct qcom_smgr *smgr,
+ }
+ 
+ /*
+- * Default to the highest rate the sensor supports natively, capped by
+- * the maximum SMGR reports, which may be lower.
++ * The lowest native rate of the sensor at or above SMGR_DEFAULT_SAMPLE_RATE_HZ
++ * (the highest one if all are below it). A sensor without a list of native
++ * rates gets SMGR_DEFAULT_SAMPLE_RATE_HZ, capped at its maximum.
+  */
+ static u16 qcom_smgr_default_sample_rate(const struct qcom_smgr_data_type_item *dt)
+ {
+-	u16 rate = 0;
++	u16 best = 0, highest = 0, rate;
++	size_t i;
+ 
+-	if (dt->native_sample_rates && dt->native_sample_rate_count)
+-		rate = dt->native_sample_rates[dt->native_sample_rate_count - 1];
++	for (i = 0; i < dt->native_sample_rate_count; i++) {
++		rate = dt->native_sample_rates[i];
++		if (rate == 0 || rate > dt->max_sample_rate)
++			continue;
++		highest = max(highest, rate);
++		if (rate >= SMGR_DEFAULT_SAMPLE_RATE_HZ && (!best || rate < best))
++			best = rate;
++	}
+ 
+-	if (rate == 0 || rate > dt->max_sample_rate)
+-		rate = dt->max_sample_rate;
++	if (best)
++		return best;
++	if (highest)
++		return highest;
+ 
+-	return rate;
++	return min_t(u16, SMGR_DEFAULT_SAMPLE_RATE_HZ, dt->max_sample_rate);
+ }
+ 
+ static int qcom_smgr_request_buffering(struct qcom_smgr *smgr,
