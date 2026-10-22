@@ -15,7 +15,7 @@ arch="aarch64"
 license="proprietary"
 options="!strip !check !archcheck !spdx !tracedeps pmb:cross-native"
 makedepends="qca-swiss-army-knife"
-_commit="586d4f0e58f5b299a64b674224c8524b5fae3009"	# firmware branch
+_commit="d967e58b3b0132c0c215777d8d615cbc8d37c5bf"	# firmware branch
 source="$pkgname-$_commit.tar.gz::https://github.com/noas-slopware/linux-hiby-rs6/archive/$_commit.tar.gz
 	30-initramfs-$pkgname.files
 "
@@ -99,6 +99,6 @@ package() {
 }
 
 sha512sums="
-061e55d36bfd82b192195eeec007290c66560795f2273985d03953b6bc2a2661d814c1794c9731442a00e51a4b124085878e679d747d3d7de6c52c4116d40d55  firmware-hiby-rs6-586d4f0e58f5b299a64b674224c8524b5fae3009.tar.gz
+1ec0985ff615c67ee6c0316ea36f8f58b940264a17ad66c92a7be06721b147d04ad9179a54a0fe2a7d9b954eb1deebd69c41c3bbb1427e727d05546b7476cee3  firmware-hiby-rs6-d967e58b3b0132c0c215777d8d615cbc8d37c5bf.tar.gz
 774c8cf27fe42d194e303ab313e071a6b01fe28dcadf5161af0676f02c8d825f1e3458808a3a2e7148c4319f9589202ae0565734ba5291331111091c00c19b7b  30-initramfs-firmware-hiby-rs6.files
 "

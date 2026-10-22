@@ -1,6 +1,6 @@
 # pmos
 
-postmarketOS packages for the HiBy RS6: pmaports `device/testing/` plus a patched `main/boot-deploy`.
+Nura packages for the HiBy RS6: pmaports `device/testing/` plus a patched `main/boot-deploy`.
 
 | package | version | what |
 |---|---|---|
