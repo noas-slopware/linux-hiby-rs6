@@ -5,7 +5,8 @@ description: >
   catches up on the next run), over the tailnet, the way NoaHimesaka1873/koreader-nightly-vellum and
   arch-mact2-PKGBUILDs do it: Tailscale with the TS_OAUTH_CLIENT_ID/TS_AUDIENCE federated identity
   (tag:ci), then rsync over SSH with SSH_HOST, SSH_USER, SSH_KEY into REMOTE_DIR/<target>. The
-  target directory becomes an exact copy (rsync --delete). Without the secrets it does nothing but
+  target directory becomes an exact copy (rsync --delete), minus the site's HTML pages, so
+  YuruMirror's own directory listing shows there. Without the secrets it does nothing but
   say so.
 
 inputs:
@@ -111,6 +112,9 @@ runs:
           exit 0
         fi
         ssh "$remote" "mkdir -p '$dest'"
-        # nura: the whole site except arch/ (which the arch workflow mirrors to its own directory)
-        rsync -rlt --checksum --delete --exclude=/arch/ --stats "$src" "$remote:$dest" | tail -n 16
+        # nura: the whole site except arch/ (which the arch workflow mirrors to its own directory).
+        # No HTML pages on the mirror: YuruMirror shows its own directory listing, and an index.html
+        # in the directory would replace it. --delete-excluded removes any that an older run left.
+        rsync -rlt --checksum --delete --delete-excluded --exclude=/arch/ --exclude='*.html' --stats \
+          "$src" "$remote:$dest" | tail -n 16
         echo "mirrored to https://mirror.funami.tech/${dest#/opt/mirrorwww/}" >> "$GITHUB_STEP_SUMMARY"
