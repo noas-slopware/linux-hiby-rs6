@@ -3,7 +3,7 @@ maintainer="Noa Himesaka <himesaka@noa.codes>"
 pkgname=device-hiby-rs6
 pkgdesc="HiBy RS6"
 pkgver=1
-pkgrel=24
+pkgrel=25
 url="https://nura.eco"
 license="MIT"
 arch="aarch64"
@@ -21,7 +21,22 @@ depends="
 	soc-qcom-sdm660-rproc
 "
 makedepends="alsa-lib-dev devicepkg-dev ffmpeg-dev linux-headers"
-subpackages="$pkgname-systemd:_systemd $pkgname-firefox:_firefox"
+# PipeWire by default (pmbootstrap init offers it as the default; pmbootstrap install selects it
+# when no provider is configured): the UCM, WirePlumber and S/PDIF setup is written for it
+_pmb_select="postmarketos-base-ui-audio-backend"
+_pmb_default="postmarketos-base-ui-audio-backend-pipewire"
+# A DAP needs a music player: our Elisa (Subsonic, bit-perfect output) and a file manager for the
+# music on the microSD card. Recommends only; pmbootstrap install --no-recommends leaves them out.
+_pmb_recommends="
+	dolphin
+	elisa
+	"
+subpackages="
+	$pkgname-audio:_audio
+	$pkgname-firefox:_firefox
+	$pkgname-repo:_repo
+	$pkgname-systemd:_systemd
+	"
 # Firmware comes from firmware-hiby-rs6 (stock slot B blobs), not from the partitions:
 # Nura owns the whole user area (tools/repartition-nura.sh on the main branch), no msm-firmware-loader.
 source="
@@ -57,6 +72,8 @@ source="
 	rs6-vt-lock.c
 	rs6-vt-lock.service
 	logind-hiby-rs6.conf
+	linux-hiby-rs6-6ad9f9de.rsa.pub
+	linux-hiby-rs6.list
 "
 
 build() {
@@ -163,6 +180,32 @@ _firefox() {
 		"$subpkgdir"/usr/lib/firefox/defaults/pref/hiby-rs6.js
 }
 
+_audio() {
+	pkgdesc="$pkgdesc (audio: PipeWire, which the UCM, WirePlumber and S/PDIF setup is written for)"
+	install_if="$pkgname=$pkgver-r$pkgrel postmarketos-base-ui-audio"
+	depends="
+		!postmarketos-base-ui-audio-backend-pulseaudio
+		postmarketos-base-ui-audio-backend-pipewire
+	"
+
+	mkdir -p "$subpkgdir"
+}
+
+_repo() {
+	pkgdesc="$pkgdesc (the linux-hiby-rs6 package repository and its signing key)"
+	install_if="$pkgname=$pkgver-r$pkgrel"
+	depends=
+
+	# The key in both directories apk reads. /etc/apk/keys like postmarketos-keys; /usr/lib/apk/keys
+	# like postmarketos-repo-nightly, because pmbootstrap bind-mounts its own key directory over
+	# /etc/apk/keys while it installs a rootfs, so a key a package puts there never reaches the image
+	install -Dm644 "$srcdir"/linux-hiby-rs6-6ad9f9de.rsa.pub -t "$subpkgdir"/etc/apk/keys/
+	install -Dm644 "$srcdir"/linux-hiby-rs6-6ad9f9de.rsa.pub -t "$subpkgdir"/usr/lib/apk/keys/
+	# like postmarketos-repo-nightly: GitHub Pages and YuruMirror carry the same packages
+	install -Dm644 "$srcdir"/linux-hiby-rs6.list \
+		"$subpkgdir"/usr/lib/apk/repositories.d/90-linux-hiby-rs6.list
+}
+
 sha512sums="
 75b456548714fe19db94278ad79db720afd063689ebded38ed1a01dd7ae367d1f99deff9e38c37207ea60bf0b66ee41a2d0df984e9a3045cdef64c74907b3a94  deviceinfo
 20c49c33c9a887ad9c7c724de9047d9855e12c0a7b494beb8d60c2e584a174425d897d0afb875a204ac1ba841aca2c65df26eed9c5736ce99a6f4b516c6184a0  kernel-cmdline.conf
@@ -196,4 +239,6 @@ f06df031f5340962fcf4f87a8ee6d0e192f8e400cd27663b958aee11fd30cb4c075f78b308998dd0
 4e03a01c10147551f0de554c2bc5e78dece736b3fb3a497eab3bea7716d206378e2bfd174753a9daaab2fa622eac04218cf9f4169f005961183870c84e49bf15  rs6-vt-lock.c
 f131dfbff8e41ef0ead2ecda14424eb23eecb7a6a4069212cf27262cd5ca12f48225af97230a228e085b834714820724c35df313d826ce3e48ae0d785804469f  rs6-vt-lock.service
 48e6c6de3a4897fda5895a5d9ce0b148440ffc9e0053750727bd6bf103b6e4544eb891ac5a0edd2624c2173922792ae9e217ecfe407d5288f96f53285fbbb279  logind-hiby-rs6.conf
+029c37e28b59033cc1b6a9baab13d22c25ec87f356308273e3180fcba74f79329e3086e013b0a49efcc5908774304d5dd33cf67ea633c63a7dbe390ff3f339b9  linux-hiby-rs6-6ad9f9de.rsa.pub
+0a32c6c913ce2601901949ab6b82d21ffb3ae385cb3f1dc319b7e10e68b32592686e8eea875f5319db76f43b039a0e93b759ba290de57383dafba2e1f362e40c  linux-hiby-rs6.list
 "

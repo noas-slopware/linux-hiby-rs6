@@ -4,7 +4,7 @@ Nura packages for the HiBy RS6: pmaports `device/testing/` plus a patched `main/
 
 | package | version | what |
 |---|---|---|
-| `device-hiby-rs6` | 1-r24 | device package: deviceinfo, kernel cmdline, UCM, PipeWire/WirePlumber config and scripts, udev rules, KWin effects config, `darwinctl`, touch boost, VT lock, Firefox V4L2 shim (subpackages `-systemd` and `-firefox`) |
+| `device-hiby-rs6` | 1-r25 | device package: deviceinfo, kernel cmdline, UCM, PipeWire/WirePlumber config and scripts, udev rules, KWin effects config, `darwinctl`, touch boost, VT lock, Firefox V4L2 shim (subpackages `-systemd`, `-firefox`, `-audio`: PipeWire as the audio backend, `-repo`: this repository and its signing key; recommends Elisa and Dolphin) |
 | `firmware-hiby-rs6` | 2.10-r6 | stock firmware 2.10 set (HiBy's own WLAN firmware c2-00708) plus the Xiaomi tulip a530 PFP 0x5ff11a; the source is a GitHub archive of the `firmware` branch |
 | `linux-postmarketos-qcom-sdm660` | 7.2.3-r29 | sdm660-mainline `qcom-sdm660-7.2.y` at a pinned commit plus the 94-patch series (same files as `patches/linux` on `main`) and the kernel config |
 | `rs6-dac-plasma` | 1.0-r4 | Plasma System Settings page and quick settings for the DAC and screen rotation |
@@ -38,13 +38,12 @@ pmbootstrap build linux-postmarketos-qcom-sdm660 firmware-hiby-rs6 rs6-spdif dev
 pmbootstrap -y install --split --no-sparse --filesystem ext4 --password <your password>
 ```
 
-In the pmbootstrap config, set the provider with the FULL package name, or PulseAudio is installed
-instead of PipeWire:
-
-```
-[providers]
-postmarketos-base-ui-audio-backend = postmarketos-base-ui-audio-backend-pipewire
-```
+PipeWire is the device's default audio backend (`_pmb_default` in `device-hiby-rs6`, which `pmbootstrap init`
+offers and `pmbootstrap install` uses), and `device-hiby-rs6-audio` keeps PulseAudio out, so no `[providers]`
+entry is needed any more.
+`device-hiby-rs6-repo` adds this repository (GitHub Pages and YuruMirror) to
+`/usr/lib/apk/repositories.d/` and its key to `/etc/apk/keys/` and `/usr/lib/apk/keys/`, so an installed RS6 keeps getting
+these packages with `apk upgrade`.
 
 The packages that patch upstream projects (`mesa`, `qt6-qtbase`, `kiconthemes`, `elisa`, `plasma-mobile`,
 `plasma-keyboard`, `mobile-config-firefox`, `usb-moded-notify`, `boot-deploy`) are built the same way; build them
