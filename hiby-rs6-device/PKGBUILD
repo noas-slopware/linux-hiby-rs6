@@ -27,7 +27,7 @@ pkgname=(
   hiby-rs6-plasma
 )
 pkgver=1
-pkgrel=18
+pkgrel=19
 pkgdesc='HiBy RS6'
 url='https://github.com/noas-slopware/linux-hiby-rs6'
 arch=(aarch64)
@@ -55,6 +55,7 @@ source=(
   NetworkManager-hiby-rs6-wifi.conf
   86-hiby-rs6-usbnet-nm.rules
   logind-hiby-rs6-plasma.conf
+  limits-hiby-rs6-audio.conf
   hiby-rs6-growroot.service
   hiby-rs6-growroot-done.service
 )
@@ -77,6 +78,7 @@ sha512sums=('7f7d810c016ac2f28270ece049aa88f52e4ee375a775b0f66bbbc776c5552c16f32
             'ea07405abdbcdfa94681d10e9821d96d759beef5380bb20d8341b2b7f574b869952083bb486cc48df04b70331803f6a52140018e2800167a58b7f02953058ac3'
             '33336caf63182636051a2a56c1078da5ece89d55f197394dac3d10ad2921643062a2ceac89cf87ba1a6cdbd01f7c57007a1339016b4f568833b8b200f02b8a31'
             '4ba22390b85fbad9b3b3223dcc8bebe85e407550d944d2a1976b05286fd79fe54609f3dc7c31563c089063188902478576558dfda3a606e762e385a2ec1da981'
+            'e986d2d33f4eaf83987fe33bf8cd3336e8435d22fdb82f80c885af39c59c66769cf22776a7b8f0609e801e7059054f1707954459bda1e1b4a3b7fe9c310505ed'
             '1cfb8dc36b4f4abc3b8018b3cec186fc2a16afc29dcd85eb0449fe00eade7f655c9ab6c3c5aedc6d1f19931c201b7994aff6d81fbf22f735e240a336404c9cd5'
             '8e721e5a1d32c3f6eae67715854c5bcb25a83c29679a311262794560948aba09a31f12de6559cb220fe3714e706cbac930a7a8baa0e9da4a169233a417920721')
 
@@ -226,13 +228,14 @@ package_hiby-rs6-audio() {
     vlc-plugin-pulse
     wireplumber
   )
-  backup=(etc/xdg/plasmaparc)
+  backup=(etc/xdg/plasmaparc etc/security/limits.d/25-hiby-rs6-audio.conf)
   local us; us=$(_us)
 
   install -Dm644 "$us"/audio/ucm-card.conf "$pkgdir/usr/share/alsa/ucm2/conf.d/sdm660/HiBy RS6.conf"
   install -Dm644 "$us"/audio/ucm-HiFi.conf "$pkgdir"/usr/share/alsa/ucm2/HiBy/RS6/HiFi.conf
   install -Dm644 "$us"/audio/pipewire-rs6.conf \
     "$pkgdir"/usr/share/pipewire/pipewire.conf.d/50-hiby-rs6.conf
+  install -Dm644 "$srcdir"/limits-hiby-rs6-audio.conf "$pkgdir"/etc/security/limits.d/25-hiby-rs6-audio.conf
   install -Dm644 "$us"/audio/pipewire-pulse-rs6.conf \
     "$pkgdir"/usr/share/pipewire/pipewire-pulse.conf.d/50-hiby-rs6.conf
   install -Dm644 "$us"/audio/wireplumber-rs6.conf \
