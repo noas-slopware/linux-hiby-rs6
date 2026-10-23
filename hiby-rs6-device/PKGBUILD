@@ -27,14 +27,14 @@ pkgname=(
   hiby-rs6-plasma
 )
 pkgver=1
-pkgrel=12
+pkgrel=14
 pkgdesc='HiBy RS6'
 url='https://github.com/noas-slopware/linux-hiby-rs6'
 arch=(aarch64)
 license=(MIT)
 makedepends=(alsa-lib ffmpeg linux-api-headers)
 # senpai branch (default) of noas-slopware/linux-hiby-rs6
-_rs6commit=2c47a2fced854dab710993791f84460efb6ef86a
+_rs6commit=7c41fb1dccd6f005e285688617b7826532f5a77c
 source=(
   "linux-hiby-rs6-$_rs6commit.tar.gz::https://github.com/noas-slopware/linux-hiby-rs6/archive/$_rs6commit.tar.gz"
   hiby-rs6-extlinux
@@ -58,7 +58,7 @@ source=(
   hiby-rs6-growroot.service
   hiby-rs6-growroot-done.service
 )
-sha512sums=('af5db8f29ee970b6bb8c30ec82ba091a026f79eb2a1db9fd5ac27b0d63f5c585d649dad886db94bf6ad286a18acb974992b2698bb3b788cb3ed421a2895362dc'
+sha512sums=('949610892c363f930f36795d09daab44a84b30efa4276e70ea362ab3486f92fd23ff6b0dbcf937988e4d2a741ed5e7e1f7085da3705139d06d06cb59ab1ea92c'
             '393c11160c5bdc51f8b6eb498a311344a19a363eb55e20695b492e3afd2a2699a9afa02edb82c887fb5d3a3b9896aa2d2a83edb76c82d73a0b37b36b839f00c0'
             'e62eca3562027a7f456932cf7a7b983fb29648e99de00267b818e99db9c99c5dac53b5638fc083d48f690f829674ab11c863355dce103fb7784f394275b0a72d'
             '8186a2e0a5b242f1b51729cd98b6fbfafe93be128326c0766127dcd2e11f716b96679cc2d1188cd85dcb730f6a069e08b1891566564a342994a036c25fd7413e'
