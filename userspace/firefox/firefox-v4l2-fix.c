@@ -17,13 +17,15 @@
  *
  * Firefox 156+ only puts the system FFmpeg ahead of its bundled ffvpx in the decoder process
  * when Vulkan video decoding is usable (PDMFactory::CreateRddPDMs), which it never is on the
- * Adreno 512, so ffvpx would claim VP8/VP9 and decode them in software. Hide ffvpx's VP8/VP9
- * decoders (not its encoders) whenever the system libavcodec has a decoder for the codec, so
- * Firefox's own fallback moves on to the system FFmpeg and its *_v4l2m2m wrappers.
+ * Adreno 512, so ffvpx would claim its codecs and decode them in software. Firefox 158's ffvpx
+ * has H.264 and HEVC besides VP8/VP9. Hide every ffvpx video decoder (not its encoders, not
+ * audio) whose codec the system libavcodec has a *_v4l2m2m wrapper for, so Firefox's own
+ * fallback always moves on to the system FFmpeg and Venus.
  */
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <pthread.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <libavcodec/avcodec.h>
@@ -170,77 +172,65 @@ static int from_ffvpx(void *fn)
 
 /*
  * AVCodecID values differ between FFmpeg majors (VP9 is 167 in libavcodec 62, 166 in 63) and
- * ffvpx need not be the system's major, so each library's VP8/VP9 ids are learnt from its own
- * codec names.
+ * ffvpx need not be the system's major, so codecs are matched by name, never by id.
  */
-static int vpx_index(const char *name)
+static const char *base_name(const char *name)
 {
-	if (!name)
-		return -1;
-	if (!strcmp(name, "vp8") || !strcmp(name, "libvpx"))
-		return 0;
-	if (!strcmp(name, "vp9") || !strcmp(name, "libvpx-vp9"))
-		return 1;
-	return -1;
+	if (!strcmp(name, "libvpx"))
+		return "vp8";
+	if (!strcmp(name, "libvpx-vp9"))
+		return "vp9";
+	return name;
 }
 
-/* VP8 (0) / VP9 (1) codec ids of ffvpx, or AV_CODEC_ID_NONE */
-static enum AVCodecID ffvpx_vpx_id(int k)
+/* does the system libavcodec have a <base>_v4l2m2m decoder? */
+static int system_has_v4l2(const char *base)
 {
-	static int learnt;
-	static enum AVCodecID ids[2];
+	char want[64];
 	const AVCodec *c;
 	void *it = NULL;
-	int i;
-
-	pthread_mutex_lock(&lock);
-	if (!learnt) {
-		while ((c = ffvpx_iterate(&it)))
-			if ((i = vpx_index(c->name)) >= 0 && ids[i] == AV_CODEC_ID_NONE)
-				ids[i] = c->id;
-		learnt = 1;
-	}
-	pthread_mutex_unlock(&lock);
-	return ids[k];
-}
-
-/* does the system libavcodec decode VP8 (0) / VP9 (1), natively or through V4L2? */
-static int system_decodes(int k)
-{
-	static const char *const names[2][2] = { { "vp8", "vp8_v4l2m2m" }, { "vp9", "vp9_v4l2m2m" } };
-	static int known[2], answer[2];
-	const AVCodec *c;
-	void *it = NULL;
-	int found = 0;
 
 	if (!sys_iterate || !sys_is_decoder)
 		return 0;
-	pthread_mutex_lock(&lock);
-	if (!known[k]) {
-		while ((c = sys_iterate(&it)))
-			if (c->name && sys_is_decoder(c) &&
-			    (!strcmp(c->name, names[k][0]) || !strcmp(c->name, names[k][1]))) {
-				found = 1;
-				break;
-			}
-		answer[k] = found;
-		known[k] = 1;
-	}
-	found = answer[k];
-	pthread_mutex_unlock(&lock);
-	return found;
+	if ((size_t)snprintf(want, sizeof(want), "%s_v4l2m2m", base) >= sizeof(want))
+		return 0;
+	while ((c = sys_iterate(&it)))
+		if (c->name && sys_is_decoder(c) && !strcmp(c->name, want))
+			return 1;
+	return 0;
 }
 
+#define MAX_SEEN 64
+static struct {
+	const AVCodec *codec;
+	int hide;
+} seen[MAX_SEEN];
+
+/*
+ * Hide every ffvpx video decoder (H.264, HEVC, VP8, VP9 in Firefox 158) the system FFmpeg can
+ * hand to Venus, so Firefox always falls through to the system FFmpeg and hardware decoding.
+ */
 static int hide_in_ffvpx(const AVCodec *c)
 {
-	int k;
+	int i, hide;
 
-	if (!ffvpx_iterate || !ffvpx_is_decoder || !ffvpx_is_decoder(c))
+	if (!c || !c->name || c->type != AVMEDIA_TYPE_VIDEO || !ffvpx_is_decoder ||
+	    !ffvpx_is_decoder(c))
 		return 0;
-	for (k = 0; k < 2; k++)
-		if (c->id != AV_CODEC_ID_NONE && c->id == ffvpx_vpx_id(k))
-			return system_decodes(k);
-	return 0;
+	pthread_mutex_lock(&lock);
+	for (i = 0; i < MAX_SEEN && seen[i].codec; i++)
+		if (seen[i].codec == c) {
+			hide = seen[i].hide;
+			pthread_mutex_unlock(&lock);
+			return hide;
+		}
+	hide = system_has_v4l2(base_name(c->name));
+	if (i < MAX_SEEN) {
+		seen[i].codec = c;
+		seen[i].hide = hide;
+	}
+	pthread_mutex_unlock(&lock);
+	return hide;
 }
 
 static const AVCodec *wrap_ffvpx_iterate(void **opaque)
