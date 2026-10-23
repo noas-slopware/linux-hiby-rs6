@@ -1,0 +1,232 @@
+From a30460f4daa7cb0633c4026d8f3be47e83d59458 Mon Sep 17 00:00:00 2001
+From: Devin Lin <espidev@gmail.com>
+Date: Sat, 17 Oct 2026 10:11:25 -0400
+Subject: [PATCH] lockscreen: Overhaul and fix state handling
+
+(cherry picked from commit 528cfe59aaa017d86f4f582129f00b870f5e7db5)
+
+Co-authored-by: Devin Lin <espidev@gmail.com>
+---
+ shell/contents/lockscreen/LockScreenState.qml | 89 +++++++++++++++----
+ shell/contents/lockscreen/PasswordBar.qml     | 30 ++++---
+ 2 files changed, 91 insertions(+), 28 deletions(-)
+
+diff --git a/shell/contents/lockscreen/LockScreenState.qml b/shell/contents/lockscreen/LockScreenState.qml
+index 5125c60f1..76715235c 100644
+--- a/shell/contents/lockscreen/LockScreenState.qml
++++ b/shell/contents/lockscreen/LockScreenState.qml
+@@ -15,6 +15,12 @@ QtObject {
+     // whether waiting for authentication after trying password
+     property bool waitingForAuth: false
+ 
++    // whether PAM has requested input and is waiting for our response
++    property bool promptReady: false
++
++    // whether the user submitted a response that is queued until a PAM prompt is ready
++    property bool responsePending: false
++
+     // the info message given
+     property string info: ""
+ 
+@@ -35,21 +41,57 @@ QtObject {
+     signal unlockSucceeded()
+     signal unlockFailed()
+ 
+-    Component.onCompleted: authenticator.startAuthenticating();
++    Component.onCompleted: {
++        promptReady = authenticator.prompt !== "" || authenticator.promptForSecret !== "";
++        if (!promptReady) {
++            authenticator.startAuthenticating();
++        }
++    }
+ 
+     function tryPassword() {
+-        // ensure it's in authenticating state (it might get unset after suspend)
+-        authenticator.startAuthenticating();
++        if (waitingForAuth) {
++            return;
++        }
+ 
+-        // prevent typing lock when password is empty
+-        if (root.password !== '') {
+-            root.waitingForAuth = true;
++        waitingForAuth = true;
++        responsePending = true;
++        if (promptReady) {
++            Qt.callLater(root.respondToPrompt);
++        } else {
++            retryAuthentication();
++        }
++    }
++
++    function respondToPrompt() {
++        if (!responsePending || !promptReady) {
++            return;
++        }
++        responsePending = false;
++        promptReady = false;
++        authenticator.respond(password);
++    }
++
++    function handlePrompt(message: string): void {
++        if (message === "") {
++            return;
++        }
++
++        promptReady = true;
++        if (responsePending) {
++            // move to next event loop after kscreenlocker handles
++            Qt.callLater(root.respondToPrompt);
++        } else if (waitingForAuth) {
++            waitingForAuth = false;
++            resetPassword();
++            pinLabel = message;
+         }
+-        console.log('attempt password');
+-        authenticator.respond(root.password);
+     }
+ 
+     function resetPassword() {
++        if (responsePending) {
++            responsePending = false;
++            waitingForAuth = false;
++        }
+         password = "";
+         root.reset();
+     }
+@@ -58,19 +100,27 @@ QtObject {
+         pinLabel = enterPinLabel;
+     }
+ 
+-    property var graceLockTimer: Timer {
+-        interval: 3000
+-        onTriggered: {
+-            root.waitingForAuth = false;
+-            root.password = "";
++    function retryAuthentication(): void {
++        if (!canBeUnlocked && !promptReady && (!waitingForAuth || responsePending)) {
+             authenticator.startAuthenticating();
+         }
+     }
+ 
++    // Retry until a prompt arrives
++    property var authenticationRetryTimer: Timer {
++        interval: 1000
++        repeat: true
++        running: !root.canBeUnlocked && !root.promptReady
++            && (!root.waitingForAuth || root.responsePending)
++        onTriggered: root.retryAuthentication()
++    }
++
+     property var connections: Connections {
+         target: authenticator
+ 
+         function onSucceeded() {
++            root.responsePending = false;
++            root.promptReady = false;
+             if (authenticator.hadPrompt) {
+                 console.log('login succeeded');
+                 root.waitingForAuth = false;
+@@ -84,9 +134,15 @@ QtObject {
+                 return;
+             }
+             console.log('login failed');
+-            graceLockTimer.restart();
++            root.responsePending = false;
++            root.promptReady = false;
++            root.waitingForAuth = false;
++            root.resetPassword();
+             root.pinLabel = root.wrongPinLabel;
+             root.unlockFailed();
++
++            // Let the backend finish handling failure before starting the next
++            Qt.callLater(root.retryAuthentication);
+         }
+ 
+         function onInfoMessageChanged() {
+@@ -99,13 +155,12 @@ QtObject {
+             console.log('error: ' + authenticator.errorMessage);
+         }
+ 
+-        // TODO
+         function onPromptChanged() {
+-            console.log('prompt: ' + authenticator.prompt);
++            root.handlePrompt(authenticator.prompt);
+         }
+ 
+         function onPromptForSecretChanged() {
+-            console.log('prompt secret: ' + authenticator.promptForSecret);
++            root.handlePrompt(authenticator.promptForSecret);
+         }
+     }
+ }
+diff --git a/shell/contents/lockscreen/PasswordBar.qml b/shell/contents/lockscreen/PasswordBar.qml
+index e7a96091c..d738a35c6 100644
+--- a/shell/contents/lockscreen/PasswordBar.qml
++++ b/shell/contents/lockscreen/PasswordBar.qml
+@@ -44,6 +44,9 @@ Rectangle {
+             while (root.lockScreenState.password.length > dotDisplayModel.count) {
+                 dotDisplayModel.append({"char": root.lockScreenState.password.charAt(dotDisplayModel.count)});
+             }
++            for (let i = 0; i < dotDisplayModel.count; ++i) {
++                dotDisplayModel.setProperty(i, "char", root.lockScreenState.password.charAt(i));
++            }
+         }
+     }
+ 
+@@ -116,6 +119,7 @@ Rectangle {
+         focus: root.isKeypadOpen && root.lockScreenState.isKeyboardMode
+         z: 1
+         inputMethodHints: Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase | Qt.ImhSensitiveData
++        readOnly: root.lockScreenState.waitingForAuth
+ 
+         onFocusChanged: {
+             if (focus) {
+@@ -124,7 +128,6 @@ Rectangle {
+         }
+ 
+         property bool externalEdit: false
+-        property string prevText: ""
+ 
+         Connections {
+             target: root.lockScreenState
+@@ -133,6 +136,7 @@ Rectangle {
+                 if (textField.text != root.lockScreenState.password) {
+                     textField.externalEdit = true;
+                     textField.text = root.lockScreenState.password;
++                    textField.externalEdit = false;
+                 }
+             }
+         }
+@@ -144,17 +148,21 @@ Rectangle {
+         }
+ 
+         onTextChanged: {
+-            if (!externalEdit) {
+-                if (prevText.length > text.length) { // backspace
+-                    for (let i = 0; i < (prevText.length - text.length); i++) {
+-                        root.backspace();
+-                    }
+-                } else if (text.length > 0) { // key enter
+-                    root.keyPress(text.charAt(text.length - 1));
+-                }
++            if (externalEdit) {
++                return;
+             }
+-            prevText = text;
+-            externalEdit = false;
++            if (root.lockScreenState.waitingForAuth) {
++                externalEdit = true;
++                text = root.lockScreenState.password;
++                externalEdit = false;
++                return;
++            }
++
++            const previousPassword = root.lockScreenState.password;
++            root.previewCharIndex = text.length > previousPassword.length && text.startsWith(previousPassword) ? text.length - 1 : -2;
++            root.lockScreenState.resetPinLabel();
++            root.lockScreenState.password = text;
++            letterTimer.restart();
+         }
+     }
+ 

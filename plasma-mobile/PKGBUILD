@@ -1,11 +1,11 @@
 # Maintainer: Balló György <ballogyor+arch at gmail dot com>
 # Contributor: Devin Lin <devin@kde.org>
-# HiBy RS6 ([rs6] repo): this PKGBUILD as Arch has it, plus patches/plasma-mobile: brightness slider bus-name watcher, overlay graphics released while hidden; arch=(aarch64), pkgrel 1.1.
+# HiBy RS6 ([rs6] repo): this PKGBUILD as Arch has it, plus patches/plasma-mobile: brightness slider bus-name watcher, overlay graphics released while hidden, lock screen password queued until PAM prompts (6.8.1's a30460f4d); arch=(aarch64), pkgrel 1.2.
 
 pkgname=plasma-mobile
 pkgver=6.8.0
 _dirver=$(echo $pkgver | cut -d. -f1-3)
-pkgrel=1.1
+pkgrel=1.2
 pkgdesc='Plasma shell for mobile devices'
 arch=(aarch64)
 url='https://plasma-mobile.org/'
@@ -72,11 +72,13 @@ optdepends=(
 )
 source=("https://download.kde.org/stable/plasma/$_dirver/$pkgname-$pkgver.tar.xz"{,.sig}
         0001-screenbrightnessplugin-Watch-the-bus-name-not-the-interface-name.patch
-        0002-mobileshell-release-overlay-graphics-while-hidden-sm.patch)
+        0002-mobileshell-release-overlay-graphics-while-hidden-sm.patch
+        0003-lockscreen-Overhaul-and-fix-state-handling.patch)
 sha256sums=('8323525a40c8e7a3fbf9fb002bc9655627ed53cd302391fbee5d543db4f390af'
             'SKIP'
             'cd952c64ae04fc0b3d306984d5a1f9db708fa60d6be5166810dfdb65385f5485'
-            'e8ba64338c2a65aee6c07b55ee64bd6993652b4ce515dc4d9482061ba5d7c7d7')
+            'e8ba64338c2a65aee6c07b55ee64bd6993652b4ce515dc4d9482061ba5d7c7d7'
+            '060621316f36096f73f8386b0410086d62957775ebaa8f76527ab90f5c64e9a6')
 validpgpkeys=(
   E0A3EB202F8E57528E13E72FD7574483BB57B18D # Jonathan Esk-Riddell <jr@jriddell.org>
   0AAC775BB6437A8D9AF7A3ACFE0784117FBCE11D # Bhushan Shah <bshah@kde.org>
@@ -87,6 +89,7 @@ validpgpkeys=(
 prepare() {
   patch -d $pkgname-$pkgver -Np1 -i ../0001-screenbrightnessplugin-Watch-the-bus-name-not-the-interface-name.patch
   patch -d $pkgname-$pkgver -Np1 -i ../0002-mobileshell-release-overlay-graphics-while-hidden-sm.patch
+  patch -d $pkgname-$pkgver -Np1 -i ../0003-lockscreen-Overhaul-and-fix-state-handling.patch
 }
 
 build() {
