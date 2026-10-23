@@ -9,7 +9,7 @@ with HiBy's burn package or with your own full dump. Make that dump first.
 Never write: devinfo, frp, keystore, persist, modemst1/2, fsg, sec, ssd, or the
 xbl/tz/rpm/hyp/abl chain. Nothing below does.
 
-Paths in this guide: `tools/` is on the `main` branch, `patches/` too; `docs/re-tools/` is on this
+Paths in this guide: `tools/` is on the `senpai` branch, `patches/` too; `docs/re-tools/` is on this
 (`docs`) branch; the device package is on the `pmos` branch; the stock firmware set is on the
 `firmware` branch.
 
@@ -81,7 +81,7 @@ repository, no partition of the stock system is read at boot.
 
 ## 4. Flash (EDL, once)
 
-Put the RS6 into EDL (`adb reboot edl` from stock) and, from the root of a checkout of `main`:
+Put the RS6 into EDL (`adb reboot edl` from stock) and, from the root of a checkout of `senpai`:
 
 ```
 export RS6_LOADER=/path/to/prog_emmc_ufs_firehose_Sdm660_ddr.elf
@@ -182,3 +182,102 @@ NON-HLOS `image/` (mba, modem, adsp, cdsp, venus, wlanmdsp, ...), the bluetooth_
 (`qca/`), the Adreno zap shader, the hm100 bitstreams/FIR and the Darwin filters, so
 msm-firmware-loader and `androidboot.slot_suffix` are gone. The modem/dsp/bluetooth partitions
 stay untouched anyway.
+
+## 7. The public image (instead of sections 2 and 3)
+
+Image `20261023-0026`, built from pmos 38b93b8 and the published repository. Download it from the
+[nura-2026.10.23 release](https://github.com/noas-slopware/linux-hiby-rs6/releases/tag/nura-2026.10.23).
+
+The public image is built the way Nura builds its official images (bpo,
+`build-package-orchestrator/bpo/jobs/build_image.py`): every `pmbootstrap init` default, Plasma Mobile,
+systemd, no SSH daemon, the default user and password, and every package installed from the binary
+repositories. Our packages come from the linux-hiby-rs6 repository (GitHub Pages and YuruMirror), and
+the image keeps both configured, so `apk upgrade` (or Discover) updates the RS6 like any other Nura
+device. On top of Plasma Mobile's own app selection, the device package recommends our Elisa (Subsonic
+source, bit-perfect output) and Dolphin. Build recipe: `re/tools/build-public-image.sh`.
+
+### Files
+
+| file | what | goes to |
+|---|---|---|
+| `20261023-0026-Nura-edge-plasma-mobile-6-hiby-rs6-bootpart.img.xz` | `pmOS_boot` (ext2): kernel, initramfs, DTB, extlinux.conf | `nura_boot` |
+| `20261023-0026-Nura-edge-plasma-mobile-6-hiby-rs6.img.xz` | `pmOS_root` (ext4), grows to the whole partition on first boot | `nura_root` |
+| `20261023-0026-Nura-edge-plasma-mobile-6-hiby-rs6-u-boot.img.xz` | U-Boot for `boot_a` (boot image header v1, RS6 DTB appended, off-mode charging); uncompressed sha256 `cc399617b0ba7cac3f4f745da9c64c5ddfea16beea0bca5821b44cbf15cc68cb` | `boot_a` |
+| `*.sha256`, `*.sha512`, `sha256sums` | checksums | |
+
+Names follow Nura's images (`<date>-<distro>-<channel>-<ui>-<ui version>-<device>`). The RS6 boots
+U-Boot from `boot_a`, then extlinux from `nura_boot`, so the image is split into a boot and a root
+file, like Nura's images for other bootpart devices (`-bootpart.img`). There is no `-boot.img`
+(Android boot image) on purpose: on the RS6 `boot_a` holds U-Boot, and a kernel boot image
+written there replaces it.
+
+Check and unpack:
+
+```
+sha256sum -c sha256sums
+unxz -k 20261023-0026-Nura-edge-plasma-mobile-6-hiby-rs6-bootpart.img.xz 20261023-0026-Nura-edge-plasma-mobile-6-hiby-rs6.img.xz
+```
+
+The flashing scripts take the unpacked `.img` files.
+
+### First install (stock unit, EDL)
+
+Everything in sections 0 and 1 applies: full EDL backup first, the firehose programmer from HiBy's
+1.50 burn package in `RS6_LOADER`. Then, from the root of a checkout of `senpai`:
+
+```
+export RS6_LOADER=/path/to/prog_emmc_ufs_firehose_Sdm660_ddr.elf
+unxz -k 20261023-0026-Nura-edge-plasma-mobile-6-hiby-rs6-u-boot.img.xz
+edl w boot_a 20261023-0026-Nura-edge-plasma-mobile-6-hiby-rs6-u-boot.img --loader=$RS6_LOADER
+edl setactiveslot a --loader=$RS6_LOADER
+tools/repartition-nura.sh 20261023-0026-Nura-edge-plasma-mobile-6-hiby-rs6-bootpart.img 20261023-0026-Nura-edge-plasma-mobile-6-hiby-rs6.img 8
+```
+
+Same order and rules as section 4: `setactiveslot` on the still-stock table, then the repartition,
+which writes both images, reads them back and resets the unit.
+
+### Reinstall or update (already on the Nura layout)
+
+Hold volume up at power-on, pick USB Mass Storage in the U-Boot menu, then on the host:
+
+```
+tools/flash-nura-ums.sh /dev/sdX 20261023-0026-Nura-edge-plasma-mobile-6-hiby-rs6-bootpart.img 20261023-0026-Nura-edge-plasma-mobile-6-hiby-rs6.img
+```
+
+This replaces everything on `nura_boot` and `nura_root`, including the user's home directory. To
+keep a running install current, `sudo apk upgrade -a` or Discover is enough; no reflash needed.
+
+### First boot
+
+1. The first boot takes longer: the root file system grows to fill `nura_root`.
+2. Plasma Mobile asks for the PIN. The default user is `user`, the PIN (password) is `147147`, the
+   same as every pre-built Nura image.
+3. Plasma Mobile's setup wizard opens once (time zone, Wi-Fi, navigation). It does not change
+   the password.
+4. Change the password right away: open the terminal (QMLKonsole) and run `passwd`. The PIN on the
+   lock screen is that password.
+
+SSH is off, as in every pre-built Nura image. To turn it on: `sudo systemctl enable --now sshd`
+(the sudo password is the PIN). Over USB it is then `ssh user@172.16.42.1`.
+
+### Package repositories
+
+The image comes with the linux-hiby-rs6 repository configured by `device-hiby-rs6-repo`:
+
+- `/usr/lib/apk/repositories.d/90-linux-hiby-rs6.list`:
+  `https://noas-slopware.github.io/linux-hiby-rs6/main` and
+  `https://mirror.funami.tech/linux-hiby-rs6/nura/main`
+- `/usr/lib/apk/keys/linux-hiby-rs6-6ad9f9de.rsa.pub`, the repository's signing key. The package also
+  owns `/etc/apk/keys/linux-hiby-rs6-6ad9f9de.rsa.pub`; apk reads both directories.
+
+`/etc/apk/repositories` keeps Nura's and Alpine's mirrors as in every Nura image. Where a package
+exists in both, apk takes the higher version, which is ours for the patched packages (kernel,
+Mesa, Qt, Plasma Mobile and the rest in the `pmos` branch README).
+
+### Checksums
+
+```
+98a7541a06c22e2c0cf8cbd1fb08eb345d64418df3843cd02f09804bc542f293  20261023-0026-Nura-edge-plasma-mobile-6-hiby-rs6-bootpart.img.xz
+8766e1190176092809c6aff2d149e105e225f800b9d9d42e8aef9cf7537605b5  20261023-0026-Nura-edge-plasma-mobile-6-hiby-rs6.img.xz
+6b68dd5c0b715045d6cfc588cfd91942de418ddffccad31faf03aeb5d43d81e9  20261023-0026-Nura-edge-plasma-mobile-6-hiby-rs6-u-boot.img.xz
+```

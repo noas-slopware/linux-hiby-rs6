@@ -8,7 +8,11 @@ in a live trace) or "on Nura".
 ## Install
 
 - [docs/install.md](docs/install.md): the whole-eMMC install flow (U-Boot into `boot_a`, repartition,
-  images), the partition layout and the rules the stock ABL imposes on it.
+  images), the partition layout and the rules the stock ABL imposes on it, and the public Nura image
+  ([nura-2026.10.23](https://github.com/noas-slopware/linux-hiby-rs6/releases/tag/nura-2026.10.23)).
+- [docs/install-arch-ports.md](docs/install-arch-ports.md): the public Arch Linux Ports image
+  ([arch-ports-2026.10.23](https://github.com/noas-slopware/linux-hiby-rs6/releases/tag/arch-ports-2026.10.23)):
+  the same layout with `arch_*` partitions, first boot, adding a desktop, and the `[rs6]` repository.
 
 ## Hardware and boot chain
 
