@@ -15,6 +15,11 @@
 # "ldrb w16, __aarch64_have_lse_atomics; cbz w16"), recognised by that guard since packages are
 # stripped. Kernel alternatives are exempt too: code listed as a replacement in an .altinstructions
 # section (the kernel's vDSO in -headers) is only patched in at boot when the CPU has the feature.
+# Go programs built for GOARM64=v8.0 (the default; read from .go.buildinfo) are exempt as a whole: Go
+# guarantees they run on plain ARMv8.0. The compiler puts every LSE atomic behind a test of
+# internal/cpu.ARM64.HasATOMICS with an LDAXR/STLXR fallback, and the standard library's assembly
+# (SHA-512, SHA-3, DIT, SVE, ...) is only called after the matching internal/cpu check. Their findings are
+# counted as run-time dispatched, not failed; a Go program built for a higher GOARM64 is checked as usual.
 # Bytes that decode in neither pass are data. The kernel is skipped (vmlinux in -headers,
 # *.ko): it patches LSE & co. in at boot through alternatives, behind its own CPU feature checks. Exit status 1 on any finding; code that picks
 # instructions at run time behind a HWCAP check of its own still gets reported and needs a look.
@@ -60,6 +65,28 @@ def alt_replacements(path):
     return out
 
 
+def sections(d):
+    shoff, = struct.unpack_from('<Q', d, 0x28)
+    shentsize, shnum, shstrndx = struct.unpack_from('<HHH', d, 0x3a)
+    secs = [struct.unpack_from('<IIQQQQIIQQ', d, shoff + i * shentsize) for i in range(shnum)]
+    if not secs:
+        return {}
+    stroff = secs[shstrndx][4]
+    return {d[stroff + s[0]:].split(b'\0')[0].decode(errors='replace'): s for s in secs}
+
+
+def go_armv80(path):
+    # True for a Go program built for GOARM64=v8.0: its build settings in .go.buildinfo carry
+    # "build\tGOARM64=<level>", and Go leaves the setting out when it is the default, v8.0
+    with open(path, 'rb') as f:
+        d = f.read()
+    s = sections(d).get('.go.buildinfo')
+    if not s:
+        return False
+    m = re.search(rb'\tGOARM64=(v[0-9.]+)', d[s[4]:s[4] + s[5]])
+    return m is None or m.group(1).split(b',')[0] == b'v8.0'
+
+
 def check_elf(path, rel, mattr):
     alts = alt_replacements(path)
     # llvm-objdump enables every AArch64 feature by default; both listings have the same lines
@@ -85,7 +112,10 @@ def check_elf(path, rel, mattr):
     full.wait(); lim.wait()
     if full.returncode or lim.returncode:
         findings.append('%s: llvm-objdump failed' % rel)
-    return findings
+        return findings, 0
+    if findings and go_armv80(path):
+        return [], len(findings)
+    return findings, 0
 
 
 def check(pkg, mattr):
@@ -98,10 +128,13 @@ def check(pkg, mattr):
                 if not os.path.islink(p) and aarch64_elf(p) and not KERNEL.search(os.path.relpath(p, d)):
                     elfs.append(p)
         with ThreadPoolExecutor(os.cpu_count()) as ex:
-            res = ex.map(lambda p: check_elf(p, os.path.relpath(p, d), mattr), elfs)
-            findings = [f for r in res for f in r]
+            res = list(ex.map(lambda p: (os.path.relpath(p, d), check_elf(p, os.path.relpath(p, d), mattr)), elfs))
+            findings = [f for _, (r, _) in res for f in r]
     for f in findings:
         print('%s: %s' % (os.path.basename(pkg), f))
+    for rel, (_, n) in res:
+        if n:
+            print('%s: %s: Go, GOARM64=v8.0: %d instruction(s) behind internal/cpu dispatch, exempt' % (os.path.basename(pkg), rel, n))
     print('%s: %d AArch64 ELF file(s), %d finding(s)' % (os.path.basename(pkg), len(elfs), len(findings)))
     return len(findings)
 
