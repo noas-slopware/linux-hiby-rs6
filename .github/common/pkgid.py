@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -91,14 +92,22 @@ def arch_hash(checkout: str, pkgbase: str) -> str:
 
 
 def fetch(url: str, timeout: int = 60) -> bytes | None:
-    """GET url; None on 404."""
-    try:
-        with urllib.request.urlopen(url, timeout=timeout) as r:
-            return r.read()
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return None
-        raise
+    """GET url; None on 404. GitHub Pages answers 5xx now and then (a 503 failed a publish):
+    retry those and dropped connections, 15/45/120 s apart, before giving up."""
+    for wait in (15, 45, 120, None):
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as r:
+                return r.read()
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None
+            if e.code < 500 or wait is None:
+                raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if wait is None:
+                raise
+        print(f"{url}: retrying in {wait} s", file=sys.stderr)
+        time.sleep(wait)
 
 
 def fetch_json(url: str):
