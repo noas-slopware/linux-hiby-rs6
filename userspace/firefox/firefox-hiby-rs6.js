@@ -40,3 +40,23 @@ pref("network.http.max-persistent-connections-per-server", 10);
 pref("network.http.max-urgent-start-excessive-connections-per-host", 5);
 pref("network.http.request.max-start-delay", 5);
 pref("network.dnsCacheExpiration", 3600);
+// Wayland native compositor: KWin composites Firefox's layers directly, less GPU copying
+pref("gfx.webrender.compositor.force-enabled", true);
+// no spare content process kept warm in the background (RAM, CPU at startup)
+pref("dom.ipc.processPrelaunch.enabled", false);
+// no local AI models or inference processes
+pref("browser.ml.enable", false);
+pref("browser.ml.chat.enabled", false);
+pref("browser.ml.linkPreview.enabled", false);
+pref("browser.tabs.groups.smart.enabled", false);
+pref("extensions.ml.enabled", false);
+// no background telemetry, studies, experiments or ping work
+pref("datareporting.healthreport.uploadEnabled", false);
+pref("datareporting.policy.dataSubmissionEnabled", false);
+pref("toolkit.telemetry.enabled", false);
+pref("toolkit.telemetry.unified", false);
+pref("toolkit.telemetry.archive.enabled", false);
+pref("app.normandy.enabled", false);
+pref("app.shield.optoutstudies.enabled", false);
+pref("browser.newtabpage.activity-stream.feeds.telemetry", false);
+pref("browser.newtabpage.activity-stream.telemetry", false);
