@@ -1,0 +1,13 @@
+{
+    "KPackageStructure": "KWin/Script",
+    "KPlugin": {
+        "Authors": [{ "Name": "Noa Himesaka", "Email": "himesaka@noa.codes" }],
+        "Description": "Tell rs6-touchboost which process owns the active window",
+        "EnabledByDefault": true,
+        "Id": "hiby-rs6-boost",
+        "License": "MIT",
+        "Name": "HiBy RS6 touch boost (active window)"
+    },
+    "X-Plasma-API": "javascript",
+    "X-Plasma-MainScript": "code/main.js"
+}

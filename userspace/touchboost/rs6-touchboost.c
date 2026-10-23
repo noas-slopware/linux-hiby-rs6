@@ -6,6 +6,13 @@
  * to ramp up from idle clocks. Writes happen only on boost on/off transitions.
  *
  * Plain Linux interfaces only (evdev, cpufreq and devfreq sysfs): libc-agnostic.
+ *
+ * It also moves the process that owns the active window onto the big cores while boosted: EAS
+ * keeps light, bursty UI work (scrolling) on the A53s. The KWin script hiby-rs6-boost and
+ * rs6-activewindow keep that window's pid in /run/user/<uid>/hiby-rs6/active-pid; on a touch the
+ * pid's cgroup gets cpu.uclamp.min = UCLAMP_PCT (above an A53's capacity, 534/1024), so its tasks
+ * only fit an A73, and 0 again on release. Its ancestors get cpu.uclamp.min = 100 (only a cap for
+ * their children; cgroup v2 keeps no tasks there) and the cpu controller enabled.
  */
 #define _GNU_SOURCE
 #include <dirent.h>
@@ -19,6 +26,7 @@
 #include <string.h>
 #include <sys/inotify.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -28,6 +36,7 @@
 #define GPU_BASE_HZ	"266000000"	/* the floor 90-hiby-rs6-perf.rules sets */
 #define MAX_FDS		8
 #define MAX_KNOBS	8
+#define UCLAMP_PCT	"60"	/* > A53 capacity 534/1024: the active window runs on the A73s */
 
 struct knob {
 	char path[1024];
@@ -140,12 +149,105 @@ static void find_knobs(void)
  * msm's GPU wait-boost (msm_gpu_devfreq.c boost_freq). Saving that at the start of a touch
  * and writing it back on release pinned the GPU at 647 MHz.
  */
+static char boosted_cg[700];	/* cgroup dir whose cpu.uclamp.min we raised, "" if none */
+
+/* the newest /run/user/<uid>/hiby-rs6/active-pid whose pid really belongs to <uid> */
+static pid_t active_pid(void)
+{
+	DIR *d = opendir("/run/user");
+	struct dirent *de;
+	time_t best_t = 0;
+	pid_t best = 0;
+
+	if (!d)
+		return 0;
+	while ((de = readdir(d))) {
+		char p[300], buf[32], st[64];
+		struct stat sb, ps;
+		pid_t pid;
+
+		if (de->d_name[0] == '.')
+			continue;
+		snprintf(p, sizeof(p), "/run/user/%s/hiby-rs6/active-pid", de->d_name);
+		if (stat(p, &sb) < 0 || read_str(p, buf, sizeof(buf)) < 0)
+			continue;
+		pid = (pid_t)strtol(buf, NULL, 10);
+		snprintf(st, sizeof(st), "/proc/%d", pid);
+		if (pid <= 0 || stat(st, &ps) < 0 || ps.st_uid != sb.st_uid ||
+		    (unsigned long)sb.st_uid != strtoul(de->d_name, NULL, 10))
+			continue;
+		if (sb.st_mtime >= best_t) {
+			best_t = sb.st_mtime;
+			best = pid;
+		}
+	}
+	closedir(d);
+	return best;
+}
+
+/* raise the active window's cgroup to UCLAMP_PCT (on) or back to 0 (off) */
+static void boost_window(int on)
+{
+	char cg[700], line[600], path[800], *rel, *s;
+	pid_t pid;
+	FILE *f;
+
+	if (!on) {
+		if (boosted_cg[0]) {
+			snprintf(path, sizeof(path), "%s/cpu.uclamp.min", boosted_cg);
+			write_str(path, "0");
+			boosted_cg[0] = 0;
+		}
+		return;
+	}
+	pid = active_pid();
+	if (pid <= 0)
+		return;
+	snprintf(path, sizeof(path), "/proc/%d/cgroup", pid);
+	f = fopen(path, "r");
+	if (!f)
+		return;
+	rel = NULL;
+	while (fgets(line, sizeof(line), f))
+		if (!strncmp(line, "0::/", 4)) {
+			line[strcspn(line, "\n")] = 0;
+			rel = line + 3;
+			break;
+		}
+	fclose(f);
+	if (!rel || strncmp(rel, "/user.slice/", 12))
+		return;	/* only session apps */
+	/* every ancestor below the root: cpu controller on for its children, uclamp.min cap = 100 */
+	snprintf(cg, sizeof(cg), "/sys/fs/cgroup");
+	for (s = rel + 1; ; s++) {
+		if (*s == '/' || !*s) {
+			char c = *s;
+
+			*s = 0;
+			snprintf(path, sizeof(path), "%s/cgroup.subtree_control", cg);
+			write_str(path, "+cpu");
+			snprintf(cg, sizeof(cg), "/sys/fs/cgroup%s", rel);
+			if (c) {
+				snprintf(path, sizeof(path), "%s/cpu.uclamp.min", cg);
+				write_str(path, "100");
+			}
+			*s = c;
+			if (!c)
+				break;
+		}
+	}
+	snprintf(path, sizeof(path), "%s/cpu.uclamp.min", cg);
+	write_str(path, UCLAMP_PCT);
+	snprintf(boosted_cg, sizeof(boosted_cg), "%s", cg);
+}
+
 static void boost(int on)
 {
 	int i;
 
 	for (i = 0; i < nknobs; i++)
 		write_str(knobs[i].path, on ? knobs[i].boost : knobs[i].base);
+	boost_window(on);
 }
 
 static int is_touchscreen(int fd)
