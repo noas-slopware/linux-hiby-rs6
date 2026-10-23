@@ -17,15 +17,14 @@
  *
  * Firefox 156+ only puts the system FFmpeg ahead of its bundled ffvpx in the decoder process
  * when Vulkan video decoding is usable (PDMFactory::CreateRddPDMs), which it never is on the
- * Adreno 512, so ffvpx would claim its codecs and decode them in software. Firefox 158's ffvpx
- * has H.264 and HEVC besides VP8/VP9. Hide every ffvpx video decoder (not its encoders, not
- * audio) whose codec the system libavcodec has a *_v4l2m2m wrapper for, so Firefox's own
- * fallback always moves on to the system FFmpeg and Venus.
+ * Adreno 512, and no pref keeps ffvpx out of it, so ffvpx would claim VP8/VP9 and (Firefox 158)
+ * H.264/HEVC and decode them in software. Hide every ffvpx video decoder (not its encoders, not
+ * audio, not the FFT WebAudio uses), so Firefox's own fallback always moves on to the system
+ * FFmpeg and its *_v4l2m2m wrappers.
  */
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <pthread.h>
-#include <stdio.h>
 #include <string.h>
 
 #include <libavcodec/avcodec.h>
@@ -45,8 +44,8 @@ static send_fn real_send;
 static recv_fn real_recv;
 static free_fn real_free;
 static close_fn real_close;
-static iterate_fn sys_iterate, ffvpx_iterate;
-static is_decoder_fn sys_is_decoder, ffvpx_is_decoder;
+static iterate_fn ffvpx_iterate;
+static is_decoder_fn ffvpx_is_decoder;
 static find_decoder_fn ffvpx_find_decoder;
 
 #define MAX_CTX 16
@@ -170,67 +169,10 @@ static int from_ffvpx(void *fn)
 	return fn && dladdr(fn, &info) && info.dli_fname && strstr(info.dli_fname, "/libmozavcodec.so");
 }
 
-/*
- * AVCodecID values differ between FFmpeg majors (VP9 is 167 in libavcodec 62, 166 in 63) and
- * ffvpx need not be the system's major, so codecs are matched by name, never by id.
- */
-static const char *base_name(const char *name)
-{
-	if (!strcmp(name, "libvpx"))
-		return "vp8";
-	if (!strcmp(name, "libvpx-vp9"))
-		return "vp9";
-	return name;
-}
-
-/* does the system libavcodec have a <base>_v4l2m2m decoder? */
-static int system_has_v4l2(const char *base)
-{
-	char want[64];
-	const AVCodec *c;
-	void *it = NULL;
-
-	if (!sys_iterate || !sys_is_decoder)
-		return 0;
-	if ((size_t)snprintf(want, sizeof(want), "%s_v4l2m2m", base) >= sizeof(want))
-		return 0;
-	while ((c = sys_iterate(&it)))
-		if (c->name && sys_is_decoder(c) && !strcmp(c->name, want))
-			return 1;
-	return 0;
-}
-
-#define MAX_SEEN 64
-static struct {
-	const AVCodec *codec;
-	int hide;
-} seen[MAX_SEEN];
-
-/*
- * Hide every ffvpx video decoder (H.264, HEVC, VP8, VP9 in Firefox 158) the system FFmpeg can
- * hand to Venus, so Firefox always falls through to the system FFmpeg and hardware decoding.
- */
+/* ffvpx decodes no video at all: every video codec goes to the system FFmpeg */
 static int hide_in_ffvpx(const AVCodec *c)
 {
-	int i, hide;
-
-	if (!c || !c->name || c->type != AVMEDIA_TYPE_VIDEO || !ffvpx_is_decoder ||
-	    !ffvpx_is_decoder(c))
-		return 0;
-	pthread_mutex_lock(&lock);
-	for (i = 0; i < MAX_SEEN && seen[i].codec; i++)
-		if (seen[i].codec == c) {
-			hide = seen[i].hide;
-			pthread_mutex_unlock(&lock);
-			return hide;
-		}
-	hide = system_has_v4l2(base_name(c->name));
-	if (i < MAX_SEEN) {
-		seen[i].codec = c;
-		seen[i].hide = hide;
-	}
-	pthread_mutex_unlock(&lock);
-	return hide;
+	return c && c->type == AVMEDIA_TYPE_VIDEO && ffvpx_is_decoder && ffvpx_is_decoder(c);
 }
 
 static const AVCodec *wrap_ffvpx_iterate(void **opaque)
@@ -276,11 +218,6 @@ void *PR_FindSymbol(void *lib, const char *name)
 	}
 	if (!from_system_libavcodec(fn))
 		return fn;
-
-	if (!strcmp(name, "av_codec_iterate"))
-		sys_iterate = (iterate_fn)fn;
-	if (!strcmp(name, "av_codec_is_decoder"))
-		sys_is_decoder = (is_decoder_fn)fn;
 
 	if (!strcmp(name, "avcodec_open2")) {
 		real_open2 = (open2_fn)fn;
