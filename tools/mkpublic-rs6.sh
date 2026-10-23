@@ -212,6 +212,8 @@ verify() {
 	need(not (R / "etc/systemd/system/default.target").exists() or "graphical" in str((R / "etc/systemd/system/default.target").readlink()),
 	     "default target not overridden away from graphical.target")
 	need("diag-router.service" in wants, "diag-router enabled")
+	need("hiby-rs6-growroot-done.service" in wants, "hiby-rs6-growroot-done enabled (ends the one-time grow)")
+	need(not (R / "var/lib/hiby-rs6/root-grown").exists(), "no root-grown marker yet (the first boot grows the root)")
 	need("plasma-mobile.service" not in wants, "no plasma-mobile.service enabled")
 	# fstab, extlinux.conf
 	fstab = [l.split() for l in (R / "etc/fstab").read_text().splitlines() if l.strip() and not l.startswith("#")]
@@ -219,7 +221,8 @@ verify() {
 	               ["PARTLABEL=arch_boot", "/boot", "ext4", "rw,noatime", "0", "2"]], "fstab: PARTLABEL=arch_root on /, arch_boot on /boot")
 	ext = (R / "boot/extlinux/extlinux.conf").read_text()
 	extra = " ".join(l.split("#")[0].strip() for l in (R / "usr/share/hiby-rs6/kernel-cmdline.conf").read_text().splitlines() if l.split("#")[0].strip())
-	want = ("root=PARTLABEL=arch_root rootfstype=f2fs rw quiet " + extra).strip()
+	# a fresh image grows its root once: hiby_rs6.growroot until /var/lib/hiby-rs6/root-grown exists
+	want = ("root=PARTLABEL=arch_root rootfstype=f2fs rw quiet " + extra).strip() + " hiby_rs6.growroot"
 	appends = re.findall(r"^\s*append (.*)$", ext, re.M)
 	need(appends == [want], f"extlinux.conf append is exactly '{want}' ({appends})")
 	need(not re.search(r"\b(debug|loglevel=|console=|earlycon|earlyprintk|ignore_loglevel|rd\.|systemd\.log|init=)", " ".join(appends)), "no debug options in the append")

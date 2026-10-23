@@ -9,12 +9,15 @@
 # /boot is the arch_boot partition, so paths in extlinux.conf are relative to /boot.
 # Kernel command line: /etc/kernel/cmdline if it exists (used verbatim), else
 # "root=PARTLABEL=arch_root rootfstype=f2fs rw quiet" plus /usr/share/hiby-rs6/kernel-cmdline.conf.
+# Until /var/lib/hiby-rs6/root-grown exists, hiby_rs6.growroot is added: the initramfs then grows the root
+# to the partition once (hiby-rs6-growroot.service, hiby-rs6-growroot-done.service).
 set -eu
 
 BOOT=${BOOT:-/boot}
 MODULES=${MODULES:-/usr/lib/modules}
 CMDLINE=${CMDLINE:-/etc/kernel/cmdline}
 SHARE=${SHARE:-/usr/share/hiby-rs6}
+GROWN=${GROWN:-/var/lib/hiby-rs6/root-grown}
 ETC=${ETC:-/etc/hiby-rs6}
 DTB=qcom/sdm660-hiby-rs6.dtb
 
@@ -43,6 +46,7 @@ kernels() {
 }
 
 args=$(cmdline)
+[ -e "$GROWN" ] || args="$args hiby_rs6.growroot"
 first=$(kernels | head -n1 | cut -d' ' -f1)
 if [ -z "$first" ]; then
 	log "no linux-hiby-rs6 kernel installed; leaving extlinux.conf alone"

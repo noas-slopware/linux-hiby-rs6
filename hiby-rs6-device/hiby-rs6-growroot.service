@@ -5,11 +5,14 @@
 # resize.f2fs prints "Nothing to resize." and writes nothing; on one that was not unmounted
 # cleanly it refuses (the kernel replays the log at mount) and the next boot grows it.
 # -F only skips resize.f2fs's interactive "continue? [y/n]" prompt.
+# One time only: it runs while the kernel command line has hiby_rs6.growroot, which hiby-rs6-extlinux
+# adds until /var/lib/hiby-rs6/root-grown exists; hiby-rs6-growroot-done.service writes that marker on
+# the real root once the file system fills the partition and rewrites extlinux.conf without the flag.
 [Unit]
 Description=Grow the root file system to the arch_root partition
 DefaultDependencies=no
 ConditionPathExists=/etc/initrd-release
-ConditionKernelCommandLine=root=PARTLABEL=arch_root
+ConditionKernelCommandLine=hiby_rs6.growroot
 BindsTo=dev-disk-by\x2dpartlabel-arch_root.device
 After=dev-disk-by\x2dpartlabel-arch_root.device
 Before=systemd-fsck-root.service sysroot.mount

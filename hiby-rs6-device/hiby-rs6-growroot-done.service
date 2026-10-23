@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: MIT
+# HiBy RS6 (hiby-rs6-boot): end the one-time root growing. Once the root file system fills arch_root
+# (hiby-rs6-growroot.service grew it in the initramfs), write /var/lib/hiby-rs6/root-grown and rewrite
+# extlinux.conf, which then no longer carries hiby_rs6.growroot. If the grow didn't happen (e.g. the
+# file system wasn't cleanly unmounted), nothing is written and the next boot tries again.
+[Unit]
+Description=Finish growing the root file system (one time)
+ConditionPathExists=!/var/lib/hiby-rs6/root-grown
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -euc 'part=$(blockdev --getsize64 /dev/disk/by-partlabel/arch_root); fs=$(df -B1 --output=size / | tail -n 1); if [ $((fs * 100)) -ge $((part * 95)) ]; then mkdir -p /var/lib/hiby-rs6; touch /var/lib/hiby-rs6/root-grown; /usr/bin/hiby-rs6-extlinux; else echo "root is $fs of $part bytes: not grown yet, trying again next boot"; fi'
+
+[Install]
+WantedBy=multi-user.target

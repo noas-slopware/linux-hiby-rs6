@@ -9,6 +9,7 @@ enable sshd.service
 enable tailscaled.service
 enable nftables.service
 enable rtkit-daemon.service
+enable hiby-rs6-growroot-done.service
 enable diag-router.service
 enable rmtfs.service
 enable tqftpserv.service
