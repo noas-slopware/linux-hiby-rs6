@@ -13,7 +13,11 @@
 #                implements neither Landlock (syscalls 444-446) nor seccomp, so a download inside it
 #                could not be sandboxed. With RS6_ACCEL=xgcc (build-rs6.sh, x86_64 default) bens' gcc,
 #                binutils and ccache inside it are swapped for x86_64 builds of the same versions
-#                (mkxtools-rs6.sh, xtools-activate.sh), which the kernel runs natively.
+#                (mkxtools-rs6.sh, xtools-activate.sh), which the kernel runs natively; so are rustc,
+#                clang (mkxtools-rust-rs6.sh) and python, ninja, bison, flex, m4, zstd, bsdtar, debugedit,
+#                xz, gzip, make, bash (= sh), coreutils, sed, gawk, grep, findutils, diffutils, tar, bc,
+#                cpio, kmod, file, pahole, faked (mkxtools-tools-rs6.sh: Arch's x86_64 packages of bens'
+#                versions). perl and everything else stay AArch64, under qemu.
 # shellcheck shell=bash
 
 W=${RS6_WORK:-/var/tmp/rs6-arch-build}	# lots of disk; never /tmp (tmpfs)

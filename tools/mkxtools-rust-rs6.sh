@@ -11,8 +11,10 @@
 #   x86_64/   link-only Arch x86_64 sysroot (gcc driver, collect2, ld.bfd, crt files, glibc, libgcc)
 #             that rs6-rustc links the x86_64 proc-macro twins with
 #   clang-root/usr/bin/clang-23 + {x86_64-pc-linux-gnu-clang,-clang++}.cfg
-#             Arch's x86_64 clang $CLANG_VERSION (= bens'), default target aarch64-unknown-linux-gnu
+#             Arch's x86_64 clang package of bens' exact version ($CLANG_VERSION-*), default target
+#             aarch64-unknown-linux-gnu
 #             through clang's own default config file next to the binary; libraries in lib/
+# At its end it runs mkxtools-tools-rs6.sh (the other build tools).
 #   mkxtools-rust-rs6.sh
 set -euo pipefail
 . "$(dirname "$(realpath "$0")")/lib-rs6.sh"
@@ -90,10 +92,17 @@ fi
 		patchelf --force-rpath --set-rpath /opt/rs6-xtools/x86_64/usr/lib "$f"; done
 	'
 
-# clang: Arch x86_64 (rs6-cross image), same version as bens'
-log "clang $CLANG_VERSION (x86_64)"
-"$ENGINE" run --rm --user "$(id -u):$(id -g)" -v "$X:/xt" localhost/rs6-cross bash -euc '
-	mkdir -p /xt/clang-root/usr/bin; v=$(pacman -Q clang | cut -d" " -f2); [ "${v%-*}" = "$1" ] || { echo "Arch x86_64 clang is $v" >&2; exit 1; }
+# clang: Arch's x86_64 package of exactly bens' version (repos, else the Arch archive; pacman checks the
+# signatures), installed into a throwaway rs6-xbuild container (root, for pacman's download sandbox)
+log "clang $clangv (x86_64)"
+"$ENGINE" run --rm --security-opt no-new-privileges -v "$X:/xt" localhost/rs6-xbuild bash -euc '
+	pacman -Sy --noconfirm > /dev/null
+	if [ "$(pacman -Sddp --print-format %v clang 2>/dev/null)" = "$1" ]; then pacman -S --needed --noconfirm clang > /dev/null
+	else pacman -U --needed --noconfirm "https://archive.archlinux.org/packages/c/clang/clang-$1-x86_64.pkg.tar.zst" > /dev/null; fi
+	v=$(pacman -Q clang | cut -d" " -f2); [ "$v" = "$1" ] || { echo "Arch x86_64 clang is $v, bens has $1" >&2; exit 1; }
+	# installing clang must not have moved glibc past lib/ (rs6-xbuild glibc)
+	[ "$(pacman -Q glibc | cut -d" " -f2)" = "$2" ] || { echo "clang pulled glibc $(pacman -Q glibc), lib/ has $2" >&2; exit 1; }
+	mkdir -p /xt/clang-root/usr/bin
 	install -m755 /usr/bin/clang-23 /xt/clang-root/usr/bin/clang-23
 	# glibc (same version) comes from lib/, everything else Arch x86_64 clang needs from clang-lib/
 	patchelf --force-rpath --set-rpath /opt/rs6-xtools/clang-lib:/opt/rs6-xtools/lib /xt/clang-root/usr/bin/clang-23
@@ -101,10 +110,13 @@ log "clang $CLANG_VERSION (x86_64)"
 	ldd /usr/bin/clang-23 | sed -n "s/.*=> \(\/[^ ]*\) .*/\1/p" | grep -v -E "/(libc|libm|libdl|librt|libpthread)\.so|ld-linux" |
 		while read -r l; do cp -L "$l" /xt/clang-lib/; done
 	for f in /xt/clang-lib/*; do patchelf --force-rpath --set-rpath /opt/rs6-xtools/clang-lib:/opt/rs6-xtools/lib "$f"; done
-	[ "$(pacman -Q glibc | cut -d" " -f2)" = "$2" ] || { echo "rs6-cross glibc differs from rs6-xbuild" >&2; exit 1; }
 	# clang reads <triple>-<driver>.cfg next to its binary when no --target is given
 	for d in clang clang++; do printf -- "--target=aarch64-unknown-linux-gnu\n" > /xt/clang-root/usr/bin/x86_64-pc-linux-gnu-$d.cfg; done
-	echo "clang=$(pacman -Q clang | cut -d" " -f2)" > /xt/clang.stamp' sh "$CLANG_VERSION" \
-	"$("$ENGINE" run --rm localhost/rs6-xbuild pacman -Q glibc | cut -d" " -f2)"
+	echo "clang=$v" > /xt/clang.stamp
+	chown -R "$3" /xt/clang-root /xt/clang-lib /xt/clang.stamp' sh "$clangv" \
+	"$("$ENGINE" run --rm localhost/rs6-xbuild pacman -Q glibc | cut -d" " -f2)" "$(id -u):$(id -g)"
 printf 'rust=1:%s-1\n' "$RUST_VERSION" >> "$X/clang.stamp"
 log "rust + clang ready: $(tr '\n' ' ' < "$X/clang.stamp")"
+
+# python, make, bash, coreutils, pahole and the other build tools (mkxtools-tools-rs6.sh)
+"$TOOLS/mkxtools-tools-rs6.sh"

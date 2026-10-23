@@ -11,7 +11,9 @@
 #   mkxtools-rs6.sh            -> $RS6_WORK/xtools (mounted read-only at /opt/rs6-xtools)
 # Differences from bens' build that do not change output: host x86_64, C/C++/LTO only (gfortran & co.
 # stay bens' AArch64 binaries under qemu), no bootstrap/PGO/LTO of the compiler itself,
-# no debuginfod lookups in objdump/readelf. Two source patches make the cross tools keep native
+# no debuginfod lookups in objdump/readelf. lib/ has Arch's x86_64 glibc with its iconv modules in
+# lib/gconv; its libc.so.6 has /usr/lib/gconv (bens' AArch64 modules in the builder) replaced by
+# /opt/rs6/gconv, which xtools-activate.sh links to lib/gconv. Two source patches make the cross tools keep native
 # path logic: gcc without -DCROSS_DIRECTORY_STRUCTURE (same search dirs, include dirs, tool names as
 # a native gcc, C++ headers in /usr/include/c++/16; the build system still treats it as a cross) and ld with genscripts.sh's NATIVE=yes
 # (same SEARCH_DIRs, ld.so.conf/DT_RUNPATH lookups as a native ld). -march=native is unsupported (the
@@ -161,6 +163,17 @@ rm -rf "$W/xtools.new"; mkdir -p "$W/xtools.new"
 	if find $r -type f -exec ldd {} \; 2>/dev/null | grep "not found"; then echo "unresolved libraries" >&2; exit 1; fi
 	for f in $(find $r -type f); do ldd $f 2>/dev/null | sed -n "s/.*=> \(\/[^ ]*\) .*/\1/p;s/^\s*\(\/[^ ]*ld-linux[^ ]*\) .*/\1/p"; done |
 		sort -u | while read -r l; do cp -L "$l" /xt/lib/; done
+	# glibc dlopen()s the iconv modules of every charset it has no built-in converter for (ISO-8859-1,
+	# EUC-KR...) from /usr/lib/gconv, which in the builder holds AArch64 ones: iconv_open() would fail
+	# in every x86_64 program (gcc -finput-charset, guile in make, tar, python embedding iconv). Its own
+	# modules go to lib/gconv, and this libc looks for them in /opt/rs6/gconv instead, the same length
+	# as /usr/lib/gconv so only those bytes change (xtools-activate.sh links /opt/rs6/gconv to lib/gconv)
+	cp -a /usr/lib/gconv /xt/lib/gconv
+	[ ! -e /xt/lib/gconv/gconv-modules.cache ]	# would name /usr/lib/gconv; the config files do not
+	[ "$(LC_ALL=C grep -c -a /opt/rs6/gconv /xt/lib/libc.so.6)" = 0 ]
+	LC_ALL=C sed -i "s|/usr/lib/gconv|/opt/rs6/gconv|g" /xt/lib/libc.so.6
+	[ "$(strings -a /xt/lib/libc.so.6 | grep -c "^/opt/rs6/gconv")" = 2 ] && ! LC_ALL=C grep -q -a /usr/lib/gconv /xt/lib/libc.so.6
+	[ "$(stat -c %s /xt/lib/libc.so.6)" = "$(stat -c %s -L /usr/lib/libc.so.6)" ]
 	# gcc/binutils got their DT_RPATH at link time; Arch'"'"'s ccache gets it here (only --set-rpath:
 	# patchelf 0.19 breaks the gcc driver when it also moves PT_INTERP). The interpreter stays
 	# /lib64/ld-linux-x86-64.so.2, which xtools-activate.sh points at lib/ (no AArch64 file has that name).
