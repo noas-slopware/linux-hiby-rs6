@@ -7,15 +7,16 @@
 # systemd preset (replaces Nura's), firewall, and the USB network gadget (replaces usb-signaller +
 # unudhcpd). No user, locale, timezone or other personal settings: the image is generic.
 #
-#   hiby-rs6-device    meta package: everything below plus kernel, DTBs and firmware
-#   hiby-rs6-system    udev, tmpfiles, logind, shutdown watchdog, swap + zram, preset, firewall, touch
-#                      boost, VT lock, USB network, no cellular
+#   hiby-rs6-device    meta package: everything below (but hiby-rs6-firefox and hiby-rs6-plasma, which
+#                      are optional) plus kernel, DTBs and firmware; needs no particular desktop
+#   hiby-rs6-system    udev, tmpfiles, logind (power key suspends), shutdown watchdog, zram, preset,
+#                      firewall, touch boost, VT lock, USB network, no cellular, flashlight permissions
 #   hiby-rs6-boot      extlinux.conf for U-Boot, mkinitcpio hook + config (F2FS root, grown to the
 #                      whole arch_root partition in the initramfs)
 #   hiby-rs6-audio     UCM, PipeWire/WirePlumber config and scripts, darwinctl, Plasma volume step
 #   hiby-rs6-firefox   Venus V4L2 decoding shim, wrapper, desktop override, prefs
-#   hiby-rs6-plasma    KWin effects config, lock screen at session start, no X11 tray/menu proxies,
-#                      flashlight permissions
+#   hiby-rs6-plasma    Plasma Mobile: KWin effects config, lock screen at session start, no X11
+#                      tray/menu proxies, powerdevil takes the power key
 
 pkgbase=hiby-rs6-device
 pkgname=(
@@ -27,14 +28,14 @@ pkgname=(
   hiby-rs6-plasma
 )
 pkgver=1
-pkgrel=19
+pkgrel=21
 pkgdesc='HiBy RS6'
 url='https://github.com/noas-slopware/linux-hiby-rs6'
 arch=(aarch64)
 license=(MIT)
 makedepends=(alsa-lib ffmpeg linux-api-headers)
 # senpai branch (default) of noas-slopware/linux-hiby-rs6
-_rs6commit=19fbcf36d7afefcf0cc121030db571c4b0bc5e20
+_rs6commit=a8143bdc6aa1cc3b3ac00ecbd022d98d6fadee59
 source=(
   "linux-hiby-rs6-$_rs6commit.tar.gz::https://github.com/noas-slopware/linux-hiby-rs6/archive/$_rs6commit.tar.gz"
   hiby-rs6-extlinux
@@ -55,11 +56,14 @@ source=(
   NetworkManager-hiby-rs6-wifi.conf
   86-hiby-rs6-usbnet-nm.rules
   logind-hiby-rs6-plasma.conf
+  logind-hiby-rs6-powerkey.conf
+  hiby-rs6-firefox-ua
+  90-hiby-rs6-firefox-ua.hook
   limits-hiby-rs6-audio.conf
   hiby-rs6-growroot.service
   hiby-rs6-growroot-done.service
 )
-sha512sums=('7f7d810c016ac2f28270ece049aa88f52e4ee375a775b0f66bbbc776c5552c16f32151feee211c142602dcd30d820a11197ff01179b1f26a7c0d230468a2960c'
+sha512sums=('08a8a44a6667adf3e4dc56e0370d30cdfade25b1e0f7aafcd4d0047bf4ac1215e1dee02dc6e7e8e70e367f37d7aa6a26cdb37088c5e96767a10761e795b8025c'
             '393c11160c5bdc51f8b6eb498a311344a19a363eb55e20695b492e3afd2a2699a9afa02edb82c887fb5d3a3b9896aa2d2a83edb76c82d73a0b37b36b839f00c0'
             'e62eca3562027a7f456932cf7a7b983fb29648e99de00267b818e99db9c99c5dac53b5638fc083d48f690f829674ab11c863355dce103fb7784f394275b0a72d'
             '8186a2e0a5b242f1b51729cd98b6fbfafe93be128326c0766127dcd2e11f716b96679cc2d1188cd85dcb730f6a069e08b1891566564a342994a036c25fd7413e'
@@ -78,6 +82,9 @@ sha512sums=('7f7d810c016ac2f28270ece049aa88f52e4ee375a775b0f66bbbc776c5552c16f32
             'ea07405abdbcdfa94681d10e9821d96d759beef5380bb20d8341b2b7f574b869952083bb486cc48df04b70331803f6a52140018e2800167a58b7f02953058ac3'
             '33336caf63182636051a2a56c1078da5ece89d55f197394dac3d10ad2921643062a2ceac89cf87ba1a6cdbd01f7c57007a1339016b4f568833b8b200f02b8a31'
             '4ba22390b85fbad9b3b3223dcc8bebe85e407550d944d2a1976b05286fd79fe54609f3dc7c31563c089063188902478576558dfda3a606e762e385a2ec1da981'
+            '9140392694e80fe866a9c7868d9399985b96ff472f780a9bd81c6c9b0fb22f89e07c9fa47d12e7b8c864f3cd28f019fe813e6b691dd030ab0600996bd327a186'
+            '839a5d39561a54599eb3c3d42cdfad336bafff083cb6b58c99b3afe5e42be4e60fe9eefe387031a57fa4044012ab50daf780d55ee179a5e1cf3ce2155c12c60f'
+            '04fc400b73a9dbce47f1e85c443da09cccc25c27fc14deed4b03b1f6f43650d7156a50b2d1a62a375931dabd262e49fe871c6422a96094f5251e860c88e85860'
             'e986d2d33f4eaf83987fe33bf8cd3336e8435d22fdb82f80c885af39c59c66769cf22776a7b8f0609e801e7059054f1707954459bda1e1b4a3b7fe9c310505ed'
             '1cfb8dc36b4f4abc3b8018b3cec186fc2a16afc29dcd85eb0449fe00eade7f655c9ab6c3c5aedc6d1f19931c201b7994aff6d81fbf22f735e240a336404c9cd5'
             '8e721e5a1d32c3f6eae67715854c5bcb25a83c29679a311262794560948aba09a31f12de6559cb220fe3714e706cbac930a7a8baa0e9da4a169233a417920721')
@@ -107,15 +114,15 @@ package_hiby-rs6-device() {
     firmware-hiby-rs6
     hiby-rs6-audio
     hiby-rs6-boot
-    hiby-rs6-plasma
     hiby-rs6-system
     linux-hiby-rs6
     linux-hiby-rs6-dtbs
-    rs6-dac-plasma
     rs6-mirrorlist
     rs6-spdif
   )
-  optdepends=('hiby-rs6-firefox: hardware video decoding in Firefox')
+  optdepends=('hiby-rs6-firefox: hardware video decoding in Firefox'
+              'hiby-rs6-plasma: Plasma Mobile session on tty1'
+              'rs6-dac-plasma: DAC settings in Plasma Mobile')
 }
 
 package_hiby-rs6-system() {
@@ -155,6 +162,8 @@ package_hiby-rs6-system() {
 
   # one VT, no gettys on the others
   install -Dm644 "$us"/system/logind-hiby-rs6.conf "$pkgdir"/usr/lib/systemd/logind.conf.d/50-hiby-rs6.conf
+  install -Dm644 "$srcdir"/logind-hiby-rs6-powerkey.conf "$pkgdir"/usr/lib/systemd/logind.conf.d/55-hiby-rs6-powerkey.conf
+  install -Dm644 "$us"/system/99-flashlight.rules -t "$pkgdir"/usr/lib/udev/rules.d/
 
   # shutdown/reboot can never hang: stop timeouts, forced targets, watchdog in the last stage
   install -Dm644 "$us"/system/hiby-rs6-shutdown.conf \
@@ -269,10 +278,15 @@ package_hiby-rs6-firefox() {
   install -Dm644 "$us"/firefox/firefox-hiby-rs6-plasma-env.sh \
     "$pkgdir"/etc/xdg/plasma-workspace/env/hiby-rs6-firefox.sh
   install -Dm644 "$us"/firefox/firefox-hiby-rs6.js "$pkgdir"/usr/lib/firefox/defaults/pref/hiby-rs6.js
+  # Firefox for Android's user agent, rewritten for the installed Firefox by the hook (the placeholder
+  # here makes the file this package's, so removing the package removes it)
+  install -Dm755 "$srcdir"/hiby-rs6-firefox-ua "$pkgdir"/usr/lib/hiby-rs6/firefox-ua
+  install -Dm644 "$srcdir"/90-hiby-rs6-firefox-ua.hook -t "$pkgdir"/usr/share/libalpm/hooks/
+  echo "// replaced by /usr/lib/hiby-rs6/firefox-ua at install" > "$pkgdir"/usr/lib/firefox/defaults/pref/hiby-rs6-ua.js
 }
 
 package_hiby-rs6-plasma() {
-  pkgdesc="$pkgdesc (Plasma Mobile: KWin effects, lock screen at start, no X11 proxies, flashlight)"
+  pkgdesc="$pkgdesc (Plasma Mobile: KWin effects, lock screen at start, no X11 proxies)"
   depends=(kwin plasma-mobile systemd)
   backup=(etc/xdg/kwinrc etc/xdg/kscreenlockerrc)
   local us; us=$(_us)
@@ -283,8 +297,7 @@ package_hiby-rs6-plasma() {
   install -Dm644 "$srcdir"/plasma-mobile.service -t "$pkgdir"/usr/lib/systemd/system/
   # the lock screen is the login (plasma-mobile.service starts the session without a display manager)
   install -Dm644 "$srcdir"/kscreenlockerrc "$pkgdir"/etc/xdg/kscreenlockerrc
-  install -Dm644 "$us"/system/99-flashlight.rules -t "$pkgdir"/usr/lib/udev/rules.d/
-  # Plasma Mobile takes the power key, not logind (systemd would power off)
+  # Plasma Mobile takes the power key, not logind (hiby-rs6-system's 55- drop-in would suspend)
   install -Dm644 "$srcdir"/logind-hiby-rs6-plasma.conf "$pkgdir"/usr/lib/systemd/logind.conf.d/60-hiby-rs6-plasma.conf
 
   # No X11 helpers: Plasma Mobile has no X11 tray or global menu to proxy, and these two X11

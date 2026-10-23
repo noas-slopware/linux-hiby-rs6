@@ -1,0 +1,11 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = firefox
+Target = hiby-rs6-firefox
+
+[Action]
+Description = Setting Firefox for Android's user agent for the installed Firefox...
+When = PostTransaction
+Exec = /usr/lib/hiby-rs6/firefox-ua

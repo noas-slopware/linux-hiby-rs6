@@ -1,0 +1,11 @@
+#!/bin/sh
+# HiBy RS6 (hiby-rs6-firefox): Firefox for Android's user agent for the installed Firefox, so sites
+# (YouTube Music above all) serve their lighter mobile versions. Run by the pacman hook
+# 90-hiby-rs6-firefox-ua.hook whenever Firefox or this package is installed or upgraded.
+set -eu
+v=$(sed -n 's/^Version=\([0-9][0-9]*\).*/\1/p' /usr/lib/firefox/application.ini | head -n 1)
+[ -n "$v" ] || { echo "hiby-rs6-firefox-ua: no Firefox version in /usr/lib/firefox/application.ini" >&2; exit 0; }
+cat > /usr/lib/firefox/defaults/pref/hiby-rs6-ua.js <<P
+// written by /usr/lib/hiby-rs6/firefox-ua for Firefox $v (pacman hook 90-hiby-rs6-firefox-ua.hook)
+pref("general.useragent.override", "Mozilla/5.0 (Android 16; Mobile; rv:$v.0) Gecko/$v.0 Firefox/$v.0");
+P
