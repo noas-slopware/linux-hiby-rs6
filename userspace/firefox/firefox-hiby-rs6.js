@@ -60,3 +60,6 @@ pref("app.normandy.enabled", false);
 pref("app.shield.optoutstudies.enabled", false);
 pref("browser.newtabpage.activity-stream.feeds.telemetry", false);
 pref("browser.newtabpage.activity-stream.telemetry", false);
+// Firefox for Android's user agent everywhere: sites (YouTube Music above all) serve their
+// lighter mobile versions. Keep the version in step with the installed Firefox.
+pref("general.useragent.override", "Mozilla/5.0 (Android 16; Mobile; rv:158.0) Gecko/158.0 Firefox/158.0");
