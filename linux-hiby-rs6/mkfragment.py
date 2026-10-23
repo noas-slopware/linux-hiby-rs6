@@ -42,6 +42,28 @@ NONDRIVER_RS6 = {
     'PSTORE_PMSG': 'userspace messages into ramoops (the DT reserves pmsg-size 128 KiB)',
     'PANIC_TIMEOUT': 'reboot right after a panic (no console to read on a hung screen); ramoops keeps the panic log',
 }
+# Nura's config enables these for other SDM660 phones; the RS6 has no such hardware (checked against
+# sdm660-hiby-rs6.dtb and the RS6's SMGR sensor list, 2026-10-23), so they keep Arch's value / default
+NOT_ON_RS6 = {
+    'DRM_PANEL_BOE_BV045FHM_L00': 'panel of another phone', 'DRM_PANEL_FT8716U': 'panel of another phone',
+    'DRM_PANEL_NOVATEK_NT51021': 'panel of another phone', 'DRM_PANEL_SAMSUNG_AMS601NT12': 'panel of another phone',
+    'DRM_PANEL_SYNAPTICS_TD4310': 'panel of another phone', 'DRM_PANEL_TIANMA_TD4310': 'panel of another phone',
+    'DRM_PANEL_TRULY_TD4322': 'panel of another phone',
+    'IIO_QCOM_SMGR_GYRO': 'SMGR reports an accelerometer only', 'IIO_QCOM_SMGR_MAG': 'SMGR reports an accelerometer only',
+    'IIO_QCOM_SMGR_PRESSURE': 'SMGR reports an accelerometer only', 'IIO_QCOM_SMGR_PROX': 'SMGR reports an accelerometer only',
+    'INPUT_QCOM_SPMI_HAPTICS': 'vibrator@c000 is disabled', 'BATTERY_PMI8998_FG': 'battery@4000 is disabled (cw2015 gauge)',
+    'SND_SOC_TAS2557': 'no TAS2557 amplifier',
+    'CRYPTO_DEV_QCE': 'no crypto engine node', 'CRYPTO_DEV_QCE_AEAD': 'no crypto engine node',
+    'CRYPTO_DEV_QCE_ENABLE_ALL': 'no crypto engine node', 'CRYPTO_DEV_QCE_SHA': 'no crypto engine node',
+    'CRYPTO_DEV_QCE_SKCIPHER': 'no crypto engine node', 'CRYPTO_DEV_QCE_SW_MAX_LEN': 'no crypto engine node',
+    # built in on Nura, but no node in the RS6 DT, so they never probe: Arch's level instead
+    'EXTCON_SM5502': 'no SM5502', 'INPUT_PM8XXX_VIBRATOR': 'no PM8xxx vibrator', 'BACKLIGHT_LP855X': 'no LP855x',
+    'DRM_PANEL_SIMPLE': 'the panel is the Sharp DSI one', 'DRM_PANEL_DSI_CM': 'the panel is the Sharp DSI one',
+    'QCOM_IPA': 'no modem data path (no IPA node)', 'QCOM_Q6V5_WCSS': 'IPQ Wi-Fi only', 'QCOM_WCNSS_PIL': 'WCN3990, not WCNSS',
+    'PHY_QCOM_EUSB2_REPEATER': 'no eUSB2', 'PHY_QCOM_QMP_UFS': 'eMMC, no UFS', 'PINCTRL_QCOM_SSBI_PMIC': 'SPMI PMICs only',
+    'MFD_QCOM_RPM': 'SMD RPM, not the old RPM', 'TYPEC_UCSI': 'no UCSI / pmic-glink', 'USB_QCOM_EUD': 'no EUD node',
+    'REGULATOR_PWM': 'no PWM regulator', 'REGULATOR_QCOM_USB_VBUS': 'no VBUS regulator node',
+}
 # RS6 overrides of Arch drivers it enables
 FORCE = {
     'ARM_PSCI_CHECKER': ('n', 'boot-time PSCI hotplug/suspend self-test: never run with the RS6 OSI cluster idle / CPRh bring-up'),
@@ -58,7 +80,7 @@ for s, v in sorted(pm.items(), key=lambda x: (kmap.get(x[0], '~'), x[0])):
         sections['nondrv'].append((s, v, f, a, NONDRIVER_RS6[s])); continue
     if not isdrv(f):
         continue
-    if s in ARCH_WINS: continue
+    if s in ARCH_WINS or s in NOT_ON_RS6: continue
     if a is None:
         if v == 'n': continue
         sections['new'].append((s, v, f, a, '')); continue
