@@ -14,7 +14,7 @@
 // linux-headers, is the AArch64 one). Build systems see nothing of this: no flags, no wrappers.
 // Twin proc macros are linked with the x86_64 gcc in /opt/rs6-xtools/x86_64 (a link-only Arch
 // x86_64 sysroot). A twin that fails to build (code that only builds for AArch64) is left out;
-// its log is <output dir>/.rs6-host/<crate>.log.
+// its log is <output dir>/.rs6-host/lib<crate><extra-filename>.log.
 // Explicit --target compiles (the kernel's own crates) keep their target; they too get the x86_64
 // twin of every proc macro they load.
 #![feature(rustc_private)]
@@ -120,12 +120,35 @@ fn cg_key(a: &Arg) -> Option<&str> {
     }
 }
 
+// The lock a crate's rs6-rustc holds while its twin builds: <output dir>/.rs6-host/<stem>.lock, where
+// <stem> is lib<crate name><extra-filename>, the stem of every file the crate emits. Cargo pipelines:
+// a dependent starts once the dependency's .rmeta is written, while the dependency's rustc and its
+// twin are still running, so a twin compile could find the dependency's twin missing and fall back
+// to the AArch64 rlib (E0461, then no twin for anything built on it).
+fn twin_lock(dir: &Path, stem: &str) -> PathBuf {
+    dir.join(TWIN).join(format!("{stem}.lock"))
+}
+
+// wait until the twin of a dependency (an --extern path) is finished or has failed: take the shared
+// side of its lock, which its rs6-rustc holds exclusively from before its metadata exists until the
+// twin is done. No lock file: no twin was ever started for it.
+fn wait_twin(path: &str) {
+    let p = Path::new(path);
+    let (Some(dir), Some(stem)) = (p.parent(), p.file_stem().and_then(|s| s.to_str())) else {
+        return;
+    };
+    if let Ok(f) = fs::File::open(twin_lock(dir, stem)) {
+        let _ = f.lock_shared();
+    }
+}
+
 // --extern [modifiers:]name=path
 fn extern_twin(v: &str, only_dylib: bool) -> Option<String> {
     let (lhs, path) = v.split_once('=')?;
     if only_dylib && !path.ends_with(".so") {
         return None;
     }
+    wait_twin(path);
     let t = twin_of(path);
     t.exists().then(|| format!("{lhs}={}", t.display()))
 }
@@ -258,14 +281,36 @@ fn main() -> ExitCode {
     let stdin_input = plain("-");
     let wants_twin = crate_types.iter().any(|t| t == "rlib" || t == "lib" || t == "proc-macro") && !stdin_input;
     let mut twin_child = None;
+    // held from before the primary compile writes any metadata until the twin is done (twin_lock)
+    let mut _twin_lock = None;
     if wants_twin {
         if let Some((args, dirs, name)) = twin_args(&parsed, &crate_types, &search) {
             for d in &dirs {
                 let _ = fs::create_dir_all(d);
             }
+            let extra = parsed
+                .iter()
+                .find_map(|a| match a {
+                    Arg::Opt(n, v) if (n == "-C" || n == "--codegen") && v.starts_with("extra-filename=") => {
+                        Some(v["extra-filename=".len()..].to_string())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default();
+            // every file of this twin is named by the crate's output stem: cargo builds several
+            // variants of one crate at once (syn with different features), and files named by the
+            // crate alone let one variant's twin read another's arguments
+            let stem = format!("lib{name}{extra}");
+            if let Some(lockdir) = dirs[0].parent() {
+                if let Ok(f) = fs::File::create(twin_lock(lockdir, &stem)) {
+                    if f.lock().is_ok() {
+                        _twin_lock = Some(f);
+                    }
+                }
+            }
             let outdir = dirs[0].clone();
-            let argfile = outdir.join(format!("{name}.args"));
-            let log = outdir.join(format!("{name}.log"));
+            let argfile = outdir.join(format!("{stem}.args"));
+            let log = outdir.join(format!("{stem}.log"));
             let mut body = String::new();
             for a in &args {
                 body.push_str(a);
