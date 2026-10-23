@@ -27,7 +27,7 @@ pkgname=(
   hiby-rs6-plasma
 )
 pkgver=1
-pkgrel=17
+pkgrel=18
 pkgdesc='HiBy RS6'
 url='https://github.com/noas-slopware/linux-hiby-rs6'
 arch=(aarch64)
@@ -221,6 +221,9 @@ package_hiby-rs6-audio() {
     pipewire-pulse
     rs6-spdif
     rtkit
+    # Elisa's libvlc: without it VLC falls back to ALSA, where the exclusive pulse.rules for Elisa
+    # and its bit-perfect stream volume lock never apply
+    vlc-plugin-pulse
     wireplumber
   )
   backup=(etc/xdg/plasmaparc)
