@@ -1,0 +1,43 @@
+From a1024d2ab529aca356095751a18ced80f40cace4 Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Fri, 23 Oct 2026 16:51:32 +0900
+Subject: [PATCH] configure: link the x87 asm checks instead of only compiling
+ them
+
+With -flto (makepkg's default) a compile-only test stops at the LTO
+bytecode, so GCC never generates code for the asm and never sees that
+fsin/fcos/fldln2 and the "=t" constraint are x86-only: both checks pass
+on AArch64 and the x87 code in dither.c then fails at the LTO link
+("unknown register name 'st(1)' in 'asm'"). A link test generates the
+code and gets the right answer.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ configure.ac | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/configure.ac b/configure.ac
+index dfc9d8a..827e127 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -146,7 +146,7 @@ AC_COMPILE_IFELSE(
+  [AC_MSG_RESULT(no)])
+ 
+ AC_MSG_CHECKING(for fsin/fcos)
+-AC_COMPILE_IFELSE(
++AC_LINK_IFELSE(
+  [AC_LANG_PROGRAM(
+    [[]],
+    [[double x; asm volatile("fsin; fcos":"=t"(x):);]])],
+@@ -155,7 +155,7 @@ AC_COMPILE_IFELSE(
+  [AC_MSG_RESULT(no)])
+ 
+ AC_MSG_CHECKING(for fldln2/fxch/fyl2x)
+-AC_COMPILE_IFELSE(
++AC_LINK_IFELSE(
+  [AC_LANG_PROGRAM(
+    [[]],
+    [[double x; asm volatile("fldln2; fldln2; fxch; fyl2x":"=t"(x):);]])],
+-- 
+2.56.0
+
