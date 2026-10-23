@@ -14,8 +14,14 @@ enable rmtfs.service
 enable tqftpserv.service
 enable swclock-offset-boot.service
 enable swclock-offset-shutdown.service
-enable hiby-rs6-swap.service
 enable rs6-touchboost.service
 enable rs6-vt-lock.service
 enable darwinctl-restore.service
 enable plasma-mobile.service
+# NetworkManager runs the network and nothing uses systemd-homed on the RS6: switch off what systemd's own
+# 90-systemd.preset would enable next to it. The swap partitions need no unit of ours either:
+# systemd-gpt-auto-generator activates arch_swap1/arch_swap2 by their GPT swap type.
+disable systemd-networkd.service
+disable systemd-networkd-wait-online.service
+disable systemd-homed.service
+disable systemd-homed-activate.service

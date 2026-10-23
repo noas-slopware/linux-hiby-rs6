@@ -27,7 +27,7 @@ pkgname=(
   hiby-rs6-plasma
 )
 pkgver=1
-pkgrel=7
+pkgrel=8
 pkgdesc='HiBy RS6'
 url='https://github.com/noas-slopware/linux-hiby-rs6'
 arch=(aarch64)
@@ -52,7 +52,6 @@ source=(
   nftables-hiby-rs6.conf
   nftables-hiby-rs6.service.conf
   plasma-mobile.service
-  hiby-rs6-swap.service
   NetworkManager-hiby-rs6-wifi.conf
   86-hiby-rs6-usbnet-nm.rules
   logind-hiby-rs6-plasma.conf
@@ -63,9 +62,9 @@ sha512sums=('b7ce99f8a91c928bc4d56850e4636d82d333b3a54f0e366ae6d4523cf902f639330
             'e62eca3562027a7f456932cf7a7b983fb29648e99de00267b818e99db9c99c5dac53b5638fc083d48f690f829674ab11c863355dce103fb7784f394275b0a72d'
             '8186a2e0a5b242f1b51729cd98b6fbfafe93be128326c0766127dcd2e11f716b96679cc2d1188cd85dcb730f6a069e08b1891566564a342994a036c25fd7413e'
             '7d89511c1cd396c6df5436a7e260a3929983f2858f5eb001d72553b058ae93b7d092c4658369465dd42ffbbc549acb175cb1071029cab6f5eeb188c5c5588dc9'
-            '0ae69bd6d68541c4cca7db645e68aeed1f82d198434b3b2f3d45671a0d7bc527631340749ce2c6062f0149db9ccb8f4492da9c4e1ff0b955cd508d2df09a52a2'
+            '7314e2edef5e32349cdd8a07cd89098d5a8b59658dc74cc06196dc4a112f3a3bfff0a46e53e577f4cd176344e896206bdf9d682b8daf12559fc8ae9034f86a85'
             '90ed76a5b0523443605c1af28a633799048fda9ff34a309cf8d586ebc6dd5dadfd84a491856e4543e61b79d2ccfab2c112918fc552358a2a7a58c6c4265b5c2b'
-            '1457a624e3bcc3bd71fb02c7df7d48e561d0c912b9b4ba8286fe4d25f1241928aa72cb087976b797760480a94d7f1edcee4460e0ded69f8f2fe2cfd89bee4ef9'
+            '320b899e4528ec8fef12f70bbddce07d54b443d8ef663e0f108fcc17506489d15b99d05d04363f275217df549154157bb108798139c3c67a49000409a61cab3f'
             '56d02356dad676a3bbaab5639b16d605044ef37ab26a65fd9d2b8c89fcd59a5d3bf944ad3ec80d70fb3890cc6cb9a5d172b319f5733ed184a24e884a36738c6b'
             '843f415cc79f8e462cf686c60d5c578fb1b59058f610f567f8cb2a7b98b967453301d4d60b3c3eec801e1651121e1aa2c43eaee3933e445c96491802da6caae4'
             '52d65a68618e06a61eefb7ecfe4e7e8c3c872e2ef8d0658a70f38bed5dcee69c6931c1acf9a999353494aa72d5b04834feb02683469ea63e415f2caf9bc8ffd7'
@@ -74,7 +73,6 @@ sha512sums=('b7ce99f8a91c928bc4d56850e4636d82d333b3a54f0e366ae6d4523cf902f639330
             '47cd879fa2d8d0e4071506eff21f4c170d65a7b2eccc4549c84919c9595e5f9ff52f9bd0ed1133459eb9d63aa1643d1894bea2af0628aaec96a9122bc3a22b53'
             '247d57449254b9948294a69405c9080c508e18886b12f680be021ce1bc8a58d50388fa84e25f1f26538c101595d6b4fbed36d3a9608e00850940c719c551fc87'
             '5e590ef6b56aa71aa585e54693d713553258a481e5b14dd0bd842dba676f3877bc416106b033d189812972f44028daf61970e8cecf6b0c6fd0934996ab4797a9'
-            'f304c3554b54a7c09e078a58e014da3c9f7c777371aca53c9aa1dc073b31a4fc1513ac4bd4c1a82816a3a6774481996d48d3c37efef08917bcbad9ad326d06bb'
             'ea07405abdbcdfa94681d10e9821d96d759beef5380bb20d8341b2b7f574b869952083bb486cc48df04b70331803f6a52140018e2800167a58b7f02953058ac3'
             '33336caf63182636051a2a56c1078da5ece89d55f197394dac3d10ad2921643062a2ceac89cf87ba1a6cdbd01f7c57007a1339016b4f568833b8b200f02b8a31'
             '4ba22390b85fbad9b3b3223dcc8bebe85e407550d944d2a1976b05286fd79fe54609f3dc7c31563c089063188902478576558dfda3a606e762e385a2ec1da981'
@@ -142,8 +140,7 @@ package_hiby-rs6-system() {
   install -Dm644 "$us"/system/90-hiby-rs6-perf.rules -t "$pkgdir"/usr/lib/udev/rules.d/
   install -Dm644 "$us"/system/hiby-rs6-perf.conf -t "$pkgdir"/usr/lib/tmpfiles.d/
 
-  # 8 GiB swap on arch_swap1 + arch_swap2 behind zram
-  install -Dm644 "$srcdir"/hiby-rs6-swap.service -t "$pkgdir"/usr/lib/systemd/system/
+  # 8 GiB swap on arch_swap1 + arch_swap2 behind zram: systemd-gpt-auto-generator activates them
   install -Dm644 "$srcdir"/zram-generator.conf -t "$pkgdir"/usr/lib/systemd/
   install -Dm644 "$srcdir"/90-hiby-rs6-zram.sysctl "$pkgdir"/usr/lib/sysctl.d/90-hiby-rs6-zram.conf
 
