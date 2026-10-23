@@ -9,7 +9,11 @@
 #   RS6_WORK   work dir (default /var/tmp/rs6-arch-build): pkg/src caches, ccache, build dirs, logs
 #   RS6_ACCEL  how C/C++ gets compiled in the builder (x86_64 hosts):
 #                xgcc   (default on x86_64) bens' exact gcc 16.2.1 + binutils 2.47 rebuilt as x86_64
-#                       cross tools (mkxtools-rs6.sh) and run natively inside the AArch64 container
+#                       cross tools (mkxtools-rs6.sh) and run natively inside the AArch64 container,
+#                       with rustc, clang (mkxtools-rust-rs6.sh) and python, meson, ninja, bison, flex,
+#                       m4, zstd, bsdtar, debugedit, xz, gzip, make, bash/sh, coreutils, sed, gawk, grep,
+#                       findutils, diffutils, tar, bc, cpio, kmod, file, pahole, faked
+#                       (mkxtools-tools-rs6.sh) the same way
 #                none   everything under qemu-user (the only mode on an aarch64 host)
 #   NOCHECK=1  skip check() (makepkg --nocheck)
 set -euo pipefail
@@ -63,6 +67,8 @@ build_one() {
 		-v "$W/ccache:/ccache" -v "$W/makepkg-gnupg:/gnupg" -e "ACCEL=$ACCEL" -e "NOCHECK=${NOCHECK:-}")
 	[ "$ACCEL" != xgcc ] || BUILDER_ARGS+=(-v "$W/xtools:/opt/rs6-xtools:ro" -v "$TOOLS/xtools-activate.sh:/usr/local/bin/xtools-activate:ro")
 	log "$pkg: build (accel $ACCEL)"
+	# ccache: the 5 GiB default held less than the kernel plus Mesa, and makepkg's freshly extracted
+	# sources are always newer than the compile start, which kept ccache out of direct mode
 	builder localhost/rs6-builder sh -euc '
 		pacman -Su --noconfirm
 		echo "rs6-timing: deps $(date +%s)"
@@ -72,6 +78,7 @@ build_one() {
 		echo "rs6-timing: makepkg $(date +%s)"
 		su builder -c "cp -r /pkg /home/builder/p && cd /home/builder/p && \
 			GNUPGHOME=/gnupg SRCDEST=/srcdest PKGDEST=/out BUILDDIR=/build CCACHE_DIR=/ccache CCACHE_BASEDIR=/build \
+			CCACHE_MAXSIZE=30G CCACHE_SLOPPINESS=include_file_mtime,include_file_ctime,time_macros \
 			makepkg -s --noconfirm --cleanbuild ${NOCHECK:+--nocheck}"
 		echo "rs6-timing: done $(date +%s)"' sh "${deps[@]}" >> "$log" 2>&1 || {
 		log "$pkg: build failed, see $log"; return 1; }
