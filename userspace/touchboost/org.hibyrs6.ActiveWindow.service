@@ -1,4 +1,0 @@
-[D-BUS Service]
-Name=org.hibyrs6.ActiveWindow
-Exec=/usr/lib/hiby-rs6/rs6-activewindow
-SystemdService=rs6-activewindow.service
