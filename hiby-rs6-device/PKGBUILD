@@ -17,6 +17,7 @@
 #   hiby-rs6-firefox   Venus V4L2 decoding shim, wrapper, desktop override, prefs
 #   hiby-rs6-plasma    Plasma Mobile: KWin effects config, lock screen at session start, no X11
 #                      tray/menu proxies, powerdevil takes the power key
+#   rs6-dac-dms        DARWIN, the DMS plugin for the DAC (bar widget + popout, through darwinctl)
 
 pkgbase=hiby-rs6-device
 pkgname=(
@@ -26,16 +27,17 @@ pkgname=(
   hiby-rs6-audio
   hiby-rs6-firefox
   hiby-rs6-plasma
+  rs6-dac-dms
 )
 pkgver=1
-pkgrel=21
+pkgrel=22
 pkgdesc='HiBy RS6'
 url='https://github.com/noas-slopware/linux-hiby-rs6'
 arch=(aarch64)
 license=(MIT)
 makedepends=(alsa-lib ffmpeg linux-api-headers)
 # senpai branch (default) of noas-slopware/linux-hiby-rs6
-_rs6commit=a8143bdc6aa1cc3b3ac00ecbd022d98d6fadee59
+_rs6commit=cc878a07e6899a23461bfb91c27a788be44f5bbc
 source=(
   "linux-hiby-rs6-$_rs6commit.tar.gz::https://github.com/noas-slopware/linux-hiby-rs6/archive/$_rs6commit.tar.gz"
   hiby-rs6-extlinux
@@ -44,6 +46,7 @@ source=(
   mkinitcpio-hiby-rs6.conf
   zram-generator.conf
   90-hiby-rs6-zram.sysctl
+  hiby-rs6-zswap.tmpfiles
   80-hiby-rs6.preset
   hiby-rs6-usbnet
   hiby-rs6-usbnet.service
@@ -63,7 +66,7 @@ source=(
   hiby-rs6-growroot.service
   hiby-rs6-growroot-done.service
 )
-sha512sums=('08a8a44a6667adf3e4dc56e0370d30cdfade25b1e0f7aafcd4d0047bf4ac1215e1dee02dc6e7e8e70e367f37d7aa6a26cdb37088c5e96767a10761e795b8025c'
+sha512sums=('e80024d216335419a000f0a6eeee1a917890cae11be8cd263ad5a71d2e7c10fa2379e9b516e863a10d20364b558b84e50781511ce452495b7219c2cefa49905c'
             '393c11160c5bdc51f8b6eb498a311344a19a363eb55e20695b492e3afd2a2699a9afa02edb82c887fb5d3a3b9896aa2d2a83edb76c82d73a0b37b36b839f00c0'
             'e62eca3562027a7f456932cf7a7b983fb29648e99de00267b818e99db9c99c5dac53b5638fc083d48f690f829674ab11c863355dce103fb7784f394275b0a72d'
             '8186a2e0a5b242f1b51729cd98b6fbfafe93be128326c0766127dcd2e11f716b96679cc2d1188cd85dcb730f6a069e08b1891566564a342994a036c25fd7413e'
@@ -122,7 +125,8 @@ package_hiby-rs6-device() {
   )
   optdepends=('hiby-rs6-firefox: hardware video decoding in Firefox'
               'hiby-rs6-plasma: Plasma Mobile session on tty1'
-              'rs6-dac-plasma: DAC settings in Plasma Mobile')
+              'rs6-dac-plasma: DAC settings in Plasma Mobile'
+              'rs6-dac-dms: DAC controls in the DMS bar')
 }
 
 package_hiby-rs6-system() {
@@ -154,6 +158,7 @@ package_hiby-rs6-system() {
   # 8 GiB swap on arch_swap1 + arch_swap2 behind zram: systemd-gpt-auto-generator activates them
   install -Dm644 "$srcdir"/zram-generator.conf -t "$pkgdir"/usr/lib/systemd/
   install -Dm644 "$srcdir"/90-hiby-rs6-zram.sysctl "$pkgdir"/usr/lib/sysctl.d/90-hiby-rs6-zram.conf
+  install -Dm644 "$srcdir"/hiby-rs6-zswap.tmpfiles "$pkgdir"/usr/lib/tmpfiles.d/hiby-rs6-zswap.conf
 
   # touch boost, VT lock
   install -Dm755 "$srcdir"/rs6-touchboost "$srcdir"/rs6-vt-lock -t "$pkgdir"/usr/lib/hiby-rs6/
@@ -307,4 +312,12 @@ package_hiby-rs6-plasma() {
   for u in plasma-xembedsniproxy.service plasma-gmenudbusmenuproxy.service; do
     ln -s /dev/null "$pkgdir"/etc/systemd/user/$u
   done
+}
+
+package_rs6-dac-dms() {
+  pkgdesc="$pkgdesc (DARWIN: the DAC in the DMS bar)"
+  depends=(dms-shell hiby-rs6-audio)
+
+  # QML only: every read and write goes through darwinctl (hiby-rs6-audio)
+  make -C "$(_us)"/rs6-dac-dms DESTDIR="$pkgdir" install
 }

@@ -1,5 +1,8 @@
-# HiBy RS6, the sysctls Nura's zramstart sets for zram swap: no swap readahead, prefer
-# swapping to zram over dropping page cache, start reclaiming early enough for zram to help.
+# HiBy RS6, aggressive zram swap: no swap readahead (zram pages are random access), swap anonymous
+# memory to zram as readily as possible instead of dropping page cache, keep a reserve and start
+# kswapd early (no watermark boost, wider watermark gap) so reclaim goes to zram before a stall.
 vm.page-cluster = 0
-vm.swappiness = 180
+vm.swappiness = 200
 vm.min_free_kbytes = 100000
+vm.watermark_boost_factor = 0
+vm.watermark_scale_factor = 125
