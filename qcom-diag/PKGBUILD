@@ -1,11 +1,12 @@
 # Maintainer: Noa Himesaka <himesaka@noa.codes>
-# HiBy RS6 ([rs6] repo): linux-msm diag-router, as Nura's qcom-diag 0_git20250324 (same commit and
-# systemd unit). The SDM660 modem's watchdog kills the MPSS ("dog_hb.c: Task starvation: diag") when
-# nothing drains its diag channel, and the WCN3990 Wi-Fi firmware dies with it.
+# HiBy RS6 ([rs6] repo): linux-msm diag-router at upstream's newest commit (upstream tags no
+# releases; Nura's qcom-diag is still 0_git20250324), with Nura's systemd unit. The SDM660 modem's
+# watchdog kills the MPSS ("dog_hb.c: Task starvation: diag") when nothing drains its diag channel,
+# and the WCN3990 Wi-Fi firmware dies with it.
 pkgname=qcom-diag
-pkgver=0_git20250324
-pkgrel=2
-_commit=29277ef0bcbe22468a3836b796dc525ba6df87f3
+pkgver=0_git20260709
+pkgrel=1
+_commit=23c12c167e93215853af4e59c021551767f6fec8
 pkgdesc="Routing of diagnostics related messages between host and various subsystems"
 arch=(aarch64)
 url="https://github.com/linux-msm/diag"
@@ -14,7 +15,7 @@ depends=(glibc systemd-libs qrtr)
 makedepends=(linux-api-headers systemd)
 source=("diag-$_commit.tar.gz::https://github.com/linux-msm/diag/archive/$_commit.tar.gz"
         diag-router.service)
-sha512sums=('19987ed217edc783fcf215b61d969d4d77c3b018db63b70543f925134100345000b434a340cec1b2494da54b66c3b39874924b174d0b4ed8fffe716b6046f6fb'
+sha512sums=('d2b2874af1a3dcd9221c18f8a0f41b01204d043263bf55bc769fdc4e7529965450164e832cda30863d9d6e15fb71579379d7189f314ff0d66c5c1f31fc8f60e6'
             'eea56a7d10c97410e8be9b67b378f3656dc0d3c72e1c0051ac852375625b6ebcc745e2a8026948986fdf5f151cea7e67a7e10d3c4920d6665486e09f545a4311')
 
 build() {
