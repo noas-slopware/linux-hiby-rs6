@@ -10,7 +10,7 @@ Distribution-neutral sources and configuration for the RS6. The `pmos` branch pa
 | | `wireplumber-exclusive-takeover.lua` | `/usr/share/wireplumber/scripts/hiby-rs6/exclusive-takeover.lua` (the music player's exclusive stream takes the DAC over) |
 | | `wireplumber-output-handover.lua` | `/usr/share/wireplumber/scripts/hiby-rs6/output-handover.lua` (frees the card PCM for the other output as soon as a jack is plugged or unplugged) |
 | | `plasmaparc` | `/etc/xdg/plasmaparc` (one wheel detent = 1 % = one NJW1195A step) |
-| `darwinctl/` | `darwinctl.c` (needs alsa-lib), `darwinctl-restore.service`, `darwinctl.tmpfiles` | DAC filter control from the command line; filters come from the `firmware` branch (`darwin/`) |
+| `darwinctl/` | `darwinctl.c` (needs alsa-lib), `darwinctl-restore.service`, `darwinctl.tmpfiles` | every hm100 DAC control from the command line (`status --json`, `monitor` for the DMS plugin); filters come from the `firmware` branch (`darwin/`). `test/`: an emulated hm100 mixer (`hm100-emu.py` + ALSA control plugin `hm100emu`) and `run.sh` |
 | `firefox/` | `firefox-v4l2-fix.c` (LD_PRELOAD shim), `firefox-hiby-rs6` (wrapper), `.desktop`, `.js` (prefs), `-env.conf`, `-plasma-env.sh` | Venus V4L2 hardware decoding in Firefox |
 | `system/` | udev rules, tmpfiles, logind and shutdown drop-ins, `nura-swap.service`, `kernel-cmdline.conf`, `modules-initfs`, `99-flashlight.rules` | see `pmos` branch `device-hiby-rs6/APKBUILD` |
 | | `kwinrc` | `/etc/xdg/kwinrc` (desktop-only KWin effects off) |
@@ -18,6 +18,7 @@ Distribution-neutral sources and configuration for the RS6. The `pmos` branch pa
 | `touchboost/` | `rs6-touchboost.c`, `.service` | touch-triggered CPU/GPU boost daemon |
 | `vt-lock/` | `rs6-vt-lock.c`, `.service` | locks VT switching once the session is up |
 | `rs6-dac-plasma/` | CMake project | Plasma System Settings page, DAC quick setting and a rotate quick setting (KDE Frameworks 6) |
+| `rs6-dac-dms/` | `plugin/Darwin/` (QML), `Makefile` | DARWIN, the DMS bar widget and popout for the DAC (through darwinctl), `/etc/xdg/quickshell/dms-plugins/Darwin` |
 
 `rs6-dac-plasma` is laid out as CMake expects (`ui/main.qml`, `quicksetting/`, `rotate/`). The pmos package
 keeps the same files flat and lays them out in `prepare()`.

@@ -1,0 +1,14 @@
+{
+    "id": "darwin",
+    "name": "DARWIN",
+    "description": "The HiBy RS6 DAC: output, gain, NOS, built-in and Darwin filters, pregain, balance, idle power off and DSD, through darwinctl",
+    "version": "1.0.0",
+    "author": "Noa Himesaka",
+    "type": "widget",
+    "capabilities": ["dankbar-widget"],
+    "component": "./DarwinWidget.qml",
+    "icon": "graphic_eq",
+    "requires_dms": ">=1.7.0",
+    "requires": ["darwinctl"],
+    "permissions": ["process"]
+}
