@@ -14,7 +14,7 @@
 
 pkgbase=linux-hiby-rs6
 pkgver=7.2.3
-pkgrel=4
+pkgrel=5
 pkgdesc='Linux for the HiBy RS6 (sdm660-mainline + RS6 series)'
 url='https://github.com/noas-slopware/linux-hiby-rs6'
 arch=(aarch64)
@@ -44,9 +44,9 @@ options=(
   !debug
   !strip
 )
-_commit=dd1ed52c8ceef4f16715118ed0252fe75adbe71d   # sdm660-mainline qcom-sdm660-7.2.y (Linux 7.2.3)
+_commit=34c0be5727a86528f82a0242f70e2273cdb2df37   # sdm660-mainline qcom-sdm660-7.2.y (Linux 7.2.3)
 # senpai branch (default) of noas-slopware/linux-hiby-rs6
-_rs6commit=f773f4acc90f1d6d55795f943593466c07b6276d
+_rs6commit=91d030d852193b2c02df184ae35a13de0996abdb
 _srcname=linux-$_commit
 source=(
   "linux-sdm660-$_commit.tar.gz::https://github.com/sdm660-mainline/linux/archive/$_commit.tar.gz"
@@ -57,8 +57,8 @@ source=(
   # since linux-api-headers 7.3
   0001-tools-linux-types.h-Add-128-bit-integer-types-for-arm64-UAPI-structures.patch
 )
-sha512sums=('b56636f4d7429e971a70c1b7237fda4d5795fbe422c01f6fc6038220c2e831bf4479bd411b5e04e4db45de4fb8ec15a9e0e312b6479e2067709062af3dfd6997'
-            'b7ce99f8a91c928bc4d56850e4636d82d333b3a54f0e366ae6d4523cf902f639330773857543e8b56cbc5333351eb79fe4dffec3ba33655c2a24e8f7b1774e13'
+sha512sums=('5629be1a815bfcff77d9a4d9ffb15aeafbeea155c650b227112cfc4bd53f28134a6eabc6962a2c47804997bf9bd9afc07d8087cfa35aede2cdd9e4e1a40dc628'
+            '3d1da2fb6b7c911a03d10e8b0f75ac65507bfb71b2224e8ac41f436621189d509ae7ed7b543317ee854335fc1c9f1ec257f093dccfa18222cab81a55dc255d53'
             '2488702652cc0c0bc5a75b8668c4ff143d64724cf661a65b1e8171901687db8d78b51d02b540b30fa6ae96334516bc550d60100254e5ef8175e8bab53e0ac8b7'
             '42765b74c756cb2e00792747795d6e8965405b0bdf0b582a727f7a2313d39d4125d05220ff84a64558fe21f337e05a2430d9b5d3acdd9a25a043e9b5886c0814'
             '64e12f60d00f80912aa92a91ff1081a5703efd3ab0df2f539c1d505329844caa8b0180c34b4c9e1fa1bc59e632605cf44c7fd5a87b433803f9b42a4f9f9a0e43')
