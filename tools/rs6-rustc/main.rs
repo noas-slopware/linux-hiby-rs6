@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // rs6-rustc: the `rustc` of the rs6-builder container (mkxtools-rs6.sh, xtools-activate.sh). It is
-// the rustup toolchain's x86_64 compiler (rustc_driver of rust 1.99.1, the version bens has), so it
+// the rustup toolchain's x86_64 compiler (rustc_driver of bens' rust version, mkxtools-rust-rs6.sh), so it
 // runs natively, but to the AArch64 container it looks like a native AArch64 rustc, the way the
 // x86_64 gcc in /usr/bin looks like bens' gcc:
 //   - no --target: the target is aarch64-unknown-linux-gnu (std from the toolchain's rust-std),

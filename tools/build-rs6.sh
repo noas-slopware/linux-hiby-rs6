@@ -8,12 +8,13 @@
 #   RS6_REPO   repo dir (default $RS6_WORK/repo; YuruMirror: <mirror root>/rs6/os/aarch64)
 #   RS6_WORK   work dir (default /var/tmp/rs6-arch-build): pkg/src caches, ccache, build dirs, logs
 #   RS6_ACCEL  how C/C++ gets compiled in the builder (x86_64 hosts):
-#                xgcc   (default on x86_64) bens' exact gcc 16.2.1 + binutils 2.47 rebuilt as x86_64
+#                xgcc   (default on x86_64) bens' exact gcc + binutils rebuilt as x86_64
 #                       cross tools (mkxtools-rs6.sh) and run natively inside the AArch64 container,
 #                       with rustc, clang (mkxtools-rust-rs6.sh) and python, meson, ninja, bison, flex,
 #                       m4, zstd, bsdtar, debugedit, xz, gzip, make, bash/sh, coreutils, sed, gawk, grep,
 #                       findutils, diffutils, tar, bc, cpio, kmod, file, pahole, faked
-#                       (mkxtools-tools-rs6.sh) the same way
+#                       (mkxtools-tools-rs6.sh) the same way; when bens' versions in the sync db
+#                       moved past them, they are rebuilt first (lib-rs6.sh xtools_use)
 #                none   everything under qemu-user (the only mode on an aarch64 host)
 #   NOCHECK=1  skip check() (makepkg --nocheck)
 set -euo pipefail
@@ -24,7 +25,7 @@ src=$(realpath "${1:?usage: $0 <arch checkout> <package dir>...}"); shift
 if [ "$HOSTARCH" = aarch64 ]; then ACCEL=${RS6_ACCEL:-none}; else ACCEL=${RS6_ACCEL:-xgcc}; fi
 case $ACCEL in
 	none) ;;
-	xgcc) [ -e "$W/xtools/.stamp" ] || { echo "no cross tools in $W/xtools: run mkxtools-rs6.sh" >&2; exit 1; } ;;
+	xgcc) ;;	# xtools_use (lib-rs6.sh) makes or refreshes $W/xtools before each build
 	*) echo "RS6_ACCEL=$ACCEL?" >&2; exit 1 ;;
 esac
 FETCH_ARGS=(-v "$src:/src:ro")
@@ -36,6 +37,8 @@ build_one() {
 	t0=$(date +%s)
 	log "$pkg: sync, sources ($log)"
 	fetch_sync >> "$log" 2>&1
+	# x86_64 tools of bens' versions as of this sync (rebuilt here when bens moved), held until the build ends
+	[ "$ACCEL" != xgcc ] || xtools_use || { log "$pkg: no xtools for bens' current versions"; return 1; }
 
 	# .SRCINFO with CARCH=aarch64, read natively; deps = makepkg -s's set (all split packages)
 	local srcinfo
@@ -81,7 +84,8 @@ build_one() {
 			CCACHE_MAXSIZE=30G CCACHE_SLOPPINESS=include_file_mtime,include_file_ctime,time_macros \
 			makepkg -s --noconfirm --cleanbuild ${NOCHECK:+--nocheck}"
 		echo "rs6-timing: done $(date +%s)"' sh "${deps[@]}" >> "$log" 2>&1 || {
-		log "$pkg: build failed, see $log"; return 1; }
+		exec 8>&-; log "$pkg: build failed, see $log"; return 1; }
+	exec 8>&-	# xtools_use's lock
 	local t2 td tm; t2=$(date +%s)
 	td=$(sed -n 's/^rs6-timing: deps //p' "$log" | tail -1); tm=$(sed -n 's/^rs6-timing: makepkg //p' "$log" | tail -1)
 	log "$pkg: built in $((t2 - t1))s (upgrade $((td - t1))s, deps $((tm - td))s, makepkg $((t2 - tm))s; prep $((t1 - t0))s)"

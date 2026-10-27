@@ -13,38 +13,26 @@
 # here, builds the archive and copies it to the RS6, then prints the client config entries.
 #   mksccache-toolchain-rs6.sh [ssh-target]   (default irohasakayori@cosmic-princess-kaguya)
 #   RS6_SSH_OPTS="-o HostKeyAlias=..."         extra ssh/scp options
+#   mksccache-toolchain-rs6.sh --local [stable|nightly]...   (default: both)
+#       without the RS6: the archives for rust's current stable release and newest nightly, from the
+#       channel manifests (installed here as <version> / nightly-<date>, never touching this host's
+#       stable/nightly), left in /var/tmp/rs6-sccache-toolchain/<name>/archive.tar.gz with their
+#       versions printed; the RS6 then needs those toolchains (rustup) and the archives copied to
+#       ~/.local/share/rs6-sccache/rustc-x86_64-for-aarch64-<name>.tar.gz
 set -euo pipefail
+LOCAL=; [ "${1:-}" != --local ] || { LOCAL=1; shift; }
 RS6=${1:-irohasakayori@cosmic-princess-kaguya}
 read -r -a O <<< "${RS6_SSH_OPTS:-}"
 W=/var/tmp/rs6-sccache-toolchain
 DESTDIR=.local/share/rs6-sccache	# relative to the RS6 user's home
 
-rhome=$(ssh "${O[@]}" "$RS6" 'echo $HOME')
-mapfile -t tcs < <(ssh "${O[@]}" "$RS6" rustup toolchain list | awk '{print $1}' | grep -- '-aarch64-unknown-linux-gnu$')
-[ ${#tcs[@]} -gt 0 ] || { echo "no aarch64 rustup toolchains on the RS6" >&2; exit 1; }
-ssh "${O[@]}" "$RS6" mkdir -p "$DESTDIR"
-entries=()
-
-for rtc in "${tcs[@]}"; do
-	name=${rtc%-aarch64-unknown-linux-gnu}
-	case $name in
-	stable | nightly) ;;
-	*) echo "skipping $rtc: only stable and nightly get archives" >&2; continue ;;
-	esac
-	rustc=$rhome/.rustup/toolchains/$rtc/bin/rustc
-	read -r hash date release < <(ssh "${O[@]}" "$RS6" "$rustc" -vV |
-		awk '/^commit-hash/{h=$2} /^commit-date/{d=$2} /^release/{r=$2} END{print h, d, r}')
-	[ -n "$hash" ] || { echo "can't read $rtc's version" >&2; exit 1; }
-	case $name in
-	nightly) tc=nightly-$(date -u -d "$date + 1 day" +%F) ;;	# a nightly is published the day after its commit
-	stable) tc=$release ;;
-	esac
+# one archive per toolchain name, rebuilt when the commit changes
+build_archive() {	# <name> <rustup toolchain> <commit>
+	local name=$1 tc=$2 hash=$3 have sysroot d=$W/$1
 	rustup toolchain install "$tc" --profile minimal --target aarch64-unknown-linux-gnu >&2
 	have=$(rustc +"$tc" -vV | awk '/^commit-hash/{print $2}')
-	[ "$have" = "$hash" ] || { echo "$tc is $have, the RS6's $rtc is $hash" >&2; exit 1; }
+	[ "$have" = "$hash" ] || { echo "$tc is $have, wanted $hash" >&2; exit 1; }
 	sysroot=$(rustc +"$tc" --print sysroot)
-
-	d=$W/$name
 	if [ "$(cat "$d/stamp" 2>/dev/null)" != "$hash" ]; then
 		case $name in
 		stable) rm -rf /var/tmp/rs6-sccache-toolchain/stable/root /var/tmp/rs6-sccache-toolchain/stable/archive.tar.gz ;;
@@ -66,6 +54,46 @@ for rtc in "${tcs[@]}"; do
 		tar -C "$d/root" --owner=0 --group=0 --numeric-owner -czf "$d/archive.tar.gz" .
 		echo "$hash" > "$d/stamp"
 	fi
+}
+
+if [ -n "$LOCAL" ]; then
+	[ $# -gt 0 ] || set -- stable nightly
+	for name; do
+		case $name in stable | nightly) ;; *) echo "$name: only stable and nightly" >&2; exit 1 ;; esac
+		m=$(curl -fsSL "https://static.rust-lang.org/dist/channel-rust-$name.toml")
+		date=$(sed -n 's/^date = "\(.*\)"$/\1/p' <<< "$m" | head -1)
+		read -r release _ < <(sed -n '/^\[pkg\.rustc\]$/,/^$/s/^version = "\(.*\)"$/\1/p' <<< "$m")
+		hash=$(sed -n '/^\[pkg\.rustc\]$/,/^$/s/^git_commit_hash = "\(.*\)"$/\1/p' <<< "$m")
+		[ -n "$date" ] && [ -n "$release" ] && [ -n "$hash" ] || { echo "can't read the $name manifest" >&2; exit 1; }
+		case $name in stable) tc=$release ;; nightly) tc=nightly-$date ;; esac
+		build_archive "$name" "$tc" "$hash"
+		echo "$name: $tc, rustc $release, commit $hash: $W/$name/archive.tar.gz"
+	done
+	exit 0
+fi
+
+rhome=$(ssh "${O[@]}" "$RS6" 'echo $HOME')
+mapfile -t tcs < <(ssh "${O[@]}" "$RS6" rustup toolchain list | awk '{print $1}' | grep -- '-aarch64-unknown-linux-gnu$')
+[ ${#tcs[@]} -gt 0 ] || { echo "no aarch64 rustup toolchains on the RS6" >&2; exit 1; }
+ssh "${O[@]}" "$RS6" mkdir -p "$DESTDIR"
+entries=()
+
+for rtc in "${tcs[@]}"; do
+	name=${rtc%-aarch64-unknown-linux-gnu}
+	case $name in
+	stable | nightly) ;;
+	*) echo "skipping $rtc: only stable and nightly get archives" >&2; continue ;;
+	esac
+	rustc=$rhome/.rustup/toolchains/$rtc/bin/rustc
+	read -r hash date release < <(ssh "${O[@]}" "$RS6" "$rustc" -vV |
+		awk '/^commit-hash/{h=$2} /^commit-date/{d=$2} /^release/{r=$2} END{print h, d, r}')
+	[ -n "$hash" ] || { echo "can't read $rtc's version" >&2; exit 1; }
+	case $name in
+	nightly) tc=nightly-$(date -u -d "$date + 1 day" +%F) ;;	# a nightly is published the day after its commit
+	stable) tc=$release ;;
+	esac
+	build_archive "$name" "$tc" "$hash"
+	d=$W/$name
 	scp -q "${O[@]}" "$d/archive.tar.gz" "$RS6:$DESTDIR/rustc-x86_64-for-aarch64-$name.tar.gz"
 	echo "$rtc: $tc ($hash)" >&2
 	entries+=("[[dist.toolchains]]

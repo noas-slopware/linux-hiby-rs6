@@ -48,6 +48,7 @@
 set -euo pipefail
 . "$(dirname "$(realpath "$0")")/lib-rs6.sh"
 [ "$HOSTARCH" = x86_64 ] || { echo "only for x86_64 hosts" >&2; exit 1; }
+xtools_lock
 [ -e "$W/xtools/.stamp" ] || { echo "run mkxtools-rs6.sh first" >&2; exit 1; }
 
 TOOL_PKGS=(python ninja bison flex m4 zstd libarchive debugedit xz gzip make bash coreutils sed gawk grep
@@ -56,6 +57,7 @@ MODULE_PKGS=(python-markupsafe python-yaml util-linux-libs libxml2 onetbb)
 CTYPES_PKGS=(clang-libs)
 
 # bens' versions, as the builder resolves them (core, then [rs6], then extra), read natively
+fetch_sync > /dev/null
 bens=$(fetch_root "${PAC[@]}" -Sl | awk '!seen[$2]++ { print $1, $2, $3 }')
 mapfile -t ours < <(for p in "${TOOL_PKGS[@]}" "${MODULE_PKGS[@]}" "${CTYPES_PKGS[@]}"; do
 	awk -v p="$p" '$2 == p { print $1 "/" $2 }' <<< "$bens"; done)
@@ -160,7 +162,7 @@ log "x86_64 packages, $W/xtools/tools (log: $W/logs/mkxtools-tools.log)"
 	# (lib/libc.so.6 looks for its iconv modules in /opt/rs6/gconv: mkxtools-rs6.sh)
 	for l in libc.so.6 ld-linux-x86-64.so.2 $glibc; do [ ! -e "/xt/lib/$l" ] ||
 		cmp -s <(LC_ALL=C sed "s|/usr/lib/gconv|/opt/rs6/gconv|g" "/usr/lib/$l") "/xt/lib/$l" ||
-		{ echo "x86_64 glibc moved past xtools/lib ($l): run mkxtools-rs6.sh" >&2; exit 1; }; done
+		{ echo "x86_64 glibc moved past xtools/lib ($l): run mkxtools-rs6.sh" >&2; exit 3; }; done
 	[ -e /xt/lib/gconv/gconv-modules ] || { echo "no iconv modules in xtools/lib: run mkxtools-rs6.sh" >&2; exit 1; }
 	[ -e /xt/lib/libc.so.6 ] && [ -e /xt/lib/ld-linux-x86-64.so.2 ]
 	needs() { LD_LIBRARY_PATH=$o/lib ldd "$@" 2>/dev/null | sed -n "s|^\s*\(\S*/\)\?\(\S*\) => \(/\S*\) .*|\2 \3|p" | sort -u; }
@@ -205,22 +207,23 @@ log "x86_64 packages, $W/xtools/tools (log: $W/logs/mkxtools-tools.log)"
 	echo "pyv=$pyv" > "$o/.python"
 	chown -R "$OWNER" /xt/tools.new
 	cat /xt/tools.new/.stamp' <<< "$bens" > "$W/logs/mkxtools-tools.log" 2>&1 ||
-	{ tail -30 "$W/logs/mkxtools-tools.log"; exit 1; }
+	{ rc=$?; tail -30 "$W/logs/mkxtools-tools.log"; exit $rc; }	# 3: glibc moved (lib-rs6.sh xtools_refresh)
 
 # self-test: bens' tools (qemu) vs these (still tools.new, mounted where builds see tools/; they become
-# tools/ only once it passes), same inputs, identical outputs required. The test needs a few
-# packages in the builder (meson, mako, clang for the bindings, bc, pahole), resolved and downloaded like a
-# build's deps
+# tools/ only once it passes), same inputs, identical outputs required. The builder is brought up to
+# date first (pacman -Su, as every build starts), so bens' side has the versions these were made for
+# and every one of them activates: one that stayed AArch64 would compare bens' with bens'. The test
+# needs a few packages in the builder (meson, mako, clang for the bindings, bc, pahole)
 log "self-test: bens' tools (qemu) vs x86_64 (log: $W/logs/xtools-tools-selftest.log)"
 TEST_PKGS=(meson ninja python-mako python-yaml python-markupsafe clang bison flex bc pahole)
-mapfile -t list < <(resolve localhost/rs6-builder "${TEST_PKGS[@]}")
-fetch_pkgs "${list[@]}" > /dev/null
 mkdir -p "$W/xtools/tools"	# the mount point (an empty tools/ activates nothing)
 BUILDER_ARGS=(-v "$W/xtools:/opt/rs6-xtools:ro" -v "$W/xtools/tools.new:/opt/rs6-xtools/tools:ro"
 	-v "$TOOLS/xtools-activate.sh:/usr/local/bin/xtools-activate:ro"
 	-v "$TOOLS/xtools-tools-selftest.sh:/usr/local/bin/xtools-tools-selftest:ro")
-builder localhost/rs6-builder sh -euc 'pacman -S --needed --asdeps --noconfirm "$@" > /dev/null
-	xtools-tools-selftest /tmp/qemu; xtools-activate; xtools-tools-selftest /tmp/x
+builder_current "${TEST_PKGS[@]}" -- 'xtools-tools-selftest /tmp/qemu
+	xtools-activate > /tmp/activate; cat /tmp/activate
+	if grep "stays AArch64" /tmp/activate; then echo "NOT ACTIVATED: the line(s) above"; exit 1; fi
+	xtools-tools-selftest /tmp/x
 	cd /tmp/qemu; rc=0
 	for f in *; do
 		# the host names compiled into bash and make are the one expected difference
@@ -228,7 +231,7 @@ builder localhost/rs6-builder sh -euc 'pacman -S --needed --asdeps --noconfirm "
 			cmp -s - "$f" && { cmp -s "$f" "/tmp/x/$f" || echo "known delta: $f: $(paste -sd"|" "/tmp/x/$f")"; continue; };; esac
 		cmp -s "$f" "/tmp/x/$f" && continue; rc=1; echo "DIFFERS: $f"
 		case $f in *.txt|*.json|*.c|*.h|*.ninja|*.hosttype) diff "$f" "/tmp/x/$f" | head -20;; esac; done
-	echo "$(ls | wc -l) outputs compared"; exit $rc' sh "${TEST_PKGS[@]}" > "$W/logs/xtools-tools-selftest.log" 2>&1 ||
+	echo "$(ls | wc -l) outputs compared"; exit $rc' > "$W/logs/xtools-tools-selftest.log" 2>&1 ||
 	{ grep -v "^ " "$W/logs/xtools-tools-selftest.log" | tail -40; echo "self-test FAILED: outputs differ (tools.new not used)" >&2; exit 1; }
 grep "^xtools-activate\|^known delta\|outputs compared" "$W/logs/xtools-tools-selftest.log" >&2
 # into place by renames (a build running now keeps what it activated; same versions at the same paths)
