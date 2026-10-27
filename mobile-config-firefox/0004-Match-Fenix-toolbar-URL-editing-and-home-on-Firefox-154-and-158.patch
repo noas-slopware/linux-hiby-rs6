@@ -1380,164 +1380,6 @@ index f90cc8b..cb1cf7a 100644
              "Locked": false,
              "StartPage": "homepage"
          },
-diff --git a/src/themes/release/chrome/urlbar.css b/src/themes/release/chrome/urlbar.css
-index 4975274..a1897d8 100644
---- a/src/themes/release/chrome/urlbar.css
-+++ b/src/themes/release/chrome/urlbar.css
-@@ -43,31 +43,6 @@
-         }
-     }
- 
--    /* Show the forward button if the back button is disabled */
--    #back-button[disabled] ~ #forward-button {
--        display: flex !important;
--    }
--
--    #back-button[disabled] {
--        display: none !important;
--    }
--
--    #urlbar {
--        padding: 0px 5px;
--    }
--
--    /* Smaller font: show more of the URL */
--    #urlbar-input {
--        font-size: 9pt !important;
--        padding: 0px 4px !important;
--        /* Fade rightmost part with a gradient so it's clear that the URL is truncated */
--        mask-image: linear-gradient(to right, black 90%, transparent 100%);
--    }
--
--    #urlbar[focused] #urlbar-input {
--        mask-image: none;
--    }
--
-     #identity-box {
-         margin: 0 !important;
-     }
-@@ -97,29 +72,8 @@
-     }
- 
- 
--    /* Fixing invisible URL bar on FF 133-156
--     * Making the active URL bar wider for better text input and
--     * a wider popout */
--    #urlbar[breakout][breakout-extend] {
--        left: 11vw !important; /* should be 10, but 10 looks off-center */
--        width: 80vw !important;
--        bottom: 0 !important;
--        z-index: 5 !important;
--    }
--
--    @media not (-moz-pref("mcf.toolbar.positionOnTop")) {
--        #urlbar[breakout][breakout-extend] {
--            top: 0 !important;
--            align-content: flex-end !important;
--        }
--    }
--
--    @media -moz-pref("mcf.toolbar.positionOnTop") {
--        #urlbar[breakout][breakout-extend] {
--            top: calc(1.1 * --urlbar-container-height) !important;
--            align-content: flex-start !important;
--        }
--    }
-+    /* FF <= 156: the focused urlbar is a breakout popover; toolbar.css
-+     * lays it out as the edit toolbar over the nav-bar. */
- 
-     /* Label of "identity icons", e.g. firefox specific pages look weird
-      * when ellipsed, e.g. "F..x" instead of "Firefox". So just hide this
-@@ -139,7 +93,7 @@
-      * being below the urlbar. */
-     .urlbarView {
-         position: fixed !important;
--        inset: 84px 0px 0px 0px;
-+        inset: var(--mcf-toolbar-height, 84px) 0px 0px 0px;
-         width: 100% !important;
-         background: var(--arrowpanel-background);
-         margin: 0px !important;
-@@ -152,69 +106,11 @@
- 
-     @media not (-moz-pref("mcf.toolbar.positionOnTop")) {
-         .urlbarView {
--            inset: 0px 0px 84px 0px;
-+            inset: 0px 0px var(--mcf-toolbar-height, 84px) 0px;
-         }
-     }
- 
--    /* FF 157+: the results are a popover now */
--    .urlbarView:popover-open {
--        margin: var(--urlbarView-margin-block) var(--urlbarView-margin-inline) !important;
--        width: auto !important;
--        overflow: clip !important;
--    }
--
--    /* Firefox sizes the input's half of the surface as if #urlbar had no
--     * padding; take the 5px from the #urlbar rule above back out. */
--    #urlbar[popover-open] > .urlbar-background {
--        inset-inline: calc(5px - var(--urlbar-background-overhang-open)
--            - var(--urlbar-input-growth-open-inline)) !important;
--    }
--
--    /* Toolbar at the bottom: open above the input, surface upside down. */
--    @media not (-moz-pref("mcf.toolbar.positionOnTop")) {
--        .urlbarView:popover-open {
--            position-area: block-start center !important;
--        }
--        #urlbar[popover-open] > .urlbar-background {
--            inset-block: calc(-1 * var(--urlbar-joint-background-overlap))
--                calc(-1 * (var(--urlbar-background-overhang-open) + var(--urlbar-input-growth-open-block))) !important;
--            border-radius: 0 0 var(--urlbar-background-border-top-radius-open)
--                var(--urlbar-background-border-top-radius-open) !important;
--            clip-path: inset(calc(var(--urlbar-joint-background-overlap) - var(--urlbar-input-growth-open-block))
--                calc(-1 * var(--urlbar-joint-background-shadow-margin))
--                calc(-1 * var(--urlbar-joint-background-shadow-margin))) !important;
--        }
--
--        #urlbar > .urlbarView > .urlbarView-background {
--            inset-block: calc(-1 * var(--urlbarView-joint-background-outset-block))
--                calc(-1 * var(--urlbarView-margin-block) - var(--urlbar-joint-background-overlap)) !important;
--            border-radius: var(--urlbar-background-border-radius)
--                var(--urlbar-background-border-radius) 0 0 !important;
--            clip-path: inset(calc(-1 * var(--urlbar-joint-background-shadow-margin))
--                calc(-1 * var(--urlbar-joint-background-shadow-margin))
--                var(--urlbar-joint-background-overlap)) !important;
--        }
--    }
--
--    /* FF 157+: widen the focused urlbar by hiding the rest of the nav-bar,
--     * except back (or forward in its place) and the app menu. */
--    #nav-bar:has(#urlbar[focused]:not([breakout])) :is(
--        #nav-bar-customization-target > :not(#urlbar-container, #back-button,
--            #back-button[disabled] ~ #forward-button),
--        #nav-bar-customization-target ~ :not(#PanelUI-button)) {
--        display: none !important;
--    }
--
--    /* Fix suggestions width for vertical tabs (FF <= 156) */
--    @media -moz-pref("sidebar.verticalTabs") {
--        #urlbar[breakout] > .urlbarView {
--            left: 10vw !important;
--        }
--
--        #urlbar[breakout] .urlbarView-body-inner {
--            width: 80vw !important;
--        }
--    }
-+    /* FF 157+: the results are a popover; toolbar.css lays it out. */
- 
-     /* Bookmarks toolbar. Firefox shows it for some reason when opening a
-      * private browsing window, even if it is not enabled in the normal
-@@ -235,7 +131,7 @@
- 
-     vbox.urlbarView {
-         position: fixed !important;
--        bottom: 82px !important;
-+        bottom: var(--mcf-toolbar-height, 82px) !important;
-         box-shadow: rgba(0, 0, 0, 0.05) 0px -8px 8px 3px !important;
-         left: 0 !important;
-         right: 0 !important;
 diff --git a/src/themes/shared/chrome/appmenu.css b/src/themes/shared/chrome/appmenu.css
 index 3298799..354801e 100644
 --- a/src/themes/shared/chrome/appmenu.css
@@ -2244,7 +2086,7 @@ index 0000000..1087dd7
 +    }
 +}
 diff --git a/src/themes/shared/chrome/urlbar.css b/src/themes/shared/chrome/urlbar.css
-index 680963c..495b633 100644
+index 82260c0..a1897d8 100644
 --- a/src/themes/shared/chrome/urlbar.css
 +++ b/src/themes/shared/chrome/urlbar.css
 @@ -43,31 +43,6 @@
@@ -2283,7 +2125,7 @@ index 680963c..495b633 100644
      }
  
  
--    /* Fixing invisible URL bar on FF 133+
+-    /* Fixing invisible URL bar on FF 133-156
 -     * Making the active URL bar wider for better text input and
 -     * a wider popout */
 -    #urlbar[breakout][breakout-extend] {
@@ -2320,7 +2162,7 @@ index 680963c..495b633 100644
          width: 100% !important;
          background: var(--arrowpanel-background);
          margin: 0px !important;
-@@ -152,7 +106,7 @@
+@@ -152,70 +106,11 @@
  
      @media not (-moz-pref("mcf.toolbar.positionOnTop")) {
          .urlbarView {
@@ -2329,7 +2171,71 @@ index 680963c..495b633 100644
          }
      }
  
-@@ -175,7 +129,7 @@
+-    /* FF 157+: the results are a popover now, FF159+: --urlbarview-... */
+-    .urlbarView:popover-open {
+-        margin: var(--urlbarview-margin-block, var(--urlbarView-margin-block))
+-            var(--urlbarview-margin-inline, var(--urlbarView-margin-inline)) !important;
+-        width: auto !important;
+-        overflow: clip !important;
+-    }
+-
+-    /* Firefox sizes the input's half of the surface as if #urlbar had no
+-     * padding; take the 5px from the #urlbar rule above back out. */
+-    #urlbar[popover-open] > .urlbar-background {
+-        inset-inline: calc(5px - var(--urlbar-background-overhang-open)
+-            - var(--urlbar-input-growth-open-inline)) !important;
+-    }
+-
+-    /* Toolbar at the bottom: open above the input, surface upside down. */
+-    @media not (-moz-pref("mcf.toolbar.positionOnTop")) {
+-        .urlbarView:popover-open {
+-            position-area: block-start center !important;
+-        }
+-        #urlbar[popover-open] > .urlbar-background {
+-            inset-block: calc(-1 * var(--urlbar-joint-background-overlap))
+-                calc(-1 * (var(--urlbar-background-overhang-open) + var(--urlbar-input-growth-open-block))) !important;
+-            border-radius: 0 0 var(--urlbar-background-border-top-radius-open)
+-                var(--urlbar-background-border-top-radius-open) !important;
+-            clip-path: inset(calc(var(--urlbar-joint-background-overlap) - var(--urlbar-input-growth-open-block))
+-                calc(-1 * var(--urlbar-joint-background-shadow-margin))
+-                calc(-1 * var(--urlbar-joint-background-shadow-margin))) !important;
+-        }
+-
+-        #urlbar > .urlbarView > .urlbarView-background {
+-            inset-block: calc(-1 * var(--urlbarview-joint-background-outset-block, var(--urlbarView-joint-background-outset-block)))
+-                calc(-1 * var(--urlbarview-margin-block, var(--urlbarView-margin-block)) - var(--urlbar-joint-background-overlap)) !important;
+-            border-radius: var(--urlbar-background-border-radius)
+-                var(--urlbar-background-border-radius) 0 0 !important;
+-            clip-path: inset(calc(-1 * var(--urlbar-joint-background-shadow-margin))
+-                calc(-1 * var(--urlbar-joint-background-shadow-margin))
+-                var(--urlbar-joint-background-overlap)) !important;
+-        }
+-    }
+-
+-    /* FF 157+: widen the focused urlbar by hiding the rest of the nav-bar,
+-     * except back (or forward in its place) and the app menu. */
+-    #nav-bar:has(#urlbar[focused]:not([breakout])) :is(
+-        #nav-bar-customization-target > :not(#urlbar-container, #back-button,
+-            #back-button[disabled] ~ #forward-button),
+-        #nav-bar-customization-target ~ :not(#PanelUI-button)) {
+-        display: none !important;
+-    }
+-
+-    /* Fix suggestions width for vertical tabs (FF <= 156) */
+-    @media -moz-pref("sidebar.verticalTabs") {
+-        #urlbar[breakout] > .urlbarView {
+-            left: 10vw !important;
+-        }
+-
+-        #urlbar[breakout] .urlbarView-body-inner {
+-            width: 80vw !important;
+-        }
+-    }
++    /* FF 157+: the results are a popover; toolbar.css lays it out. */
+ 
+     /* Bookmarks toolbar. Firefox shows it for some reason when opening a
+      * private browsing window, even if it is not enabled in the normal
+@@ -236,7 +131,7 @@
  
      vbox.urlbarView {
          position: fixed !important;

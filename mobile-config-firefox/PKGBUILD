@@ -1,9 +1,9 @@
 # Maintainer: Marcos_chay <maktio at hotmail dot com>
-# HiBy RS6 ([rs6] repo): the AUR's PKGBUILD (Arch and the Arch Linux Ports repos have none) at 5.5.0, plus
+# HiBy RS6 ([rs6] repo): the AUR's PKGBUILD (Arch and the Arch Linux Ports repos have none) at 5.5.2, plus
 # patches/mobile-config-firefox from noas-slopware/linux-hiby-rs6 (popup fit, Fenix look on narrow windows).
 
 pkgname=mobile-config-firefox
-pkgver=5.5.0
+pkgver=5.5.2
 pkgrel=1
 pkgdesc="Mobile and privacy friendly configuration for Firefox"
 arch=('any')
@@ -15,11 +15,11 @@ source=("$url/-/archive/$pkgver/$pkgname-$pkgver.tar.gz"
         0002-Match-Firefox-for-Android-Fenix-on-narrow-windows.patch
         0003-popups-Measure-extension-popups-with-the-mobile-view.patch
         0004-Match-Fenix-toolbar-URL-editing-and-home-on-Firefox-154-and-158.patch)
-sha256sums=('de1f3ad27947b0466a20fd3cd48486ea121f3ab5969835eaa844ba49e54b84e8'
+sha256sums=('3b69740272619d74c7bdada4ffe6284c40c7535821023afc178f56d55b8dd9ec'
             '394d14227a336c6cdf3c2dc332ce368f119f368fcc322c8881a9bcd76eabc852'
             'fb932f5fd125d5c93a6fafbb409be735c8a96145f6f4fe574c5d488ba8518a67'
             '558a011bc56019f632ad281457d536c20796743300674bc66ebe8e9f0491863c'
-            '9d2e12d5b6234ee5f38019ede6a3342fc36c30b3fe2ed496b971f1581980a786')
+            'c0a7eed3ae443d63b3e22c48a3c42416470c807ebff2985621d9cd0da613a956')
 
 prepare() {
   patch -d "$pkgname-$pkgver" -Np1 -i ../0001-popups-Fit-extension-popups-that-are-wider-than-the-window.patch
