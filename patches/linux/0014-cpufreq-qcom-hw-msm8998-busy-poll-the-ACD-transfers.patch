@@ -1,4 +1,4 @@
-From 35f1c69abc319e033cd922ef7691bf1b856eda25 Mon Sep 17 00:00:00 2001
+From 7917ee4c9b47fdf73a1e29b2d5cd0bd629f48031 Mon Sep 17 00:00:00 2001
 From: Giuseppe Maggio <jertlok@proton.me>
 Date: Thu, 27 Aug 2026 22:55:00 +0200
 Subject: [PATCH 14/94] cpufreq: qcom-hw: msm8998: busy-poll the ACD transfers

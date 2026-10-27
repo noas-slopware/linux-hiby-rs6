@@ -75,7 +75,7 @@ The branches are independent histories. Check them out side by side with `git wo
 ### `main`
 
 - `patches/linux/`: 94-patch kernel series on sdm660-mainline `qcom-sdm660-7.2.y`
-  (`dd1ed52c8ceef4f16715118ed0252fe75adbe71d`, Linux 7.2.3).
+  (`34c0be5727a86528f82a0242f70e2273cdb2df37`, Linux 7.2.3).
 - `patches/u-boot/`: 6-patch U-Boot series on sdm660-mainline `release/v2026.10-sdm660`
   (`608a227567373f0274617e8829398fb0c1f1c1a5`).
 - `patches/<package>/`: patches for Mesa, Elisa, KIconThemes, mobile-config-firefox, Plasma

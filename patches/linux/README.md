@@ -6,18 +6,18 @@ Base:
 
 - tree: https://github.com/sdm660-mainline/linux
 - branch: `qcom-sdm660-7.2.y` (Linux 7.2.3)
-- commit: `dd1ed52c8ceef4f16715118ed0252fe75adbe71d`
+- commit: `34c0be5727a86528f82a0242f70e2273cdb2df37`
 
 Apply:
 
 ```
 git clone https://github.com/sdm660-mainline/linux && cd linux
-git checkout dd1ed52c8ceef4f16715118ed0252fe75adbe71d
+git checkout 34c0be5727a86528f82a0242f70e2273cdb2df37
 git am /path/to/linux-hiby-rs6/patches/linux/0*.patch
 ```
 
-`git am` of the 94 files on that commit gives the same tree as the author's working branch (tree object
-`b06b9cbf9ec4d746b7b4c0924b879f5539be3359`). The kernel config used by the Nura package is
+`git am` of the 94 files on that commit gives tree object
+`31b2fd836312a50d898fca88204ad30ea4784485`. The kernel config used by the Nura package is
 `config-postmarketos-qcom-sdm660.aarch64` in `device/testing/linux-postmarketos-qcom-sdm660/` on the `pmos`
 branch; the package builds exactly this series on this base.
 

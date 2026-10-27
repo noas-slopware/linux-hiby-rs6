@@ -1,4 +1,4 @@
-From 84eb8d5975e830581fee5939e7930074a5bd6b43 Mon Sep 17 00:00:00 2001
+From 71cae4bf2ebaf449c16f2b714254837fbf8810c0 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 13:01:18 +0900
 Subject: [PATCH 71/94] iio: common: qcom_smgr: one info line for a rate

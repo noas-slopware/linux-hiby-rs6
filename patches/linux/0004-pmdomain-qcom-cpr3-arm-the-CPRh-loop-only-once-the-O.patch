@@ -1,4 +1,4 @@
-From 9ffd6fbb297dd2fb78c3e1d13f211e862cce7e98 Mon Sep 17 00:00:00 2001
+From 27dd1656def8847f30a50dd56a416c6884b24e18 Mon Sep 17 00:00:00 2001
 From: Giuseppe Maggio <jertlok@proton.me>
 Date: Sun, 9 Aug 2026 19:01:18 +0200
 Subject: [PATCH 04/94] pmdomain: qcom: cpr3: arm the CPRh loop only once the

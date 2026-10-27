@@ -1,4 +1,4 @@
-From bc872d4b1f8105a80a571b8dc149328da5b7c9b6 Mon Sep 17 00:00:00 2001
+From e867718ca21392d3653fb2581849755b107d53be Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:02 +0900
 Subject: [PATCH 40/94] dt-bindings: watchdog: qcom-wdt: add SDM660 APSS

@@ -1,4 +1,4 @@
-From 892ddf7301cd90d249c68786071c702624125950 Mon Sep 17 00:00:00 2001
+From ec15423d8085b2072b6e5f6dfb77b94261d8b7b2 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:01 +0900
 Subject: [PATCH 24/94] irqchip/qcom-mpm: program the vMPM wakeup timer before

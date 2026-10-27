@@ -1,4 +1,4 @@
-From 71e93376adbe38449d5cce3e7468cb9add254174 Mon Sep 17 00:00:00 2001
+From 3392689ad991d4851224fd6ba6d66722c212403d Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:01 +0900
 Subject: [PATCH 27/94] drm/msm/adreno: attach all GPU power domains

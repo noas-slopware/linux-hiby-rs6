@@ -1,4 +1,4 @@
-From 1e0f2698672f4f0f5c648b9b4531b5c79e7223e2 Mon Sep 17 00:00:00 2001
+From 1574d427cbab8a34a353041560103525383122ca Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:01 +0900
 Subject: [PATCH 26/94] fs: don't charge do_file_open_root() lookups to the

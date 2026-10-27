@@ -1,4 +1,4 @@
-From 91986806688f40f8b01f723a817674061c042b2e Mon Sep 17 00:00:00 2001
+From b91caef8f01399aedba42d469df81d6147500e53 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 12:24:04 +0900
 Subject: [PATCH 60/94] ASoC: dt-bindings: qcom,q6asm-dais: native DSD on

@@ -1,4 +1,4 @@
-From 78e26347bf6be4eb900759900b3752d5de5aa374 Mon Sep 17 00:00:00 2001
+From 92a3f1cc59397cf64356ff0eb20b8c0a0cd5ead9 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 12:20:30 +0900
 Subject: [PATCH 49/94] drm/msm: check every ring for a hang

@@ -1,4 +1,4 @@
-From 1202d04a57a32ecc77e5f6f294cc38de6b6e5c8c Mon Sep 17 00:00:00 2001
+From 0f47d4ef3994d0582adf64fed1fa7c858f741d0d Mon Sep 17 00:00:00 2001
 From: Ulf Hansson <ulfh@kernel.org>
 Date: Wed, 26 Aug 2026 10:45:32 +0200
 Subject: [PATCH 15/94] cpuidle: psci: Fix support for probe deferral by

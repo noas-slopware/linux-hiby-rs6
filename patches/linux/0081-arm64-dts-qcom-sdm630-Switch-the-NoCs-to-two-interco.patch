@@ -1,4 +1,4 @@
-From f843290d9041bb83b1eb13ea6eba173614187f13 Mon Sep 17 00:00:00 2001
+From 8bb62dfe36c7e4fe4a33ccbbaf836a746a96a551 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 14:56:57 +0900
 Subject: [PATCH 81/94] arm64: dts: qcom: sdm630: Switch the NoCs to two

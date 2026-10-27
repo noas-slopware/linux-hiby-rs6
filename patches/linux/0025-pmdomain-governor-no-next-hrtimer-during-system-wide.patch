@@ -1,4 +1,4 @@
-From 63ddfac2d4dcfe7de4a39a180582cea61de21cda Mon Sep 17 00:00:00 2001
+From 68002d5d9beaff6129c3188640038c8abc57eb99 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:01 +0900
 Subject: [PATCH 25/94] pmdomain: governor: no next hrtimer during system-wide

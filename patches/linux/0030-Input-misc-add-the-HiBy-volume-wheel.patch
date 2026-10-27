@@ -1,4 +1,4 @@
-From d89a12e046146b5ad92b8e0c7bd11af744533244 Mon Sep 17 00:00:00 2001
+From f210a85fda6852216cfdae3f09953add0a7cc57a Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:01 +0900
 Subject: [PATCH 30/94] Input: misc: add the HiBy volume wheel

@@ -1,4 +1,4 @@
-From f18622806eb04a7e6b64800833cbb7359b4fd496 Mon Sep 17 00:00:00 2001
+From 83bfaddbace5c2f7c160d9b5ba6a901602438dbe Mon Sep 17 00:00:00 2001
 From: AngeloGioacchino Del Regno <angelogioacchino.delregno@somainline.org>
 Date: Thu, 17 Jun 2021 22:42:25 +0200
 Subject: [PATCH 02/94] cpufreq: qcom-hw: implement CPRh aware OSM programming

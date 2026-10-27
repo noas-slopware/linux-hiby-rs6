@@ -1,4 +1,4 @@
-From 4650e5c5ab16e6bf6bdbaf69ae8344caef4fbdb4 Mon Sep 17 00:00:00 2001
+From 37895fe0b1ab5c17172f55f66124e251d5d24730 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 12:23:14 +0900
 Subject: [PATCH 55/94] iio: common: qcom_smgr: default to the lowest native

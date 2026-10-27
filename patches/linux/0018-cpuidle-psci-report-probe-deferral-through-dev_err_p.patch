@@ -1,4 +1,4 @@
-From 636e96537e6ecabbe021913796341532bc862982 Mon Sep 17 00:00:00 2001
+From b869dacca106ce396adad0b47d85f8affa136a53 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:00 +0900
 Subject: [PATCH 18/94] cpuidle: psci: report probe deferral through

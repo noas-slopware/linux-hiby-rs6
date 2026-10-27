@@ -1,4 +1,4 @@
-From f2383f5083f73e84f6ffb6c90d0d966000ca7542 Mon Sep 17 00:00:00 2001
+From 4c42a3e677972521cc8e310ac2a1daba66fc7581 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:02 +0900
 Subject: [PATCH 41/94] arm64: dts: qcom: sdm630/sdm660: CPU DVFS, idle, GPU

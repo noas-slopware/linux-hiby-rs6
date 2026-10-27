@@ -1,4 +1,4 @@
-From c049d62ef95019821e72984fdf5f78c3b0415138 Mon Sep 17 00:00:00 2001
+From 0189885ba9e0e1e3b92b66fddc143b22208947d0 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 12:20:18 +0900
 Subject: [PATCH 48/94] drm/msm: reset the GPU on a hardware fault with no

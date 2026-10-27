@@ -1,4 +1,4 @@
-From 2e72943364d77ec98251f53a024e7d30b56547fb Mon Sep 17 00:00:00 2001
+From 69bf03da2c5612bad5288c37bc2f139a3853258d Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 12:23:19 +0900
 Subject: [PATCH 56/94] iio: common: qcom_smgr: check the AckNak of buffering

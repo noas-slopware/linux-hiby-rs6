@@ -1,4 +1,4 @@
-From 4776c6add86e144ae4ba7c90f4ce58b4ca51f055 Mon Sep 17 00:00:00 2001
+From 920bd0cc492781c5d6b7a7e6b133e047d0d9d071 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:00 +0900
 Subject: [PATCH 19/94] pmdomain: qcom: cpr3: add SDM630/SDM660 CPRh

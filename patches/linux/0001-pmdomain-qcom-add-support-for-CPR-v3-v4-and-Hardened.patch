@@ -1,4 +1,4 @@
-From 91fd694690ebcdf742cf66311f127b370b219465 Mon Sep 17 00:00:00 2001
+From 2c574d6c4c5a4408033b0a89c71c7ece22ee27fe Mon Sep 17 00:00:00 2001
 From: AngeloGioacchino Del Regno <angelogioacchino.delregno@somainline.org>
 Date: Tue, 24 Nov 2020 20:39:22 +0100
 Subject: [PATCH 01/94] pmdomain: qcom: add support for CPR v3, v4 and Hardened

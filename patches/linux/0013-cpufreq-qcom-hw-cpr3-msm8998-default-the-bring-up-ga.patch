@@ -1,4 +1,4 @@
-From 1be49b5b80f9fbdb99bc78a6989cb125d763a6a0 Mon Sep 17 00:00:00 2001
+From 41d9e63f786602c94732dab268be2ce10b8eb5c6 Mon Sep 17 00:00:00 2001
 From: Giuseppe Maggio <jertlok@proton.me>
 Date: Wed, 19 Aug 2026 13:27:58 +0200
 Subject: [PATCH 13/94] cpufreq: qcom-hw, cpr3: msm8998: default the bring-up
