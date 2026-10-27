@@ -1,4 +1,4 @@
-From e41674c2dfa501f0ad257d212c39a147988cc278 Mon Sep 17 00:00:00 2001
+From 8655fec8ee69608f5c8f9d343a304dc837a029f9 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:01 +0900
 Subject: [PATCH 32/94] ASoC: qcom: q6asm-dai: fixed-rate streams and S32 as

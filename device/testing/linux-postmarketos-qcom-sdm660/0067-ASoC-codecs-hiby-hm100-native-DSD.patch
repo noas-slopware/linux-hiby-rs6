@@ -1,4 +1,4 @@
-From c18eed1940f6a0e552215dc24477fa4a885963a4 Mon Sep 17 00:00:00 2001
+From 8042f874038549f03d53a24a6033c7801fa93aea Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 12:28:32 +0900
 Subject: [PATCH 67/94] ASoC: codecs: hiby-hm100: native DSD

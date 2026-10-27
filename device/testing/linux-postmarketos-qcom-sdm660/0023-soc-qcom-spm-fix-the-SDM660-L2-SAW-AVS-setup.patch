@@ -1,4 +1,4 @@
-From 30e116c9ce38c3f9e3c243800e6a8f7754080bed Mon Sep 17 00:00:00 2001
+From b28a660f497038433864b694ee92f276dd55c50c Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:01 +0900
 Subject: [PATCH 23/94] soc: qcom: spm: fix the SDM660 L2 SAW AVS setup

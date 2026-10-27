@@ -1,4 +1,4 @@
-From 35392597f3c698ce3734c62e1ed78b89768c8061 Mon Sep 17 00:00:00 2001
+From e3f09505adbe7d9a2d9345ba7842534d27d3c118 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:00 +0900
 Subject: [PATCH 20/94] cpufreq: qcom-hw: add SDM630/SDM660 OSM programming

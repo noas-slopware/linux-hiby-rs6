@@ -1,4 +1,4 @@
-From 90e4b044a743e13656b61cb7474ba13df1ea3ac2 Mon Sep 17 00:00:00 2001
+From 0cdd7ae34e881865c384ac6a356cf2f146615b7e Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 12:14:51 +0900
 Subject: [PATCH 43/94] drm/msm/mdss: vote the MMSS NoC AHB clock on SDM660

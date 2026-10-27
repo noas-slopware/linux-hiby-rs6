@@ -1,4 +1,4 @@
-From c3f3c95934c2388124ae8956d496109d91307f33 Mon Sep 17 00:00:00 2001
+From 34ba574ca82c026e3e011ec6f5a8cd8faa8bc444 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:02 +0900
 Subject: [PATCH 37/94] wifi: ath10k: keep a stopped device recoverable

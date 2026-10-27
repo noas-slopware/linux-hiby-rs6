@@ -1,4 +1,4 @@
-From 582cdb1c9efd2304fa0b738d73a69bc66ac79a77 Mon Sep 17 00:00:00 2001
+From e9a382e20ce2f95f0c4bb859a571f43277d98b1c Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 12:21:09 +0900
 Subject: [PATCH 52/94] soc: qcom: smp2p: tell the remote through "sleepstate"

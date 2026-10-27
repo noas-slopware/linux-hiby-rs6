@@ -1,4 +1,4 @@
-From 33783349e8a64480f4c07bd0c8764d68241252cf Mon Sep 17 00:00:00 2001
+From 648ee0a38e87a6513f705cb8c315dfaa37cbe036 Mon Sep 17 00:00:00 2001
 From: Giuseppe Maggio <jertlok@proton.me>
 Date: Mon, 10 Aug 2026 17:09:11 +0200
 Subject: [PATCH 10/94] cpufreq: qcom-hw: msm8998: request a corner before

@@ -1,4 +1,4 @@
-From 643d068c6db729167f2c624f80da6da34e0bae73 Mon Sep 17 00:00:00 2001
+From 5ea8b3c70cf9e1f3bbaaf321cbea8753b4661765 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 13:04:12 +0900
 Subject: [PATCH 74/94] ASoC: qcom: q6asm-dai: offer PCM at the DAC's rates

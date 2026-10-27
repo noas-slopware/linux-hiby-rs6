@@ -1,4 +1,4 @@
-From ca1e9425ae2c625a5a9f0889e410b0cbdcfac872 Mon Sep 17 00:00:00 2001
+From de508fbf3eeac0729334a63ccb39baed4825d740 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:00 +0900
 Subject: [PATCH 22/94] dt-bindings: CPRh and OSM for SDM630/SDM660

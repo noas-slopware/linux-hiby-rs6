@@ -1,4 +1,4 @@
-From 34698115e907859d9186772e1ff5a11d82c1d94b Mon Sep 17 00:00:00 2001
+From a7134b2b1d2256e3660810e6bf9628e7b23702b2 Mon Sep 17 00:00:00 2001
 From: Giuseppe Maggio <jertlok@proton.me>
 Date: Tue, 18 Aug 2026 16:30:40 +0200
 Subject: [PATCH 11/94] cpufreq: qcom-hw: msm8998: program the APM threshold

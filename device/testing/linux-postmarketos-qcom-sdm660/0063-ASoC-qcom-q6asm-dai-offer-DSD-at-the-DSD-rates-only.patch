@@ -1,4 +1,4 @@
-From 06e41a6501e883290c0c6daf2dab0554238685d2 Mon Sep 17 00:00:00 2001
+From a062fbbfeda6a06c8fb57a9e039824dd28c42ebb Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 12:24:18 +0900
 Subject: [PATCH 63/94] ASoC: qcom: q6asm-dai: offer DSD at the DSD rates only

@@ -1,4 +1,4 @@
-From 437d4d138ec7fcd05d6045ca9b71a14ffbb069ae Mon Sep 17 00:00:00 2001
+From 7c2117b334ca5fafcf125b790bb6759bbcac0f49 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:02 +0900
 Subject: [PATCH 38/94] iio: common: qcom_smgr: fix sampling_frequency

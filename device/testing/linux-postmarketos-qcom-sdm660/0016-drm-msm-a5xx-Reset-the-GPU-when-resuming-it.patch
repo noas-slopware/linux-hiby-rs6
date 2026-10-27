@@ -1,4 +1,4 @@
-From 0c8418b85fe62fa60d2096c3f90512e130d5bf6d Mon Sep 17 00:00:00 2001
+From af1ed1e994b4df9d41e14c690a990615f56abc43 Mon Sep 17 00:00:00 2001
 From: Fabricio Akio <fabricioakio@gmail.com>
 Date: Mon, 19 Oct 2026 23:05:08 -0300
 Subject: [PATCH 16/94] drm/msm/a5xx: Reset the GPU when resuming it

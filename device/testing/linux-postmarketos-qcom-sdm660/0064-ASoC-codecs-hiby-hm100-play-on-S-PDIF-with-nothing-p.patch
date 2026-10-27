@@ -1,4 +1,4 @@
-From a970bac692ad5cfab79079bbe854d99931ffa2e6 Mon Sep 17 00:00:00 2001
+From e2c06a551ee21f1d463ed704515561d16cd9fd20 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 12:28:21 +0900
 Subject: [PATCH 64/94] ASoC: codecs: hiby-hm100: play on S/PDIF with nothing

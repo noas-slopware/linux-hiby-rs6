@@ -1,4 +1,4 @@
-From 2c8a9532edafab6735528262b3437a035f5ab984 Mon Sep 17 00:00:00 2001
+From 7489cf0b1603e5148c90f71ca61e2d4cecb67c5c Mon Sep 17 00:00:00 2001
 From: Giuseppe Maggio <jertlok@proton.me>
 Date: Sun, 9 Aug 2026 18:37:15 +0200
 Subject: [PATCH 03/94] cpufreq: qcom-hw: only read a DCVS control register

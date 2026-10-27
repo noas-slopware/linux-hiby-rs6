@@ -1,4 +1,4 @@
-From bc6872b99e2ad0fb48aaa04a2cc001b6d6fa2038 Mon Sep 17 00:00:00 2001
+From 6cd043187e77d5ef53ab814f5d3633ab29ee8c6c Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 12:23:10 +0900
 Subject: [PATCH 54/94] iio: common: qcom_smgr: fix the QMI layouts of the

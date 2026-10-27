@@ -1,4 +1,4 @@
-From ad96887aa8d40c63fe8d20e809c6cd64d6125ac7 Mon Sep 17 00:00:00 2001
+From e4e382826a5ce459b88ac5ef247145a8234daba9 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 12:28:29 +0900
 Subject: [PATCH 66/94] ASoC: codecs: hiby-hm100: leave the target off after a

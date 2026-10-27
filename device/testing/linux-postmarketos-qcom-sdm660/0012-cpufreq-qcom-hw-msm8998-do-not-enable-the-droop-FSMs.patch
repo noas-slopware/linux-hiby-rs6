@@ -1,4 +1,4 @@
-From a6f1bacd06c5d6ae15325cfd6e8a897a8cf610ca Mon Sep 17 00:00:00 2001
+From f6158d7ecb44f8aaeab222d98f7470c8229f3d7b Mon Sep 17 00:00:00 2001
 From: Giuseppe Maggio <jertlok@proton.me>
 Date: Wed, 19 Aug 2026 12:21:48 +0200
 Subject: [PATCH 12/94] cpufreq: qcom-hw: msm8998: do not enable the droop FSMs

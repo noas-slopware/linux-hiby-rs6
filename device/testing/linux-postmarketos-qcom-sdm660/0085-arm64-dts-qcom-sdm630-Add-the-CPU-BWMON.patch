@@ -1,4 +1,4 @@
-From de9a3816e3bd2c645b30ecccc8af79ec5ef123e5 Mon Sep 17 00:00:00 2001
+From dd825ceed88d34345992e3928d4414543f1ea3c1 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 15:02:51 +0900
 Subject: [PATCH 85/94] arm64: dts: qcom: sdm630: Add the CPU BWMON

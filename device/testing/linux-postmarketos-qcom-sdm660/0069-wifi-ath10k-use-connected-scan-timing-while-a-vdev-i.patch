@@ -1,4 +1,4 @@
-From 555060c6dd26ba90d6b61d95de54d4635bd179a5 Mon Sep 17 00:00:00 2001
+From 5eb851309936a167ec083d28c85143395f637234 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 12:28:51 +0900
 Subject: [PATCH 69/94] wifi: ath10k: use connected scan timing while a vdev is

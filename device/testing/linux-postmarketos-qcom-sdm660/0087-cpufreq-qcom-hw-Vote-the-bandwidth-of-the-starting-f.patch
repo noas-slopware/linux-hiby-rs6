@@ -1,4 +1,4 @@
-From 733df21365e0506ac205bbc98b68f5e4f120705d Mon Sep 17 00:00:00 2001
+From 7abeafe5e172e14491ecc702b6b0e05f7d1e6306 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 15:27:11 +0900
 Subject: [PATCH 87/94] cpufreq: qcom-hw: Vote the bandwidth of the starting

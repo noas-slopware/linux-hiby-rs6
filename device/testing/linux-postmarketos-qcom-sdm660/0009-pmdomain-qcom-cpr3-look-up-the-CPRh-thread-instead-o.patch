@@ -1,4 +1,4 @@
-From 06f3ede48c7bef6e092fd2f1277a3025667598a7 Mon Sep 17 00:00:00 2001
+From 24d374c71a523daacef44b91cfe3ad5771abd2df Mon Sep 17 00:00:00 2001
 From: Giuseppe Maggio <jertlok@proton.me>
 Date: Mon, 10 Aug 2026 11:01:39 +0200
 Subject: [PATCH 09/94] pmdomain: qcom: cpr3: look up the CPRh thread instead

@@ -1,4 +1,4 @@
-From 68fef7538433ad2628e20b0b5e9e245b92799edc Mon Sep 17 00:00:00 2001
+From 5475d883d19426e0c7f942a2b0d89df73d5c871b Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 12:28:36 +0900
 Subject: [PATCH 68/94] ASoC: codecs: hiby-hm100: keep DSD muted across pauses

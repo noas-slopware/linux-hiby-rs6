@@ -1,4 +1,4 @@
-From bc2fd0df91757264f4dc2d4df5d05b43f79c9a56 Mon Sep 17 00:00:00 2001
+From f298a292b466419c73aaf2046c11f2e623480fe3 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Thu, 22 Oct 2026 17:55:05 +0900
 Subject: [PATCH 94/94] drm/msm/gpu: Remove the bus vote when the GPU is

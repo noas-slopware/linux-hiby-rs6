@@ -1,4 +1,4 @@
-From 81f96fa8f275bb9469bcac5c9013a01e6f112aff Mon Sep 17 00:00:00 2001
+From f65a3914b240591a5d7b7a75daa255abe13556a2 Mon Sep 17 00:00:00 2001
 From: Giuseppe Maggio <jertlok@proton.me>
 Date: Sun, 9 Aug 2026 22:25:46 +0200
 Subject: [PATCH 08/94] cpufreq: qcom-hw: let the genpd core bind the CPRh

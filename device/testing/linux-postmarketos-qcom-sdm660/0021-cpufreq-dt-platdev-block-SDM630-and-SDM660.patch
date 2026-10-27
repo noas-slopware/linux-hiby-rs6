@@ -1,4 +1,4 @@
-From 25b78eccdbabc81c42c5f19c186d84a87882054d Mon Sep 17 00:00:00 2001
+From c6fe1467dccfdf38181b3118818a6e3fead7e6e2 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:00 +0900
 Subject: [PATCH 21/94] cpufreq: dt-platdev: block SDM630 and SDM660

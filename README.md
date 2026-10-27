@@ -6,7 +6,7 @@ Nura packages for the HiBy RS6: pmaports `device/testing/` plus a patched `main/
 |---|---|---|
 | `device-hiby-rs6` | 1-r25 | device package: deviceinfo, kernel cmdline, UCM, PipeWire/WirePlumber config and scripts, udev rules, KWin effects config, `darwinctl`, touch boost, VT lock, Firefox V4L2 shim (subpackages `-systemd`, `-firefox`, `-audio`: PipeWire as the audio backend, `-repo`: this repository and its signing key; recommends Elisa and Dolphin) |
 | `firmware-hiby-rs6` | 2.10-r6 | stock firmware 2.10 set (HiBy's own WLAN firmware c2-00708) plus the Xiaomi tulip a530 PFP 0x5ff11a; the source is a GitHub archive of the `firmware` branch |
-| `linux-postmarketos-qcom-sdm660` | 7.2.3-r29 | sdm660-mainline `qcom-sdm660-7.2.y` at a pinned commit plus the 94-patch series (same files as `patches/linux` on `main`) and the kernel config |
+| `linux-postmarketos-qcom-sdm660` | 7.2.3-r30 | sdm660-mainline `qcom-sdm660-7.2.y` at a pinned commit plus the 94-patch series (same files as `patches/linux` on `main`) and the kernel config |
 | `rs6-dac-plasma` | 1.0-r4 | Plasma System Settings page and quick settings for the DAC and screen rotation |
 | `rs6-spdif` | 1.0-r0 | coaxial S/PDIF output: ALSA PCM plugin `rs6_spdif` (IEC 60958 encoder) and control plugin `rs6_jack` |
 | `mesa` | 26.2.5-r3 | Alpine's Mesa with the freedreno A5xx patches 0101-0106 |

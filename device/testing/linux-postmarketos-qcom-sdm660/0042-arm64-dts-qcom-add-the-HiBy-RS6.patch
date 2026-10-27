@@ -1,4 +1,4 @@
-From c0046b9acddd1de8a0068478389fdcef490cccbf Mon Sep 17 00:00:00 2001
+From 38b120d46a8a08d3ac4c9440b3bde0756fff4018 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 18:25:03 +0900
 Subject: [PATCH 42/94] arm64: dts: qcom: add the HiBy RS6
