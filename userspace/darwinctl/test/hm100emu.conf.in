@@ -1,0 +1,8 @@
+# darwinctl test: the emulated hm100 mixer (hm100-emu.py on @SOCKET@) as ctl "hm100emu"
+ctl_type.hm100emu {
+	lib "@LIB@"
+}
+ctl.hm100emu {
+	type hm100emu
+	socket "@SOCKET@"
+}

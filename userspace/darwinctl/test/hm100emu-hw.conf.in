@@ -1,0 +1,11 @@
+# darwinctl test: every hw:N control device is the emulated hm100, for darwinctl's card scan
+# (and a darwinctl without DARWINCTL_CTL); only for the processes that get this ALSA_CONFIG_PATH
+ctl.!hw {
+	@args [ CARD ]
+	@args.CARD {
+		type string
+		default "0"
+	}
+	type hm100emu
+	socket "@SOCKET@"
+}
