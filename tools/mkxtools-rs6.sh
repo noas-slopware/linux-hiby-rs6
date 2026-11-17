@@ -125,6 +125,12 @@ c=rs6-xbuild-$$
 "$ENGINE" run --name "$c" --security-opt no-new-privileges -e "XGET=$XGET" "$from" bash -euo pipefail -c '
 	eval "$XGET"
 	pacman -Syu --noconfirm --needed gmp mpfr libmpc libisl zstd zlib jansson patchelf git > /dev/null
+	# flex 2.6.5 to 2.6.11 define yybegin as a macro in the scanners they write, which breaks GCC'"'"'s
+	# own yybegin() in gengtype-lex (build/gengtype-lex.o: "variable or field yy_start declared void");
+	# flex 2.6.12 fixed it. While Arch'"'"'s repos have a broken one, Arch'"'"'s fixed build from its archive
+	# (only the scanner GCC generates for its build tool changes, not the compiler)
+	v=$(pacman -Q flex | cut -d" " -f2)
+	if [ "$(vercmp "$v" 2.6.5)" -ge 0 ] && [ "$(vercmp "$v" 2.6.12)" -lt 0 ]; then xget "flex=2.6.15-1"; fi
 	xget "ccache=$1" "fakeroot=$2"
 	rm -rf /var/cache/pacman/pkg/*' sh "$ccachev" "$fakerootv"
 "$ENGINE" commit "$c" localhost/rs6-xbuild > /dev/null; "$ENGINE" rm "$c" > /dev/null
@@ -195,7 +201,7 @@ echo "$key" > "$W/xbuild/.for"
 	touch /xb/stage/.done
 	' sh "gcc-$gcc_commit" "binutils-$bin_commit" "pkgbuild/gcc-${gccv/:/-}/rs6.parsed" "pkgbuild/binutils-${binv/:/-}/rs6.parsed" \
 	"${sysroot_pkgs[@]}" > "$W/logs/mkxtools.log" 2>&1 ||
-	{ tail -30 "$W/logs/mkxtools.log"; tail -30 "$W"/xbuild/*-make.log; exit 1; }
+	{ tail -n 30 "$W/logs/mkxtools.log"; tail -n 30 "$W"/xbuild/*-make.log; exit 1; }
 fi
 
 # assemble /opt/rs6-xtools: root/ mirrors the paths the tools take in the builder; lib/ is a private
@@ -229,7 +235,10 @@ log "assembling $W/xtools"
 	# modules go to lib/gconv, and this libc looks for them in /opt/rs6/gconv instead, the same length
 	# as /usr/lib/gconv so only those bytes change (xtools-activate.sh links /opt/rs6/gconv to lib/gconv)
 	cp -a /usr/lib/gconv /xt/lib/gconv
-	[ ! -e /xt/lib/gconv/gconv-modules.cache ]	# would name /usr/lib/gconv; the config files do not
+	# Arch'"'"'s glibc makes gconv-modules.cache at install (12-glibc-iconvconfig.hook, since 2026-11):
+	# it names /usr/lib/gconv; without it this libc reads the config files, which do not
+	rm -f /xt/lib/gconv/gconv-modules.cache
+	[ ! -e /xt/lib/gconv/gconv-modules.cache ]
 	[ "$(LC_ALL=C grep -c -a /opt/rs6/gconv /xt/lib/libc.so.6)" = 0 ]
 	LC_ALL=C sed -i "s|/usr/lib/gconv|/opt/rs6/gconv|g" /xt/lib/libc.so.6
 	[ "$(strings -a /xt/lib/libc.so.6 | grep -c "^/opt/rs6/gconv")" = 2 ] && ! LC_ALL=C grep -q -a /usr/lib/gconv /xt/lib/libc.so.6
