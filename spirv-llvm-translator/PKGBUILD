@@ -4,8 +4,10 @@
 # HiBy RS6 ([rs6] repo): this PKGBUILD as Arch has it, plus its 0001 test fix (the DebugInfo llc tests failed on AArch64 hosts); [rs6] carries it because the ARMv8.0 repo has none (its check() failed there); arch=(aarch64), pkgrel 1.1.
 
 pkgname=spirv-llvm-translator
-pkgver=23.1.2
+pkgver=23.1.3
 pkgrel=1.1
+# https://github.com/KhronosGroup/SPIRV-LLVM-Translator/blob/v23.1.3/spirv-headers-tag.conf#L1
+_spirv_headers_commit=cb42dec3830d3ac67fa449ecdc0c0f73d5e74498
 pkgdesc="LLVM <-> SPIR-V converter for compilers targeting SPIR-V"
 url="https://www.khronos.org/spirv/"
 arch=(aarch64)
@@ -21,7 +23,6 @@ makedepends=(
   git
   llvm
   ninja
-  spirv-headers
 )
 checkdepends=(
   clang
@@ -29,9 +30,11 @@ checkdepends=(
 )
 source=(
   git+https://github.com/KhronosGroup/SPIRV-LLVM-Translator#tag=v$pkgver
+  git+https://github.com/KhronosGroup/SPIRV-Headers#commit=$_spirv_headers_commit
   0001-test-run-the-DebugInfo-llc-tests-for-x86_64-on-every-host.patch
 )
-b2sums=('de830357b3ce992a14703b5c70f3f41173de4c1798ad64b684b547a0f9f7fbedeed4b72afcd0f5f10c80d97ce93cc111df546b8e07050fbe90130f0f08cf0d0c'
+b2sums=('41f5c9570f89c00951a967ef00bb0401df3030fde81831989ad740a9bef4a8ce8e843436c969b2a9450906abccdc5279c9d2edc56259ce0f8508de07459b6108'
+        '29a48bbcbfd89107fed795b43ca6965c056a8a6f56a579143050e786b3785a38ca7ed3d840e9a26d04b340d2d657b4d36b2048b58e643abea2cfd27a92332a53'
         '620299c7d3b8aac1bfeb473b0c9acc4f7eed35447e7ee9785f8ae97db8470fde4b2e637b70fea726d173ea9c2aa42c54e7f7d15307c2676214e15b11d7d37c41')
 
 prepare() {
@@ -48,12 +51,14 @@ build() {
     -D CMAKE_SKIP_RPATH=ON
     -D LLVM_CONFIG=llvm-config
     -D LLVM_EXTERNAL_LIT=/usr/bin/lit
-    -D LLVM_EXTERNAL_SPIRV_HEADERS_SOURCE_DIR=/usr/include/spirv
+    -D LLVM_EXTERNAL_SPIRV_HEADERS_SOURCE_DIR="${srcdir}/SPIRV-Headers/include"
     -D LLVM_LIBDIR_SUFFIX=
     -D LLVM_SPIRV_ENABLE_LIBSPIRV_DIS=ON
     -D LLVM_SPIRV_INCLUDE_TESTS=ON
     -W no-author
   )
+
+  export CXXFLAGS+=" -isystem${srcdir}/SPIRV-Headers/include"
 
   cmake -S SPIRV-LLVM-Translator -B build -G Ninja "${cmake_options[@]}"
   cmake --build build
