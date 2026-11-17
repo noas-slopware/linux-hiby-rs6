@@ -46,28 +46,40 @@ mkdir -p "$W"/{pacdb/sync,pkgcache,srcdest,ccache,out,logs,makepkg-gnupg} "$REPO
 # pacman for the fetcher: bens + [rs6] (the repo dir mounted at /repo), AArch64 databases.
 # RS6_PACMAN_CONF names another pacman.conf in tools/: pacman-rs6-published.conf takes [rs6] from the
 # published repository instead (mkpublic-rs6.sh, with its own RS6_WORK)
-PACCONF=/tools/${RS6_PACMAN_CONF:-pacman-rs6.conf}
+# RS6_PRIVATE: a personal repository dir, [rs6-private]: pacman-rs6-private.conf lists it right after
+# [rs6] (mounted at /private, like on the RS6), build-rs6.sh adds its packages there, [rs6] is only read
+PRIVATE=${RS6_PRIVATE:-}
+PACCONF=/tools/${RS6_PACMAN_CONF:-pacman-rs6${PRIVATE:+-private}.conf}
 [ -f "$TOOLS/${PACCONF#/tools/}" ] || { echo "no $TOOLS/${PACCONF#/tools/}" >&2; exit 1; }
+PRIVATE_ARGS=() BUILDER_CONF=()
+if [ -n "$PRIVATE" ]; then
+	mkdir -p "$PRIVATE"
+	PRIVATE_ARGS=(-v "$(realpath "$PRIVATE"):/private")
+	# the builder image's pacman.conf has no [rs6-private]: the same one without servers, as in mkimages-rs6.sh
+	sed "s|^Server = .*|Server = file:///rs6-builder-never-downloads/\$repo|" "$TOOLS/${PACCONF#/tools/}" > "$W/pacman-builder.conf"
+	BUILDER_CONF=(-v "$W/pacman-builder.conf:/etc/pacman.conf:ro")
+fi
 PAC=(pacman --config "$PACCONF" --arch aarch64 --dbpath /w/pacdb --cachedir /w/pkgcache
      --gpgdir /w/gnupg --noconfirm)
 
 # fetcher as root (pacman), with the full download sandbox
 fetch_root() {
 	"$ENGINE" run --rm --security-opt no-new-privileges -v "$W:/w" -v "$REPO:/repo" -v "$TOOLS:/tools:ro" \
-		"${FETCH_ARGS[@]}" localhost/rs6-fetch "$@"
+		"${PRIVATE_ARGS[@]}" "${FETCH_ARGS[@]}" localhost/rs6-fetch "$@"
 }
 # fetcher as the invoking user (makepkg refuses root; files in SRCDEST stay the user's)
 fetch_user() {
 	"$ENGINE" run --rm --security-opt no-new-privileges --user "$(id -u):$(id -g)" -e HOME=/tmp \
 		-e GNUPGHOME=/w/makepkg-gnupg -v "$W:/w" -v "$REPO:/repo" -v "$TOOLS:/tools:ro" \
-		"${FETCH_ARGS[@]}" localhost/rs6-fetch "$@"
+		"${PRIVATE_ARGS[@]}" "${FETCH_ARGS[@]}" localhost/rs6-fetch "$@"
 }
 FETCH_ARGS=()
 
-# refresh the sync databases (bens core/extra + [rs6]); an empty [rs6] db is made on first use
+# refresh the sync databases (bens core/extra + [rs6], + [rs6-private]); empty dbs are made on first use
 # (parallel builds: one pacman at a time on the shared dbs, cache and repo)
 fetch_sync() {
-	( flock 9; fetch_root sh -euc '[ -e /repo/rs6.db ] || repo-add -q /repo/rs6.db.tar.zst; "$@" -Sy' sh "${PAC[@]}" ) 9> "$W/pacman.lock"
+	( flock 9; fetch_root sh -euc '[ -e /repo/rs6.db ] || repo-add -q /repo/rs6.db.tar.zst
+		[ ! -d /private ] || [ -e /private/rs6-private.db ] || repo-add -q /private/rs6-private.db.tar.zst; "$@" -Sy' sh "${PAC[@]}" ) 9> "$W/pacman.lock"
 }
 
 # download exactly these repo/pkgname targets (no dependency resolution: the builder already resolved
@@ -82,7 +94,7 @@ fetch_pkgs() {
 builder() {
 	local img=$1; shift
 	"$ENGINE" run --rm "${EMU[@]}" -v "$W/pacdb/sync:/var/lib/pacman/sync:ro" \
-		-v "$W/pkgcache:/var/cache/pacman/pkg:ro" "${BUILDER_ARGS[@]}" "$img" "$@"
+		-v "$W/pkgcache:/var/cache/pacman/pkg:ro" "${BUILDER_CONF[@]}" "${BUILDER_ARGS[@]}" "$img" "$@"
 }
 BUILDER_ARGS=()
 

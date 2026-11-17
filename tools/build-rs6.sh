@@ -6,6 +6,8 @@
 #   build-rs6.sh <arch branch checkout> <package dir>...
 # Environment:
 #   RS6_REPO   repo dir (default $RS6_WORK/repo; YuruMirror: <mirror root>/rs6/os/aarch64)
+#   RS6_PRIVATE  personal repo dir: the packages go into [rs6-private] there instead of [rs6], which
+#              they can depend on (lib-rs6.sh)
 #   RS6_WORK   work dir (default /var/tmp/rs6-arch-build): pkg/src caches, ccache, build dirs, logs
 #   RS6_ACCEL  how C/C++ gets compiled in the builder (x86_64 hosts):
 #                xgcc   (default on x86_64) bens' exact gcc + binutils rebuilt as x86_64
@@ -96,15 +98,16 @@ build_one() {
 	fetch_root sh -c 'python3 -I /tools/check-armv8.0.py /w/out/"$1"/*.pkg.tar.zst' sh "${out#$W/out/}" 2>&1 | tee -a "$log" | tail -n 20 >&2 ||
 		{ log "$pkg: post-ARMv8.0 instructions, not added to the repo"; return 1; }
 
-	# into [rs6]: ":" -> "." (GitHub release assets cannot carry the epoch colon; pacman uses %FILENAME%).
+	# into [rs6] (or [rs6-private]): ":" -> "." (GitHub release assets cannot carry the epoch colon; pacman uses %FILENAME%).
 	# -debug packages stay in $RS6_WORK/out/<pkg> (Arch keeps them out of the main repos too)
 	( flock 9; fetch_root sh -euc 'for f in /w/out/$1/*.pkg.tar.zst; do case $f in *-debug-*) continue;; esac
-			n=$(basename "$f" | tr : .); cp "$f" "/repo/$n"; repo-add -q -R /repo/rs6.db.tar.zst "/repo/$n"
+			n=$(basename "$f" | tr : .); d=/repo db=rs6; [ ! -d /private ] || d=/private db=rs6-private
+			cp "$f" "$d/$n"; repo-add -q -R "$d/$db.db.tar.zst" "$d/$n"
 			# a rebuild keeps its file name: the copy in the package cache becomes this one too, or
 			# pacman rejects the old cached file as corrupted against the new checksum
 			cp "$f" "/w/pkgcache/$(basename "$f")"; done' \
 		sh "${out#$W/out/}" >> "$log" 2>&1 ) 9> "$W/pacman.lock"
-	log "$pkg: in $REPO, $(( $(date +%s) - t0 ))s total"
+	log "$pkg: in ${PRIVATE:-$REPO}, $(( $(date +%s) - t0 ))s total"
 }
 
 for p; do build_one "$p"; done
