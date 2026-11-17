@@ -57,7 +57,10 @@ if [ -n "$PRIVATE" ]; then
 	PRIVATE_ARGS=(-v "$(realpath "$PRIVATE"):/private")
 	# the builder image's pacman.conf has no [rs6-private]: the same one without servers, as in mkimages-rs6.sh
 	sed "s|^Server = .*|Server = file:///rs6-builder-never-downloads/\$repo|" "$TOOLS/${PACCONF#/tools/}" > "$W/pacman-builder.conf"
-	BUILDER_CONF=(-v "$W/pacman-builder.conf:/etc/pacman.conf:ro")
+	# copied over the container's own /etc/pacman.conf (builder) rather than mounted there: pacman
+	# owns that file, and an upgrade of pacman in the builder stopped at the read-only mount
+	# ("Partition /etc/pacman.conf is mounted read only")
+	BUILDER_CONF=(-v "$W/pacman-builder.conf:/rs6-pacman-builder.conf:ro")
 fi
 PAC=(pacman --config "$PACCONF" --arch aarch64 --dbpath /w/pacdb --cachedir /w/pkgcache
      --gpgdir /w/gnupg --noconfirm)
@@ -93,6 +96,7 @@ fetch_pkgs() {
 # fetcher downloaded and can neither download nor delete anything there (parallel builds share it)
 builder() {
 	local img=$1; shift
+	[ ${#BUILDER_CONF[@]} -eq 0 ] || set -- sh -c 'cp /rs6-pacman-builder.conf /etc/pacman.conf && exec "$@"' sh "$@"
 	"$ENGINE" run --rm "${EMU[@]}" -v "$W/pacdb/sync:/var/lib/pacman/sync:ro" \
 		-v "$W/pkgcache:/var/cache/pacman/pkg:ro" "${BUILDER_CONF[@]}" "${BUILDER_ARGS[@]}" "$img" "$@"
 }
