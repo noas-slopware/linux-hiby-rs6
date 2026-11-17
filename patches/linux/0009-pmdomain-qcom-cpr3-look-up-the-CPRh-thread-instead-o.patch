@@ -1,7 +1,7 @@
-From 24d374c71a523daacef44b91cfe3ad5771abd2df Mon Sep 17 00:00:00 2001
+From e089ff0c4bb0fd9245fc20d09c51468d3e9b9a57 Mon Sep 17 00:00:00 2001
 From: Giuseppe Maggio <jertlok@proton.me>
 Date: Mon, 10 Aug 2026 11:01:39 +0200
-Subject: [PATCH 09/94] pmdomain: qcom: cpr3: look up the CPRh thread instead
+Subject: [PATCH 09/92] pmdomain: qcom: cpr3: look up the CPRh thread instead
  of attaching to it
 
 Enabling both the CPRh controller and the OSM on MSM8998 hangs the SoC

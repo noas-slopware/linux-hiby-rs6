@@ -1,7 +1,7 @@
-From f65a3914b240591a5d7b7a75daa255abe13556a2 Mon Sep 17 00:00:00 2001
+From 0df514e2b8931b4c3bb75c2661cc1b33a3b9290e Mon Sep 17 00:00:00 2001
 From: Giuseppe Maggio <jertlok@proton.me>
 Date: Sun, 9 Aug 2026 22:25:46 +0200
-Subject: [PATCH 08/94] cpufreq: qcom-hw: let the genpd core bind the CPRh
+Subject: [PATCH 08/92] cpufreq: qcom-hw: let the genpd core bind the CPRh
  required-opp device
 
 Since __genpd_dev_pm_attach() learned to call genpd_set_required_opp_dev(),

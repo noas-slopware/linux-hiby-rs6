@@ -1,7 +1,7 @@
-From 7917ee4c9b47fdf73a1e29b2d5cd0bd629f48031 Mon Sep 17 00:00:00 2001
+From 03cfb1fc83941d50826e15da05187b5f8db61c86 Mon Sep 17 00:00:00 2001
 From: Giuseppe Maggio <jertlok@proton.me>
 Date: Thu, 27 Aug 2026 22:55:00 +0200
-Subject: [PATCH 14/94] cpufreq: qcom-hw: msm8998: busy-poll the ACD transfers
+Subject: [PATCH 14/92] cpufreq: qcom-hw: msm8998: busy-poll the ACD transfers
 
 On roughly 4% of boots (3 of 76 recorded) the gold frequency domain aborts
 with "Cannot setup the OSM for CPU4: -110", CPU5-7 follow with -ENODEV, and

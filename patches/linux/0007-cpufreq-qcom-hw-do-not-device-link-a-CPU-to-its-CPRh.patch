@@ -1,7 +1,7 @@
-From 4db30c27923ea79730e33d367305e9b403c5b70a Mon Sep 17 00:00:00 2001
+From 4dff8357c48ddcb3466d19228e77f6c0cbded6cb Mon Sep 17 00:00:00 2001
 From: Giuseppe Maggio <jertlok@proton.me>
 Date: Sun, 9 Aug 2026 21:55:12 +0200
-Subject: [PATCH 07/94] cpufreq: qcom-hw: do not device-link a CPU to its CPRh
+Subject: [PATCH 07/92] cpufreq: qcom-hw: do not device-link a CPU to its CPRh
  domain
 
 Attaching the CPRh power domain hangs MSM8998 before the driver has

@@ -1,0 +1,102 @@
+From 068e2a61119c40e8a202bc8e43d7e1383562e72e Mon Sep 17 00:00:00 2001
+From: Noa Himesaka <himesaka@noa.codes>
+Date: Thu, 22 Oct 2026 15:29:22 +0900
+Subject: [PATCH 85/92] arm64: dts: qcom: sdm630: Add the CPU memory paths
+
+Give every CPU its path from the application processor to DDR, the
+same APSS -> EBI path the CPU BWMON votes on and downstream's
+cpufreq-mapped mincpubw client used (msm_bus ports 1 -> 512).
+qcom-cpufreq-hw then votes the opp-peak-kBps of the OPP a cluster
+switches to, so a board whose CPU OPP tables carry bandwidths gets a
+DDR floor per CPU frequency.
+
+The vote is active-only, as downstream's qcom,active-only: it is
+dropped from the RPM's sleep set and never keeps DDR up while the
+application processor is power collapsed.
+
+The CPU devices set only of_node, so fw_devlink creates no device
+links for them, and the interconnect providers' sync_state does not
+wait on CPUs, which never bind a driver.
+
+Assisted-by: Claude:claude-opus-5-5
+Claude-Session: https://claude.ai/code/session_01SXjPGasJxD6XRYU1J9jsnW
+---
+ arch/arm64/boot/dts/qcom/sdm630.dtsi | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sdm630.dtsi b/arch/arm64/boot/dts/qcom/sdm630.dtsi
+index 223766053..4cce9632b 100644
+--- a/arch/arm64/boot/dts/qcom/sdm630.dtsi
++++ b/arch/arm64/boot/dts/qcom/sdm630.dtsi
+@@ -66,6 +66,8 @@ cpu0: cpu@100 {
+ 			enable-method = "psci";
+ 			cpu-idle-states = <&perf_cpu_sleep_0 &perf_cpu_sleep_1>;
+ 			capacity-dmips-mhz = <1126>;
++			interconnects = <&gnoc MASTER_APSS_PROC RPM_ACTIVE_TAG
++					 &bimc SLAVE_EBI RPM_ACTIVE_TAG>;
+ 			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_1>;
+ 			l2_1: l2-cache {
+@@ -82,6 +84,8 @@ cpu1: cpu@101 {
+ 			enable-method = "psci";
+ 			cpu-idle-states = <&perf_cpu_sleep_0 &perf_cpu_sleep_1>;
+ 			capacity-dmips-mhz = <1126>;
++			interconnects = <&gnoc MASTER_APSS_PROC RPM_ACTIVE_TAG
++					 &bimc SLAVE_EBI RPM_ACTIVE_TAG>;
+ 			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_1>;
+ 		};
+@@ -93,6 +97,8 @@ cpu2: cpu@102 {
+ 			enable-method = "psci";
+ 			cpu-idle-states = <&perf_cpu_sleep_0 &perf_cpu_sleep_1>;
+ 			capacity-dmips-mhz = <1126>;
++			interconnects = <&gnoc MASTER_APSS_PROC RPM_ACTIVE_TAG
++					 &bimc SLAVE_EBI RPM_ACTIVE_TAG>;
+ 			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_1>;
+ 		};
+@@ -104,6 +110,8 @@ cpu3: cpu@103 {
+ 			enable-method = "psci";
+ 			cpu-idle-states = <&perf_cpu_sleep_0 &perf_cpu_sleep_1>;
+ 			capacity-dmips-mhz = <1126>;
++			interconnects = <&gnoc MASTER_APSS_PROC RPM_ACTIVE_TAG
++					 &bimc SLAVE_EBI RPM_ACTIVE_TAG>;
+ 			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_1>;
+ 		};
+@@ -115,6 +123,8 @@ cpu4: cpu@0 {
+ 			enable-method = "psci";
+ 			cpu-idle-states = <&pwr_cpu_sleep_0 &pwr_cpu_sleep_1>;
+ 			capacity-dmips-mhz = <1024>;
++			interconnects = <&gnoc MASTER_APSS_PROC RPM_ACTIVE_TAG
++					 &bimc SLAVE_EBI RPM_ACTIVE_TAG>;
+ 			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_0>;
+ 			l2_0: l2-cache {
+@@ -131,6 +141,8 @@ cpu5: cpu@1 {
+ 			enable-method = "psci";
+ 			cpu-idle-states = <&pwr_cpu_sleep_0 &pwr_cpu_sleep_1>;
+ 			capacity-dmips-mhz = <1024>;
++			interconnects = <&gnoc MASTER_APSS_PROC RPM_ACTIVE_TAG
++					 &bimc SLAVE_EBI RPM_ACTIVE_TAG>;
+ 			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_0>;
+ 		};
+@@ -142,6 +154,8 @@ cpu6: cpu@2 {
+ 			enable-method = "psci";
+ 			cpu-idle-states = <&pwr_cpu_sleep_0 &pwr_cpu_sleep_1>;
+ 			capacity-dmips-mhz = <1024>;
++			interconnects = <&gnoc MASTER_APSS_PROC RPM_ACTIVE_TAG
++					 &bimc SLAVE_EBI RPM_ACTIVE_TAG>;
+ 			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_0>;
+ 		};
+@@ -153,6 +167,8 @@ cpu7: cpu@3 {
+ 			enable-method = "psci";
+ 			cpu-idle-states = <&pwr_cpu_sleep_0 &pwr_cpu_sleep_1>;
+ 			capacity-dmips-mhz = <1024>;
++			interconnects = <&gnoc MASTER_APSS_PROC RPM_ACTIVE_TAG
++					 &bimc SLAVE_EBI RPM_ACTIVE_TAG>;
+ 			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_0>;
+ 		};

@@ -1,7 +1,7 @@
-From 4b29dacfd5c0b737a184964492495e9bd273abfd Mon Sep 17 00:00:00 2001
+From 963d1077d0c39f740a9643d8d3bf0d89f9b105b5 Mon Sep 17 00:00:00 2001
 From: Giuseppe Maggio <jertlok@proton.me>
 Date: Sun, 9 Aug 2026 19:54:52 +0200
-Subject: [PATCH 06/94] pmdomain: qcom: cpr3: [BRINGUP] walk the CPRh setup one
+Subject: [PATCH 06/92] pmdomain: qcom: cpr3: [BRINGUP] walk the CPRh setup one
  phase at a time
 
 DO NOT MERGE.  Second half of the instrument, same rules as the cpufreq

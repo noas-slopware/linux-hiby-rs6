@@ -1,7 +1,7 @@
-From 41d9e63f786602c94732dab268be2ce10b8eb5c6 Mon Sep 17 00:00:00 2001
+From f206eacdca033581691bf77c979e3e66a16c85ec Mon Sep 17 00:00:00 2001
 From: Giuseppe Maggio <jertlok@proton.me>
 Date: Wed, 19 Aug 2026 13:27:58 +0200
-Subject: [PATCH 13/94] cpufreq: qcom-hw, cpr3: msm8998: default the bring-up
+Subject: [PATCH 13/92] cpufreq: qcom-hw, cpr3: msm8998: default the bring-up
  gates fully open
 
 The SAW4 AVS fix makes the OSM deliver on both domains (silver 6.55x

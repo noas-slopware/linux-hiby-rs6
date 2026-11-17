@@ -1,7 +1,7 @@
-From f6158d7ecb44f8aaeab222d98f7470c8229f3d7b Mon Sep 17 00:00:00 2001
+From 43595ba6e8c75c14c354e8df2084269c44334e8d Mon Sep 17 00:00:00 2001
 From: Giuseppe Maggio <jertlok@proton.me>
 Date: Wed, 19 Aug 2026 12:21:48 +0200
-Subject: [PATCH 12/94] cpufreq: qcom-hw: msm8998: do not enable the droop FSMs
+Subject: [PATCH 12/92] cpufreq: qcom-hw: msm8998: do not enable the droop FSMs
 
 The downstream wahoo kernel gates every PDN_FSM_CTRL bit on a DT flag,
 and the wahoo DT only sets qcom,boost-fsm-en, qcom,safe-fsm-en and
