@@ -1,6 +1,6 @@
 # Linux kernel series
 
-94 patches for the HiBy RS6 (Qualcomm SDM660 / PM660 / PM660L), as `git format-patch --no-signature` output.
+95 patches for the HiBy RS6 (Qualcomm SDM660 / PM660 / PM660L), as `git format-patch --no-signature` output.
 
 Base:
 
@@ -16,8 +16,8 @@ git checkout 34c0be5727a86528f82a0242f70e2273cdb2df37
 git am /path/to/linux-hiby-rs6/patches/linux/0*.patch
 ```
 
-`git am` of the 94 files on that commit gives tree object
-`31b2fd836312a50d898fca88204ad30ea4784485`. The kernel config used by the Nura package is
+`git am` of the 95 files on that commit gives tree object
+`643c60a16e3438abeebee50664d75fa99ceba798`. The kernel config used by the Nura package is
 `config-postmarketos-qcom-sdm660.aarch64` in `device/testing/linux-postmarketos-qcom-sdm660/` on the `pmos`
 branch; the package builds exactly this series on this base.
 
@@ -48,6 +48,9 @@ branch; the package builds exactly this series on this base.
   DSI AHB clock across suspend (Arpit Saini), negative QoS offsets in icc-rpm (Konrad Dybcio), the CPU BWMON and
   per-OPP CPU memory bandwidth with stock's DDR floors, the GCC CLKREF parents fed from LN_BB_CLK1, clk-smd-rpm
   dropping handoff votes nobody claimed, and the GPU dropping its bus vote when suspended. `docs/suspend.md`.
+- 0095: the Venus video decoder signals end of stream with a real, mapped empty buffer on HFI 3XX: SDM660's
+  firmware took the dummy address 0xdeadb000 as a fatal session error, so every hardware-decoded stream (FFmpeg
+  v4l2m2m, mpv) aborted or hung at its end.
 
 Patches by other authors keep their own tags. On the Noa Himesaka patches, AI assistance is disclosed with
 `Assisted-by: Claude:claude-opus-5-5` (0031, 0046, 0048, 0049 and 0050 also `Assisted-by: Claude:claude-mythos-5-1`)
@@ -152,6 +155,7 @@ the series (no `Signed-off-by`).
 | 0092-arm64-dts-qcom-sdm630-Feed-the-GCC-CLKREF-clocks-fro.patch | Noa Himesaka <himesaka@noa.codes> |
 | 0093-clk-qcom-smd-rpm-Drop-the-handoff-votes-nobody-claim.patch | Noa Himesaka <himesaka@noa.codes> |
 | 0094-drm-msm-gpu-Remove-the-bus-vote-when-the-GPU-is-susp.patch | Noa Himesaka <himesaka@noa.codes> |
+| 0095-media-venus-vdec-Signal-EOS-with-a-real-buffer-on-HF.patch | Noa Himesaka <himesaka@noa.codes> |
 
 ## License
 
