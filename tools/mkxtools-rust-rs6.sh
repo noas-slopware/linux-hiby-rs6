@@ -102,7 +102,9 @@ log "clang $clangv (x86_64)"
 rc=0
 "$ENGINE" run --rm --security-opt no-new-privileges -v "$X:/xt" -e "XGET=$XGET" localhost/rs6-xbuild bash -euc '
 	eval "$XGET"
-	pacman -Sy --noconfirm > /dev/null
+	# all of it: a package xget pulls in must not meet an older base in this image (see
+	# mkxtools-tools-rs6.sh); a glibc that moves is caught below (exit 3)
+	pacman -Syu --noconfirm > /dev/null
 	xget "clang=$1" "clang-libs=$4" "llvm-libs=$5"
 	v=$(pacman -Q clang | cut -d" " -f2); m=clang-${v%%.*}
 	# installing clang must not have moved glibc past lib/ (rs6-xbuild glibc): exit 3, all of xtools again

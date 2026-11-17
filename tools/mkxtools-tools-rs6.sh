@@ -68,8 +68,10 @@ log "bens: $(for p in "${ours[@]}"; do awk -v p="${p#*/}" '$2 == p { printf "%s 
 fetch_pkgs "${ours[@]}" > /dev/null
 
 log "x86_64 packages, $W/xtools/tools (log: $W/logs/mkxtools-tools.log)"
+# the rs6-xbuild glibc the gcc stage put into xtools/lib: the tools must not need a newer one
+xglibc=$(sed -n 's/^xglibc=//p' "$W/xtools/.stamp")
 "$ENGINE" run --rm -i --security-opt no-new-privileges -v "$W/xtools:/xt" -v "$W/pkgcache:/pkgcache:ro" \
-	-e "OWNER=$(id -u):$(id -g)" -e "TOOL_PKGS=${TOOL_PKGS[*]}" -e "MODULE_PKGS=${MODULE_PKGS[*]}" \
+	-e "OWNER=$(id -u):$(id -g)" -e "XGLIBC=$xglibc" -e "TOOL_PKGS=${TOOL_PKGS[*]}" -e "MODULE_PKGS=${MODULE_PKGS[*]}" \
 	-e "CTYPES_PKGS=${CTYPES_PKGS[*]}" localhost/rs6-xbuild bash -euo pipefail -c '
 	declare -A B
 	while read -r _ n v; do B[$n]=$v; done	# bens: name -> version
@@ -85,7 +87,12 @@ log "x86_64 packages, $W/xtools/tools (log: $W/logs/mkxtools-tools.log)"
 		[ ${#urls[@]} -eq 0 ] || pacman -U --needed --noconfirm "${urls[@]}" > /dev/null
 	}
 	is_elf() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(head -c4 "$1" | od -An -c | tr -d " ")" = 177ELF ]; }
-	pacman -Sy --noconfirm > /dev/null
+	# all of it, not just the sync db: a package pulled in below must not meet an older base in this
+	# image (2026-11-17: systemd-libs 262.2 for one of them, the image still on systemd 262.1, failed
+	# the transaction). If that moves glibc past xtools/lib, only a full run helps: exit 3.
+	pacman -Syu --noconfirm > /dev/null
+	[ "$(pacman -Q glibc | cut -d" " -f2)" = "$XGLIBC" ] ||
+		{ echo "Arch x86_64 glibc $(pacman -Q glibc | cut -d" " -f2), xtools/lib has $XGLIBC" >&2; exit 3; }
 	get $TOOL_PKGS $MODULE_PKGS $CTYPES_PKGS
 	for n in $TOOL_PKGS $MODULE_PKGS $CTYPES_PKGS; do
 		[ "$(pacman -Q "$n" | cut -d" " -f2)" = "${B[$n]}" ] || { echo "$n: no x86_64 ${B[$n]}" >&2; exit 1; }
