@@ -2,7 +2,7 @@
 # HiBy RS6 ([rs6] repo): this PKGBUILD as Arch has it, plus patches/elisa: Subsonic source, bit-perfect output, mobile drawer, cover decoding and search fixes; arch=(aarch64), pkgrel 1.1.
 
 pkgname=elisa
-pkgver=26.08.2
+pkgver=26.08.3
 pkgrel=1.1
 pkgdesc='A simple music player aiming to provide a nice experience for its users'
 url='https://apps.kde.org/elisa/'
@@ -43,7 +43,7 @@ source=(https://download.kde.org/stable/release-service/$pkgver/src/$pkgname-$pk
         0005-Do-not-scale-cover-sourceSize-by-the-device-pixel-ratio-twice.patch
         0006-Emit-finished-of-embedded-cover-responses-on-the-pixmap-reader-thread.patch
         0007-Filter-the-views-on-the-text-the-search-field-shows.patch)
-sha256sums=('432331a84ade68fd519974c91ebd789bf5670b9be24e9acc8b5def3140b30b1c'
+sha256sums=('1f1ad0cffcf3a11643b9f07d6ec4f1faa0067045252a75a544116b74eb8d5804'
             'SKIP'
             '3cc440ccbfb8841c163107bbe5bdbe886c7fdc52319eb6a436ca16ec76560f65'
             '49918219bfff0717162e90b9f2c16a1092b17bddf88ea605b6de601049b7fb54'
