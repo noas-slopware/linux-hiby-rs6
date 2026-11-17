@@ -1,4 +1,4 @@
-From e50b6125048a1e63530f24954636547d80c7c281 Mon Sep 17 00:00:00 2001
+From 2d36aec2920c5292c4605d6475d3fcade90767a8 Mon Sep 17 00:00:00 2001
 From: Noa Himesaka <himesaka@noa.codes>
 Date: Wed, 21 Oct 2026 20:17:21 +0900
 Subject: [PATCH] freedreno/a5xx: Program the A508/A509/A512 the way Qualcomm's
@@ -105,7 +105,7 @@ index d76b1ad..2f50cb1 100644
        ERROR_MSG("invalid param id: %d", param);
        return -1;
 diff --git a/src/freedreno/registers/adreno/a5xx.xml b/src/freedreno/registers/adreno/a5xx.xml
-index 4af76b3..57249ed 100644
+index 3ef1f84..30ded8b 100644
 --- a/src/freedreno/registers/adreno/a5xx.xml
 +++ b/src/freedreno/registers/adreno/a5xx.xml
 @@ -2752,6 +2752,42 @@ bit 7 for RECTLIST (clear) when z32s8 (used for clear of depth32?  not set
@@ -747,10 +747,10 @@ index ce40f58..40e13c5 100644
  
     fd_batch_flush(batch);
 diff --git a/src/gallium/drivers/freedreno/a5xx/fd5_emit.c b/src/gallium/drivers/freedreno/a5xx/fd5_emit.c
-index 403a10d..5c518cc 100644
+index 1461824..6271eba 100644
 --- a/src/gallium/drivers/freedreno/a5xx/fd5_emit.c
 +++ b/src/gallium/drivers/freedreno/a5xx/fd5_emit.c
-@@ -952,10 +952,10 @@ fd5_emit_restore(struct fd_batch *batch, struct fd_ringbuffer *ring)
+@@ -955,10 +955,10 @@ fd5_emit_restore(struct fd_batch *batch, struct fd_ringbuffer *ring)
     OUT_RING(ring, 0x00000000); /* UNKNOWN_E293 */
  
     OUT_PKT4(ring, REG_A5XX_RB_MODE_CNTL, 1);
@@ -763,7 +763,7 @@ index 403a10d..5c518cc 100644
  
     OUT_PKT4(ring, REG_A5XX_VFD_MODE_CNTL, 1);
     OUT_RING(ring, 0x00000000); /* VFD_MODE_CNTL */
-@@ -966,22 +966,19 @@ fd5_emit_restore(struct fd_batch *batch, struct fd_ringbuffer *ring)
+@@ -969,22 +969,19 @@ fd5_emit_restore(struct fd_batch *batch, struct fd_ringbuffer *ring)
     OUT_PKT4(ring, REG_A5XX_SP_MODE_CNTL, 1);
     OUT_RING(ring, 0x0000001e); /* SP_MODE_CNTL */
  

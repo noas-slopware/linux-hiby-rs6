@@ -3,7 +3,7 @@
 # Maintainer: Jan Alexander Steffens (heftig) <heftig@archlinux.org>
 # Contributor: Jan de Groot <jgc@archlinux.org>
 # Contributor: Andreas Radke <andyrtr@archlinux.org>
-# HiBy RS6 ([rs6] repo): this PKGBUILD as Arch has it, plus patches/mesa (0101-0103 Fabricio Akio, 0104-0106 Noa Himesaka): freedreno A5xx fixes for the Adreno 512; arch=(aarch64), pkgrel 1.1.
+# HiBy RS6 ([rs6] repo): this PKGBUILD as Arch has it, plus patches/mesa (0101-0102 Fabricio Akio, 0104-0106 Noa Himesaka): freedreno A5xx fixes for the Adreno 512; arch=(aarch64), pkgrel 1.1.
 
 pkgbase=mesa
 pkgname=(
@@ -25,7 +25,7 @@ pkgname=(
   vulkan-mesa-layers
   mesa-docs
 )
-pkgver=26.2.5
+pkgver=26.2.7
 _pkgver=${pkgver/[a-z]/-&}
 pkgrel=1.1
 epoch=1
@@ -101,7 +101,6 @@ source=(
   "https://archive.mesa3d.org/mesa-$_pkgver.tar.xz"{,.sig}
   0101-freedreno-a5xx-Use-the-blob-s-RB_CCU_CNTL-values-on-A508.patch
   0102-freedreno-a5xx-Don-t-2D-copy-between-linear-surfaces-on-A508.patch
-  0103-freedreno-a5xx-Re-emit-fragment-textures-when-the-fragment-program-changes.patch
   0104-freedreno-a5xx-Use-the-blob-s-RB_CCU_CNTL-values-on-A509-and-A512.patch
   0105-freedreno-a5xx-Program-the-A508-A509-A512-the-way-Qualcomm-s-driver-does.patch
   0106-freedreno-a5xx-Read-A8-as-A8-in-SCALE-blits.patch
@@ -164,13 +163,12 @@ for _crate in "${!_crates[@]}"; do
   )
 done
 
-b2sums=('cfcc4d72c5e6f54904c77b98c65df8159c41ebe9c4b8f82a18a38983bfe06e25c02ea20ba613753838f2455edb156a2d79938f28328313a8eb79fe67d2ea9624'
+b2sums=('a117884e9ce65735583b4c61930b5841c080523da57cab86c12308bcd121a08d44e702d588001869f2ee178b662d953c77de829d809fc53398ee69c1940f95b3'
         'SKIP'
         '8b2b31edd85bcced3cfa345e816ab2288dc4e6e16a14ca9f495eade5e13c5ac1e0682f944bcfb1e9a74b1bb03b4f9e9a99de912f596e4aba1b34e0a6f9e63f37'
         'ac5b6ededb3d8b2cb2a80854daaead32b42f07b908c278664dc7106e93242aaadd0a1aba4a26329de7fbd17609f652d0f4cb58d86c95ba920abf73fef32f451c'
-        'd8961818abe3d915e22249e5f0acbd00850565604897c8e37ddfb8d7e352e534e36479cca820076d61a5de710df75cdde0b06d0ccb6201f1c4e4454d28adb631'
         'e12d8a477d87b7e1a58f06c9ff2219ac70838cd4e14b0c2501ea52290464998810c03905d7506116bb31d5a884453d42274d888a589b7c1e69080bf5f0c58ec4'
-        '85f701c195326991fc006c008670e248839ac5d26a0ccace7b3765012c1083bdbc01be3004638c55bf41fd70ca96ead507c14c3463fb7eb00b1617bdf3685c9a'
+        '6146d0354024f466b7e4170f7a743343d0d8de88cb14d2ab07ad911a987b422cdc0ddff099ba16fa28d89b4f0b904f560b9c0c2505ed62d784e97a812ba8dd83'
         'd1ceb173eaf85a448790a60a455cc28109d3706d1b55746fc9963ecb1cac40be18ab4d469f058430cc3eccb81743663552e4b25255f04334efada76d1488fc83'
         '5fed0ea98fea7b72e9d015bddbc5337d936eb3a07f358e29421d081e76bf927bc270be5ef98e38b969b0a59a362c5b330554b446f81627821f52b2fbea0bb12c'
         '431439d31632d177aeb15f910b4f546efa76d54fc74fc8e140399dc5e54eca33fd606f11dbfb48fa83067c8474ee512e62751895d5948367b65ab08b984284e5'
@@ -204,13 +202,12 @@ b2sums=('cfcc4d72c5e6f54904c77b98c65df8159c41ebe9c4b8f82a18a38983bfe06e25c02ea20
         '93385f64103fdb482bec34c7912474ae7a5935948715e6eb9a54907e0db5c39f089f6cd393bab33c935c59a1bbb0f4099431f206343811c1a450554d96a35756')
 
 # https://docs.mesa3d.org/relnotes.html
-sha256sums=('794b3d1729075dae7ebd47c7283b7ca0cdb5dec668f7f11cc0a5d82f6138a0a5'
+sha256sums=('04294f75d22e9f61cd1e050206bc48b3d39366e788f1803a3368e3d5a872ce18'
             'SKIP'
             'ab10553a4e0240da6675668d88659a2db55467887574c876cf9f2eba2c59d871'
             '7533632effd5fe1e0c9775b93cceec2a7dc1a79561ea507ded5cdabe16eebb47'
-            'bec530c40f8841db1400fee1af695b95143b7fe0f1f8695580d00f0f9a16099b'
             '0606ba10bdddd3c72660eeeb9ed2bf32f8c8fb37209b6bb39c6d7fcb7f0da343'
-            '0eb104233b0bc9e1d99fbbf41f3211c9fc5c16e4b70539e125b8440aad75df17'
+            '8bd95c3c8094ec963478242941ea287d2ef2723902e124be0a77c8687e4773ea'
             '81894b3c3abcd219ad70a586661e7c6354c38965f5102643fd094ef1bfe443e1'
             'b8aa498d22c9bbaf482329839bc5620c46be275a19a812e9a22a2b07529a642a'
             '67914ab451f3bfd2e69e5e9d2ef3858484e7074d63f204fd166ec391b54de21d'
