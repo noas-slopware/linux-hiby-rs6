@@ -2,7 +2,7 @@
 # Based on Arch Linux Ports' linux (bschnei/linux, branch aarch64, df552a59d849: linux 7.2.11.arch1-1 on
 # arch.bens.haus; Jan Alexander Steffens (heftig) for Arch's linux).
 #
-# Kernel for the HiBy RS6: sdm660-mainline qcom-sdm660-7.2.y at _commit plus the 92-patch series from
+# Kernel for the HiBy RS6: sdm660-mainline qcom-sdm660-7.2.y at _commit plus the 93-patch series from
 # patches/linux on the main branch of noas-slopware/linux-hiby-rs6.
 # Config: Arch Linux Ports' aarch64 config (config.aarch64, verbatim) + config-rs6.fragment (what the RS6
 # needs; made by mkfragment.py from the Nura RS6 config, see its header). Built with GCC like Arch's linux
@@ -14,7 +14,7 @@
 
 pkgbase=linux-hiby-rs6
 pkgver=7.2.3
-pkgrel=6
+pkgrel=7
 pkgdesc='Linux for the HiBy RS6 (sdm660-mainline + RS6 series)'
 url='https://github.com/noas-slopware/linux-hiby-rs6'
 arch=(aarch64)
@@ -46,7 +46,7 @@ options=(
 )
 _commit=5690ded6161e97967f9a5c23cc22a93e022c3c62   # sdm660-mainline qcom-sdm660-7.2.y (Linux 7.2.3)
 # senpai branch (default) of noas-slopware/linux-hiby-rs6
-_rs6commit=0e828bb8a8a8f4bdefeeb477d4f86296fd9046e6
+_rs6commit=e599d0d92af67a7bfdf60e4b41601039ee33ff88
 _srcname=linux-$_commit
 source=(
   "linux-sdm660-$_commit.tar.gz::https://github.com/sdm660-mainline/linux/archive/$_commit.tar.gz"
@@ -58,7 +58,7 @@ source=(
   0001-tools-linux-types.h-Add-128-bit-integer-types-for-arm64-UAPI-structures.patch
 )
 sha512sums=('1a9fe8a5979e21a7e7062422cf215118563c4676bfb0be9267e8e8247fcf3e2db9950f13f51798885842363e95d61c2be45268f64577ab7fa7830d294a31521f'
-            '1c138cf25ceebf0efb11885908b47bf1e11c8a4888e06833cb97dc2727204af379121fa3aa71d56caef2c482a69101a647491c39f4ca438d2d802df8c8dc44d0'
+            '9af623850b2de23b7f102857afdca010e78a54d22804e61b7b0d4ab298f19f7f249ace523044e3b0f750129dfd9e32f4220848dcd84e065e188df448854d07f3'
             '2488702652cc0c0bc5a75b8668c4ff143d64724cf661a65b1e8171901687db8d78b51d02b540b30fa6ae96334516bc550d60100254e5ef8175e8bab53e0ac8b7'
             '42765b74c756cb2e00792747795d6e8965405b0bdf0b582a727f7a2313d39d4125d05220ff84a64558fe21f337e05a2430d9b5d3acdd9a25a043e9b5886c0814'
             '64e12f60d00f80912aa92a91ff1081a5703efd3ab0df2f539c1d505329844caa8b0180c34b4c9e1fa1bc59e632605cf44c7fd5a87b433803f9b42a4f9f9a0e43')
