@@ -1,6 +1,6 @@
 # Linux kernel series
 
-92 patches for the HiBy RS6 (Qualcomm SDM660 / PM660 / PM660L), as `git format-patch --no-signature` output.
+93 patches for the HiBy RS6 (Qualcomm SDM660 / PM660 / PM660L), as `git format-patch --no-signature` output.
 
 Base:
 
@@ -16,8 +16,8 @@ git checkout 5690ded6161e97967f9a5c23cc22a93e022c3c62
 git am /path/to/linux-hiby-rs6/patches/linux/0*.patch
 ```
 
-`git am` of the 92 files on that commit gives tree object
-`9d06134dc1b20e4a01d402d733175d76ac17b06a`. The kernel config used by the Nura package is
+`git am` of the 93 files on that commit gives tree object
+`1878857318f0bbd840845eaf8a67dc57a252925f`. The kernel config used by the Nura package is
 `config-postmarketos-qcom-sdm660.aarch64` in `device/testing/linux-postmarketos-qcom-sdm660/` on the `pmos`
 branch; the package builds exactly this series on this base.
 
@@ -52,6 +52,9 @@ branch; the package builds exactly this series on this base.
 - 0092: the Venus video decoder signals end of stream with a real, mapped empty buffer on HFI 3XX: SDM660's
   firmware took the dummy address 0xdeadb000 as a fatal session error, so every hardware-decoded stream (FFmpeg
   v4l2m2m, mpv) aborted or hung at its end.
+- 0093: Rob Clark's "drm/msm: Fix per-process-pgtables check" (16/17 of "A couple lazy-vm fixes" v7), which the
+  base lacks next to 15/17: without it EN_VM_BIND succeeds on the A5xx, the context gets no VM, and the first
+  MSM_PARAM_VA_START query (turnip, e.g. fastfetch) oopses in adreno_get_param().
 
 Patches by other authors keep their own tags. On the Noa Himesaka patches, AI assistance is disclosed with
 `Assisted-by: Claude:claude-opus-5-5` (0029, 0043, 0045, 0046 and 0047 also `Assisted-by: Claude:claude-mythos-5-1`)
@@ -154,6 +157,7 @@ the series (no `Signed-off-by`).
 | 0090-clk-qcom-smd-rpm-Drop-the-handoff-votes-nobody-claim.patch | Noa Himesaka <himesaka@noa.codes> |
 | 0091-drm-msm-gpu-Remove-the-bus-vote-when-the-GPU-is-susp.patch | Noa Himesaka <himesaka@noa.codes> |
 | 0092-media-venus-vdec-Signal-EOS-with-a-real-buffer-on-HF.patch | Noa Himesaka <himesaka@noa.codes> |
+| 0093-FROMLIST-drm-msm-Fix-per-process-pgtables-check.patch | Rob Clark <robin.clark@oss.qualcomm.com> |
 
 ## License
 

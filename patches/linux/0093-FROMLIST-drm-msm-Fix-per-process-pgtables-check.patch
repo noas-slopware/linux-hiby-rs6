@@ -1,0 +1,38 @@
+From fa4d2df310c798a1faeb06631d862b28fc55e2be Mon Sep 17 00:00:00 2001
+From: Rob Clark <robin.clark@oss.qualcomm.com>
+Date: Wed, 18 Nov 2026 22:45:40 +0900
+Subject: [PATCH] FROMLIST drm/msm: Fix per-process-pgtables check
+
+ctx->vm should not be inialized yet (or if it has, an error is returned
+immediately following this check), so this isn't a valid way to check
+for per-process-pgtable support.
+
+Instead just check if create_private_vm() is supported.
+
+Reported-by: Sashiko <sashiko-bot@kernel.org>
+Signed-off-by: Rob Clark <robin.clark@oss.qualcomm.com>
+Link: https://lore.kernel.org/all/20260729155609.20190-17-robin.clark@oss.qualcomm.com/
+[Noa: the tree carries 15/17 ("Don't fallback to shared VM for VM_BIND")
+ without this one. On A5xx, which has no create_private_vm, EN_VM_BIND
+ then succeeded, the context's lazy VM stayed NULL, and the first
+ MSM_PARAM_VA_START query (turnip, e.g. fastfetch's Vulkan probe)
+ oopsed in adreno_get_param() on vm->mm_start. Applied without the
+ ctxlock guard from 3/17, which this tree does not have.]
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/gpu/drm/msm/adreno/adreno_gpu.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/adreno_gpu.c b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+index ccfc26884..9c5821beb 100644
+--- a/drivers/gpu/drm/msm/adreno/adreno_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+@@ -506,7 +506,7 @@ int adreno_set_param(struct msm_gpu *gpu, struct msm_context *ctx,
+ 		return msm_context_set_sysprof(ctx, gpu, value);
+ 	case MSM_PARAM_EN_VM_BIND:
+ 		/* We can only support VM_BIND with per-process pgtables: */
+-		if (ctx->vm == gpu->vm)
++		if (!gpu->funcs->create_private_vm)
+ 			return UERR(EINVAL, drm, "requires per-process pgtables");
+ 
+ 		/*
